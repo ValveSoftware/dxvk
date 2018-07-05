@@ -70,6 +70,7 @@ namespace dxvk {
     bool m_initializedOpenVr = false;
     bool m_initializedInsExt = false;
     bool m_initializedDevExt = false;
+	bool m_bLoadedOpenVRAPI = false;
 
     vk::NameSet              m_insExtensions;
     std::vector<vk::NameSet> m_devExtensions;
