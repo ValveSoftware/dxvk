@@ -10,7 +10,7 @@ namespace dxvk {
   class D3D11CommonTexture;
   
   class D3D11ImmediateContext : public D3D11DeviceContext {
-    constexpr static uint32_t MinFlushIntervalUs = 1250;
+    constexpr static uint32_t MinFlushIntervalUs = 1250;/*XXX: hard-coded in .cpp*/
     constexpr static uint32_t MaxPendingSubmits  = 3;
   public:
     
