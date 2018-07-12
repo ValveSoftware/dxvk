@@ -3,7 +3,6 @@ c = '/usr/bin/x86_64-w64-mingw32-gcc'
 cpp = '/usr/bin/x86_64-w64-mingw32-g++'
 ar = '/usr/bin/x86_64-w64-mingw32-ar'
 strip = '/usr/bin/x86_64-w64-mingw32-strip'
-exe_wrapper = 'wine'
 
 [properties]
 c_link_args = ['-static', '-static-libgcc']
