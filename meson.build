@@ -1,4 +1,4 @@
-project('dxvk', ['c', 'cpp'])
+project('dxvk', ['c', 'cpp'], version : 'v0.62')
 
 cpu_family = target_machine.cpu_family()
 
@@ -34,6 +34,11 @@ glsl_compiler = find_program('glslangValidator')
 glsl_generator = generator(glsl_compiler,
   output    : [ '@BASENAME@.h' ],
   arguments : [ '-V', '--vn', '@BASENAME@', '@INPUT@', '-o', '@OUTPUT@' ])
+
+dxvk_version = vcs_tag(
+  command: ['git', 'describe'],
+  input:  'version.h.in',
+  output: 'version.h')
 
 subdir('src')
 

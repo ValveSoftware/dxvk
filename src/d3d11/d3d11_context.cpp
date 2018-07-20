@@ -62,18 +62,27 @@ namespace dxvk {
   }
   
   void STDMETHODCALLTYPE D3D11DeviceContext::DiscardResource(ID3D11Resource * pResource) {
-    Logger::err("D3D11DeviceContext::DiscardResource: Not implemented");
+    static bool s_errorShown = false;
+    
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::DiscardResource: Not implemented");
   }
 
   void STDMETHODCALLTYPE D3D11DeviceContext::DiscardView(ID3D11View * pResourceView) {
-    Logger::err("D3D11DeviceContext::DiscardView: Not implemented");
+    static bool s_errorShown = false;
+    
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::DiscardView: Not implemented");
   }
 
   void STDMETHODCALLTYPE D3D11DeviceContext::DiscardView1(
           ID3D11View*              pResourceView, 
     const D3D11_RECT*              pRects, 
           UINT                     NumRects) {
-    Logger::err("D3D11DeviceContext::DiscardView1: Not implemented");
+    static bool s_errorShown = false;
+    
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::DiscardView1: Not implemented");
   }
 
   void STDMETHODCALLTYPE D3D11DeviceContext::SwapDeviceContextState(
@@ -598,24 +607,12 @@ namespace dxvk {
     clearValue.color.float32[2] = ColorRGBA[2];
     clearValue.color.float32[3] = ColorRGBA[3];
     
-    VkClearRect clearRect;
-    clearRect.rect.offset.x       = 0;
-    clearRect.rect.offset.y       = 0;
-    clearRect.rect.extent.width   = view->mipLevelExtent(0).width;
-    clearRect.rect.extent.height  = view->mipLevelExtent(0).height;
-    clearRect.baseArrayLayer      = 0;
-    clearRect.layerCount          = view->info().numLayers;
-    
-    if (m_parent->GetFeatureLevel() < D3D_FEATURE_LEVEL_10_0)
-      clearRect.layerCount        = 1;
-    
     EmitCs([
       cClearValue = clearValue,
-      cClearRect  = clearRect,
       cImageView  = view
     ] (DxvkContext* ctx) {
       ctx->clearRenderTarget(
-        cImageView, cClearRect,
+        cImageView,
         VK_IMAGE_ASPECT_COLOR_BIT,
         cClearValue);
     });
@@ -781,26 +778,15 @@ namespace dxvk {
     clearValue.depthStencil.depth   = Depth;
     clearValue.depthStencil.stencil = Stencil;
     
-    VkClearRect clearRect;
-    clearRect.rect.offset.x       = 0;
-    clearRect.rect.offset.y       = 0;
-    clearRect.rect.extent.width   = view->mipLevelExtent(0).width;
-    clearRect.rect.extent.height  = view->mipLevelExtent(0).height;
-    clearRect.baseArrayLayer      = 0;
-    clearRect.layerCount          = view->info().numLayers;
-    
-    if (m_parent->GetFeatureLevel() < D3D_FEATURE_LEVEL_10_0)
-      clearRect.layerCount        = 1;
-    
     EmitCs([
       cClearValue = clearValue,
-      cClearRect  = clearRect,
       cAspectMask = aspectMask,
       cImageView  = view
     ] (DxvkContext* ctx) {
       ctx->clearRenderTarget(
-        cImageView, cClearRect,
-        cAspectMask, cClearValue);
+        cImageView,
+        cAspectMask,
+        cClearValue);
     });
   }
   

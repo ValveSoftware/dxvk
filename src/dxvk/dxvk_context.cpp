@@ -414,11 +414,10 @@ namespace dxvk {
   
   void DxvkContext::clearRenderTarget(
     const Rc<DxvkImageView>&    imageView,
-    const VkClearRect&          clearRect,
           VkImageAspectFlags    clearAspects,
     const VkClearValue&         clearValue) {
     this->updateFramebuffer();
-    
+
     // Prepare attachment ops
     DxvkColorAttachmentOps colorOp;
     colorOp.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -486,17 +485,43 @@ namespace dxvk {
       clearInfo.colorAttachment = attachmentIndex;
       clearInfo.clearValue      = clearValue;
       
-      m_cmd->cmdClearAttachments(
-        1, &clearInfo, 1, &clearRect);
+      VkClearRect clearRect;
+      clearRect.rect.offset.x       = 0;
+      clearRect.rect.offset.y       = 0;
+      clearRect.rect.extent.width   = imageView->mipLevelExtent(0).width;
+      clearRect.rect.extent.height  = imageView->mipLevelExtent(0).height;
+      clearRect.baseArrayLayer      = 0;
+      clearRect.layerCount          = imageView->info().numLayers;
+
+      m_cmd->cmdClearAttachments(1, &clearInfo, 1, &clearRect);
     } else {
       // Perform the clear when starting the render pass
-      if (clearAspects & VK_IMAGE_ASPECT_COLOR_BIT)
+      if (clearAspects & VK_IMAGE_ASPECT_COLOR_BIT) {
         m_state.om.renderPassOps.colorOps[attachmentIndex] = colorOp;
+        m_state.om.clearValues[attachmentIndex].color = clearValue.color;
+      }
       
-      if (clearAspects & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
-        m_state.om.renderPassOps.depthOps = depthOp;
+      if (clearAspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
+        m_state.om.renderPassOps.depthOps.loadOpD  = depthOp.loadOpD;
+        m_state.om.renderPassOps.depthOps.storeOpD = depthOp.storeOpD;
+        m_state.om.clearValues[attachmentIndex].depthStencil.depth = clearValue.depthStencil.depth;
+      }
       
-      m_state.om.clearValues[attachmentIndex] = clearValue;
+      if (clearAspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
+        m_state.om.renderPassOps.depthOps.loadOpS  = depthOp.loadOpS;
+        m_state.om.renderPassOps.depthOps.storeOpS = depthOp.storeOpS;
+        m_state.om.clearValues[attachmentIndex].depthStencil.stencil = clearValue.depthStencil.stencil;
+      }
+
+      if (clearAspects & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+        m_state.om.renderPassOps.depthOps.loadLayout  = depthOp.loadLayout;
+        m_state.om.renderPassOps.depthOps.storeLayout = depthOp.storeLayout;
+
+        if (m_state.om.renderPassOps.depthOps.loadOpD == VK_ATTACHMENT_LOAD_OP_CLEAR
+         && m_state.om.renderPassOps.depthOps.loadOpS == VK_ATTACHMENT_LOAD_OP_CLEAR)
+          m_state.om.renderPassOps.depthOps.loadLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      }
+      
       m_flags.set(DxvkContextFlag::GpClearRenderTargets);
     }
   }
@@ -1681,7 +1706,7 @@ namespace dxvk {
       m_flags.clr(DxvkContextFlag::GpClearRenderTargets);
 
       m_barriers.recordCommands(m_cmd);
-      
+
       this->renderPassBindFramebuffer(
         m_state.om.framebuffer,
         m_state.om.renderPassOps,
@@ -1733,7 +1758,14 @@ namespace dxvk {
     
     m_cmd->cmdBeginRenderPass(&info,
       VK_SUBPASS_CONTENTS_INLINE);
+    
     m_cmd->trackResource(framebuffer);
+
+    for (uint32_t i = 0; i < framebuffer->numAttachments(); i++) {
+      m_cmd->trackResource(framebuffer->getAttachment(i).view);
+      m_cmd->trackResource(framebuffer->getAttachment(i).view->image());
+    }
+
     m_cmd->addStatCtr(DxvkStatCounter::CmdRenderPassCount, 1);
   }
   
