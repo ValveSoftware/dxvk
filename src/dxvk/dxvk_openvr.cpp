@@ -69,12 +69,6 @@ namespace dxvk {
 
     if (m_initializedOpenVr)
       g_vrFunctions.shutdownInternal();
-	
-	if ( m_bLoadedOpenVRAPI )
-	{
-		HMODULE ovrApi = ::GetModuleHandle("openvr_api_dxvk.dll");
-		::FreeLibrary( ovrApi );
-	}
 
     m_initializedDevExt = true;
   }
@@ -112,21 +106,7 @@ namespace dxvk {
   vr::IVRCompositor* VrInstance::getCompositor() {
     // Locate the OpenVR DLL if loaded by the process
     HMODULE ovrApi = ::GetModuleHandle("openvr_api.dll");
-	
-	if ( ovrApi == nullptr)
-	{
-		ovrApi = ::GetModuleHandle("openvr_api_dxvk.dll");
-	}
     
-	if (ovrApi == nullptr) {
-		ovrApi = ::LoadLibrary("openvr_api_dxvk.dll");
-		
-		if ( ovrApi != nullptr )
-		{
-			m_bLoadedOpenVRAPI = true;
-		}
-	}
-	
     if (ovrApi == nullptr) {
       Logger::warn("OpenVR: Failed to locate module");
       return nullptr;
