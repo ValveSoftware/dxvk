@@ -7,13 +7,12 @@
 
 namespace vr {
   class IVRCompositor;
-  class IVRSystem;
 }
 
 namespace dxvk {
 
   class DxvkInstance;
-
+  
   /**
    * \brief OpenVR instance
    * 
@@ -65,7 +64,7 @@ namespace dxvk {
   private:
 
     std::mutex            m_mutex;
-    vr::IVRCompositor*    m_compositor = nullptr;
+    vr::IVRCompositor*    m_compositor;
 
     bool m_initializedOpenVr = false;
     bool m_initializedInsExt = false;
@@ -79,10 +78,9 @@ namespace dxvk {
     vk::NameSet queryDeviceExtensions(
             VkPhysicalDevice          adapter) const;
 
-    vk::NameSet parseExtensionList(
-      const std::string&              str) const;
+    static vk::NameSet parseExtensionList(const std::string& str);
     
-    vr::IVRCompositor* getCompositor();
+    static vr::IVRCompositor* getCompositor();
     
   };
 
