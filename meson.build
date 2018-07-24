@@ -1,13 +1,16 @@
-project('dxvk', ['c', 'cpp'], version : 'v0.62')
+project('dxvk', ['c', 'cpp'], version : 'v0.63')
 
 cpu_family = target_machine.cpu_family()
 
+add_project_arguments('-DNOMINMAX', language : 'cpp')
+
 dxvk_compiler = meson.get_compiler('cpp')
 if dxvk_compiler.get_id() == 'msvc'
-  add_project_arguments('-DNOMINMAX', language : 'cpp')
   dxvk_cpp_std='c++latest'
+  dxvk_msvc=true
 else
   dxvk_cpp_std='c++1z'
+  dxvk_msvc=false
 endif
 
 if dxvk_compiler.get_id() == 'msvc'
@@ -22,12 +25,25 @@ else
   dxvk_library_path = meson.source_root() + '/lib32'
 endif
 
-lib_vulkan  = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)
-lib_d3d11   = dxvk_compiler.find_library('d3d11')
-lib_dxgi    = dxvk_compiler.find_library('dxgi')
-
-if dxvk_compiler.get_id() != 'msvc'
-  lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler_47')
+if meson.get_cross_property('winelib', false)
+  add_project_link_arguments('-mwindows', language : 'cpp')
+  lib_vulkan  = declare_dependency(link_args: [ '-lvulkan-1' ])
+  lib_d3d11   = declare_dependency(link_args: [ '-ld3d11' ])
+  lib_dxgi    = declare_dependency(link_args: [ '-ldxgi' ])
+  lib_d3dcompiler_47 = declare_dependency(link_args: [ '-ld3dcompiler_47' ])
+  exe_ext = '.exe.so'
+  dll_ext = '.dll'
+  def_spec_ext = '.spec'
+else
+  lib_vulkan  = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)
+  lib_d3d11   = dxvk_compiler.find_library('d3d11')
+  lib_dxgi    = dxvk_compiler.find_library('dxgi')
+  if dxvk_compiler.get_id() != 'msvc'
+    lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler_47')
+  endif
+  exe_ext = ''
+  dll_ext = ''
+  def_spec_ext = '.def'
 endif
 
 glsl_compiler = find_program('glslangValidator')

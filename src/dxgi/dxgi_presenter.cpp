@@ -121,9 +121,13 @@ namespace dxvk {
   }
   
   
-  void DxgiVkPresenter::PresentImage(UINT SyncInterval) {
+  void DxgiVkPresenter::PresentImage(UINT SyncInterval, const Rc<DxvkEvent>& SyncEvent) {
     if (m_hud != nullptr)
       m_hud->update();
+    
+    // Wait for frame event to be signaled. This is used
+    // to enforce the device's frame latency requirement.
+    SyncEvent->wait();
     
     // Check whether the back buffer size is the same
     // as the window size, in which case we should use
@@ -198,6 +202,13 @@ namespace dxvk {
       if (m_hud != nullptr)
         m_hud->render(m_context, m_options.preferredBufferSize);
       
+      if (i == SyncInterval - 1) {
+        DxvkEventRevision eventRev;
+        eventRev.event    = SyncEvent;
+        eventRev.revision = SyncEvent->reset();
+        m_context->signalEvent(eventRev);
+      }
+      
       m_device->submitCommandList(
         m_context->endRecording(),
         swapSemas.acquireSync,
@@ -245,6 +256,7 @@ namespace dxvk {
     DxvkImageViewCreateInfo viewInfo;
     viewInfo.type       = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format     = Image->info().format;
+    viewInfo.usage      = VK_IMAGE_USAGE_SAMPLED_BIT;
     viewInfo.aspect     = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.minLevel   = 0;
     viewInfo.numLevels  = 1;
@@ -406,6 +418,7 @@ namespace dxvk {
     DxvkImageViewCreateInfo info;
     info.type         = VK_IMAGE_VIEW_TYPE_1D;
     info.format       = VK_FORMAT_R16G16B16A16_UNORM;
+    info.usage        = VK_IMAGE_USAGE_SAMPLED_BIT;
     info.aspect       = VK_IMAGE_ASPECT_COLOR_BIT;
     info.minLevel     = 0;
     info.numLevels    = 1;
