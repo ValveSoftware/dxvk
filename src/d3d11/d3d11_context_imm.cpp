@@ -547,7 +547,7 @@ namespace dxvk {
       auto now = std::chrono::high_resolution_clock::now();
 
       // Prevent flushing too often in short intervals.
-      if (now - m_lastFlush >= std::chrono::microseconds(1250))
+      if (now - m_lastFlush >= std::chrono::microseconds(MinFlushIntervalUs))
         Flush();
     }
   }
