@@ -102,18 +102,16 @@ namespace dxvk {
           reinterpret_cast<void**>(&m_dxgiAdapter))))
       throw DxvkError("D3D11Device: Failed to query adapter");
     
+    m_initializer = new D3D11Initializer(m_dxvkDevice);
+    m_uavCounters = new D3D11UavCounterAllocator(this);
     m_context = new D3D11ImmediateContext(this, m_dxvkDevice);
-    
-    m_resourceInitContext = m_dxvkDevice->createContext();
-    m_resourceInitContext->beginRecording(
-      m_dxvkDevice->createCommandList());
-    
-    CreateCounterBuffer();
   }
   
   
   D3D11Device::~D3D11Device() {
     delete m_context;
+    delete m_uavCounters;
+    delete m_initializer;
   }
   
   
@@ -145,7 +143,7 @@ namespace dxvk {
       const Com<D3D11Buffer> buffer
         = new D3D11Buffer(this, pDesc);
       
-      this->InitBuffer(buffer.ptr(), pInitialData);
+      m_initializer->InitBuffer(buffer.ptr(), pInitialData);
       *ppBuffer = buffer.ref();
       return S_OK;
     } catch (const DxvkError& e) {
@@ -182,7 +180,7 @@ namespace dxvk {
     
     try {
       const Com<D3D11Texture1D> texture = new D3D11Texture1D(this, &desc);
-      this->InitTexture(texture->GetCommonTexture(), pInitialData);
+      m_initializer->InitTexture(texture->GetCommonTexture(), pInitialData);
       *ppTexture1D = texture.ref();
       return S_OK;
     } catch (const DxvkError& e) {
@@ -219,7 +217,7 @@ namespace dxvk {
     
     try {
       const Com<D3D11Texture2D> texture = new D3D11Texture2D(this, &desc);
-      this->InitTexture(texture->GetCommonTexture(), pInitialData);
+      m_initializer->InitTexture(texture->GetCommonTexture(), pInitialData);
       *ppTexture2D = texture.ref();
       return S_OK;
     } catch (const DxvkError& e) {
@@ -256,7 +254,7 @@ namespace dxvk {
       
     try {
       const Com<D3D11Texture3D> texture = new D3D11Texture3D(this, &desc);
-      this->InitTexture(texture->GetCommonTexture(), pInitialData);
+      m_initializer->InitTexture(texture->GetCommonTexture(), pInitialData);
       *ppTexture3D = texture.ref();
       return S_OK;
     } catch (const DxvkError& e) {
@@ -557,7 +555,7 @@ namespace dxvk {
         DxvkBufferSlice counterSlice;
         
         if (desc.Buffer.Flags & (D3D11_BUFFER_UAV_FLAG_APPEND | D3D11_BUFFER_UAV_FLAG_COUNTER))
-          counterSlice = AllocateCounterSlice();
+          counterSlice = AllocCounterSlice();
         
         *ppUAView = ref(new D3D11UnorderedAccessView(
           this, pResource, desc,
@@ -1075,7 +1073,7 @@ namespace dxvk {
           ID3D11ClassLinkage*         pClassLinkage,
           ID3D11VertexShader**        ppVertexShader) {
     InitReturnPtr(ppVertexShader);
-    D3D11ShaderModule module;
+    D3D11CommonShader module;
 
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
@@ -1099,7 +1097,7 @@ namespace dxvk {
           ID3D11ClassLinkage*         pClassLinkage,
           ID3D11GeometryShader**      ppGeometryShader) {
     InitReturnPtr(ppGeometryShader);
-    D3D11ShaderModule module;
+    D3D11CommonShader module;
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
@@ -1142,7 +1140,7 @@ namespace dxvk {
           ID3D11ClassLinkage*         pClassLinkage,
           ID3D11PixelShader**         ppPixelShader) {
     InitReturnPtr(ppPixelShader);
-    D3D11ShaderModule module;
+    D3D11CommonShader module;
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
@@ -1166,7 +1164,7 @@ namespace dxvk {
           ID3D11ClassLinkage*         pClassLinkage,
           ID3D11HullShader**          ppHullShader) {
     InitReturnPtr(ppHullShader);
-    D3D11ShaderModule module;
+    D3D11CommonShader module;
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
@@ -1190,7 +1188,7 @@ namespace dxvk {
           ID3D11ClassLinkage*         pClassLinkage,
           ID3D11DomainShader**        ppDomainShader) {
     InitReturnPtr(ppDomainShader);
-    D3D11ShaderModule module;
+    D3D11CommonShader module;
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
@@ -1214,7 +1212,7 @@ namespace dxvk {
           ID3D11ClassLinkage*         pClassLinkage,
           ID3D11ComputeShader**       ppComputeShader) {
     InitReturnPtr(ppComputeShader);
-    D3D11ShaderModule module;
+    D3D11CommonShader module;
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
@@ -1565,10 +1563,9 @@ namespace dxvk {
         if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_DOUBLES))
           return E_INVALIDARG;
         
-        const VkPhysicalDeviceFeatures& features = m_dxvkDevice->features();
-
         auto info = static_cast<D3D11_FEATURE_DATA_DOUBLES*>(pFeatureSupportData);
-        info->DoublePrecisionFloatShaderOps = features.shaderFloat64 && features.shaderInt64;
+        info->DoublePrecisionFloatShaderOps = m_dxvkDevice->features().core.features.shaderFloat64
+                                           && m_dxvkDevice->features().core.features.shaderInt64;
       } return S_OK;
       
       case D3D11_FEATURE_FORMAT_SUPPORT: {
@@ -1601,13 +1598,13 @@ namespace dxvk {
         
         // TODO implement, most of these are required for FL 11.1
         // https://msdn.microsoft.com/en-us/library/windows/desktop/hh404457(v=vs.85).aspx
-        const VkPhysicalDeviceFeatures& features = m_dxvkDevice->features();
+        const DxvkDeviceFeatures& features = m_dxvkDevice->features();
         
         auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS*>(pFeatureSupportData);
-        info->OutputMergerLogicOp                     = features.logicOp;
+        info->OutputMergerLogicOp                     = features.core.features.logicOp;
         info->UAVOnlyRenderingForcedSampleCount       = FALSE;
-        info->DiscardAPIsSeenByDriver                 = FALSE;
-        info->FlagsForUpdateAndCopySeenByDriver       = FALSE;
+        info->DiscardAPIsSeenByDriver                 = TRUE;
+        info->FlagsForUpdateAndCopySeenByDriver       = TRUE;
         info->ClearView                               = FALSE;
         info->CopyWithOverlap                         = FALSE;
         info->ConstantBufferPartialUpdate             = TRUE;
@@ -1730,32 +1727,8 @@ namespace dxvk {
   }
   
   
-  DxvkBufferSlice D3D11Device::AllocateCounterSlice() {
-    std::lock_guard<std::mutex> lock(m_counterMutex);
-    
-    if (m_counterSlices.size() == 0)
-      throw DxvkError("D3D11Device: Failed to allocate counter slice");
-    
-    uint32_t sliceId = m_counterSlices.back();
-    m_counterSlices.pop_back();
-    
-    return DxvkBufferSlice(m_counterBuffer,
-      sizeof(D3D11UavCounter) * sliceId,
-      sizeof(D3D11UavCounter));
-  }
-  
-  
-  void D3D11Device::FreeCounterSlice(const DxvkBufferSlice& Slice) {
-    std::lock_guard<std::mutex> lock(m_counterMutex);
-    m_counterSlices.push_back(Slice.offset() / sizeof(D3D11UavCounter));
-  }
-  
-  
   void D3D11Device::FlushInitContext() {
-    LockResourceInitContext();
-    if (m_resourceInitCommands != 0)
-      SubmitResourceInitCommands();
-    UnlockResourceInitContext(0);
+    m_initializer->Flush();
   }
   
   
@@ -1765,10 +1738,10 @@ namespace dxvk {
       | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
       | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     
-    if (m_dxvkDevice->features().geometryShader)
+    if (m_dxvkDevice->features().core.features.geometryShader)
       enabledShaderPipelineStages |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
     
-    if (m_dxvkDevice->features().tessellationShader) {
+    if (m_dxvkDevice->features().core.features.tessellationShader) {
       enabledShaderPipelineStages |= VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT
                                   |  VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
     }
@@ -1785,7 +1758,7 @@ namespace dxvk {
       return false;
     
     // Check whether all features are supported
-    const VkPhysicalDeviceFeatures features
+    const DxvkDeviceFeatures features
       = GetDeviceFeatures(adapter, featureLevel);
     
     if (!adapter->checkFeatureSupport(features))
@@ -1796,60 +1769,63 @@ namespace dxvk {
   }
   
   
-  VkPhysicalDeviceFeatures D3D11Device::GetDeviceFeatures(
+  DxvkDeviceFeatures D3D11Device::GetDeviceFeatures(
     const Rc<DxvkAdapter>&  adapter,
           D3D_FEATURE_LEVEL featureLevel) {
-    VkPhysicalDeviceFeatures supported = adapter->features();
-    VkPhysicalDeviceFeatures enabled   = {};
+    DxvkDeviceFeatures supported = adapter->features();
+    DxvkDeviceFeatures enabled   = {};
+
+    enabled.core.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
+    enabled.core.pNext = nullptr;
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_1) {
-      enabled.depthClamp                            = VK_TRUE;
-      enabled.depthBiasClamp                        = VK_TRUE;
-      enabled.fillModeNonSolid                      = VK_TRUE;
-      enabled.pipelineStatisticsQuery               = supported.pipelineStatisticsQuery;
-      enabled.sampleRateShading                     = VK_TRUE;
-      enabled.samplerAnisotropy                     = VK_TRUE;
-      enabled.shaderClipDistance                    = VK_TRUE;
-      enabled.shaderCullDistance                    = VK_TRUE;
-      enabled.robustBufferAccess                    = VK_TRUE;
+      enabled.core.features.depthClamp                            = VK_TRUE;
+      enabled.core.features.depthBiasClamp                        = VK_TRUE;
+      enabled.core.features.fillModeNonSolid                      = VK_TRUE;
+      enabled.core.features.pipelineStatisticsQuery               = supported.core.features.pipelineStatisticsQuery;
+      enabled.core.features.sampleRateShading                     = VK_TRUE;
+      enabled.core.features.samplerAnisotropy                     = VK_TRUE;
+      enabled.core.features.shaderClipDistance                    = VK_TRUE;
+      enabled.core.features.shaderCullDistance                    = VK_TRUE;
+      enabled.core.features.robustBufferAccess                    = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_2) {
-      enabled.occlusionQueryPrecise                 = VK_TRUE;
+      enabled.core.features.occlusionQueryPrecise                 = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_3) {
-      enabled.multiViewport                         = VK_TRUE;
-      enabled.independentBlend                      = VK_TRUE;
+      enabled.core.features.multiViewport                         = VK_TRUE;
+      enabled.core.features.independentBlend                      = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_10_0) {
-      enabled.fullDrawIndexUint32                   = VK_TRUE;
-      enabled.fragmentStoresAndAtomics              = VK_TRUE;
-      enabled.geometryShader                        = VK_TRUE;
-      enabled.logicOp                               = supported.logicOp;
-      enabled.shaderImageGatherExtended             = VK_TRUE;
-      enabled.textureCompressionBC                  = VK_TRUE;
+      enabled.core.features.fullDrawIndexUint32                   = VK_TRUE;
+      enabled.core.features.fragmentStoresAndAtomics              = VK_TRUE;
+      enabled.core.features.geometryShader                        = VK_TRUE;
+      enabled.core.features.logicOp                               = supported.core.features.logicOp;
+      enabled.core.features.shaderImageGatherExtended             = VK_TRUE;
+      enabled.core.features.textureCompressionBC                  = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_10_1) {
-      enabled.dualSrcBlend                          = VK_TRUE;
-      enabled.imageCubeArray                        = VK_TRUE;
+      enabled.core.features.dualSrcBlend                          = VK_TRUE;
+      enabled.core.features.imageCubeArray                        = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_11_0) {
-      enabled.shaderFloat64                         = supported.shaderFloat64;
-      enabled.shaderInt64                           = supported.shaderInt64;
-      enabled.tessellationShader                    = VK_TRUE;
+      enabled.core.features.shaderFloat64                         = supported.core.features.shaderFloat64;
+      enabled.core.features.shaderInt64                           = supported.core.features.shaderInt64;
+      enabled.core.features.tessellationShader                    = VK_TRUE;
       // TODO enable unconditionally once RADV gains support
-      enabled.shaderStorageImageMultisample         = supported.shaderStorageImageMultisample;
-      enabled.shaderStorageImageReadWithoutFormat   = supported.shaderStorageImageReadWithoutFormat;
-      enabled.shaderStorageImageWriteWithoutFormat  = VK_TRUE;
+      enabled.core.features.shaderStorageImageMultisample         = supported.core.features.shaderStorageImageMultisample;
+      enabled.core.features.shaderStorageImageReadWithoutFormat   = supported.core.features.shaderStorageImageReadWithoutFormat;
+      enabled.core.features.shaderStorageImageWriteWithoutFormat  = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_11_1) {
-      enabled.logicOp                               = VK_TRUE;
-      enabled.vertexPipelineStoresAndAtomics        = VK_TRUE;
+      enabled.core.features.logicOp                               = VK_TRUE;
+      enabled.core.features.vertexPipelineStoresAndAtomics        = VK_TRUE;
     }
     
     return enabled;
@@ -1857,7 +1833,7 @@ namespace dxvk {
   
   
   HRESULT D3D11Device::CreateShaderModule(
-          D3D11ShaderModule*      pShaderModule,
+          D3D11CommonShader*      pShaderModule,
     const void*                   pShaderBytecode,
           size_t                  BytecodeLength,
           ID3D11ClassLinkage*     pClassLinkage,
@@ -1867,119 +1843,12 @@ namespace dxvk {
       Logger::warn("D3D11Device::CreateShaderModule: Class linkage not supported");
     
     try {
-      *pShaderModule = m_shaderModules.GetShaderModule(
+      *pShaderModule = m_shaderModules.GetShaderModule(this,
         pModuleInfo, pShaderBytecode, BytecodeLength, ProgramType);
       return S_OK;
     } catch (const DxvkError& e) {
       Logger::err(e.message());
       return E_FAIL;
-    }
-  }
-  
-  
-  void D3D11Device::InitBuffer(
-          D3D11Buffer*                pBuffer,
-    const D3D11_SUBRESOURCE_DATA*     pInitialData) {
-    const DxvkBufferSlice bufferSlice = pBuffer->GetBufferSlice();
-    
-    D3D11_BUFFER_DESC desc;
-    pBuffer->GetDesc(&desc);
-    
-    if (pInitialData != nullptr && pInitialData->pSysMem != nullptr) {
-      LockResourceInitContext();
-      
-      m_resourceInitContext->updateBuffer(
-        bufferSlice.buffer(),
-        bufferSlice.offset(),
-        bufferSlice.length(),
-        pInitialData->pSysMem);
-      
-      UnlockResourceInitContext(1);
-    } else if (desc.Usage == D3D11_USAGE_DEFAULT) {
-      LockResourceInitContext();
-      
-      m_resourceInitContext->clearBuffer(
-        bufferSlice.buffer(),
-        bufferSlice.offset(),
-        bufferSlice.length(),
-        0u);
-      
-      UnlockResourceInitContext(1);
-    }
-  }
-  
-  
-  void D3D11Device::InitTexture(
-          D3D11CommonTexture*         pTexture,
-    const D3D11_SUBRESOURCE_DATA*     pInitialData) {
-    const Rc<DxvkImage> image = pTexture->GetImage();
-    const DxvkFormatInfo* formatInfo = imageFormatInfo(image->info().format);
-    
-    if (pInitialData != nullptr && pInitialData->pSysMem != nullptr) {
-      LockResourceInitContext();
-      
-      // pInitialData is an array that stores an entry for
-      // every single subresource. Since we will define all
-      // subresources, this counts as initialization.
-      VkImageSubresourceLayers subresourceLayers;
-      subresourceLayers.aspectMask     = formatInfo->aspectMask;
-      subresourceLayers.mipLevel       = 0;
-      subresourceLayers.baseArrayLayer = 0;
-      subresourceLayers.layerCount     = 1;
-      
-      for (uint32_t layer = 0; layer < image->info().numLayers; layer++) {
-        for (uint32_t level = 0; level < image->info().mipLevels; level++) {
-          subresourceLayers.baseArrayLayer = layer;
-          subresourceLayers.mipLevel       = level;
-          
-          const uint32_t id = D3D11CalcSubresource(
-            level, layer, image->info().mipLevels);
-          
-          m_resourceInitContext->updateImage(
-            image, subresourceLayers,
-            VkOffset3D { 0, 0, 0 },
-            image->mipLevelExtent(level),
-            pInitialData[id].pSysMem,
-            pInitialData[id].SysMemPitch,
-            pInitialData[id].SysMemSlicePitch);
-        }
-      }
-      
-      const uint32_t subresourceCount =
-        image->info().numLayers * image->info().mipLevels;
-      UnlockResourceInitContext(subresourceCount);
-    } else {
-      LockResourceInitContext();
-      
-      // While the Microsoft docs state that resource contents are
-      // undefined if no initial data is provided, some applications
-      // expect a resource to be pre-cleared. We can only do that
-      // for non-compressed images, but that should be fine.
-      VkImageSubresourceRange subresources;
-      subresources.aspectMask     = formatInfo->aspectMask;
-      subresources.baseMipLevel   = 0;
-      subresources.levelCount     = image->info().mipLevels;
-      subresources.baseArrayLayer = 0;
-      subresources.layerCount     = image->info().numLayers;
-      
-      if (formatInfo->flags.test(DxvkFormatFlag::BlockCompressed)) {
-        m_resourceInitContext->initImage(
-          image, subresources);
-      } else {
-        if (subresources.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT) {
-          m_resourceInitContext->clearColorImage(
-            image, VkClearColorValue(), subresources);
-        } else {
-          VkClearDepthStencilValue value;
-          value.depth   = 1.0f;
-          value.stencil = 0;
-          
-          m_resourceInitContext->clearDepthStencilImage(
-            image, value, subresources);
-        }
-      }
-      
-      UnlockResourceInitContext(1);
     }
   }
   
@@ -2048,7 +1917,7 @@ namespace dxvk {
         flags1 |= D3D11_FORMAT_SUPPORT_RENDER_TARGET
                |  D3D11_FORMAT_SUPPORT_MIP_AUTOGEN;
         
-        if (m_dxvkDevice->features().logicOp)
+        if (m_dxvkDevice->features().core.features.logicOp)
           flags2 |= D3D11_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP;
       }
       
@@ -2093,7 +1962,7 @@ namespace dxvk {
       flags1 |= D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW;
       flags2 |= D3D11_FORMAT_SUPPORT2_UAV_TYPED_STORE;
       
-      if (m_dxvkDevice->features().shaderStorageImageReadWithoutFormat
+      if (m_dxvkDevice->features().core.features.shaderStorageImageReadWithoutFormat
        || Format == DXGI_FORMAT_R32_UINT
        || Format == DXGI_FORMAT_R32_SINT
        || Format == DXGI_FORMAT_R32_FLOAT)
@@ -2129,59 +1998,6 @@ namespace dxvk {
       VK_IMAGE_USAGE_SAMPLED_BIT, 0, props);
     
     return status == VK_SUCCESS;
-  }
-  
-  
-  void D3D11Device::CreateCounterBuffer() {
-    const uint32_t MaxCounterStructs = 1 << 16;
-    
-    // The counter buffer is used as a storage buffer
-    DxvkBufferCreateInfo info;
-    info.size       = MaxCounterStructs * sizeof(D3D11UavCounter);
-    info.usage      = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-                    | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                    | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    info.stages     = VK_PIPELINE_STAGE_TRANSFER_BIT
-                    | GetEnabledShaderStages();
-    info.access     = VK_ACCESS_TRANSFER_READ_BIT
-                    | VK_ACCESS_TRANSFER_WRITE_BIT
-                    | VK_ACCESS_SHADER_READ_BIT
-                    | VK_ACCESS_SHADER_WRITE_BIT;
-    m_counterBuffer = m_dxvkDevice->createBuffer(
-      info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    
-    // Init the counter struct allocator as well
-    m_counterSlices.resize(MaxCounterStructs);
-    
-    for (uint32_t i = 0; i < MaxCounterStructs; i++)
-      m_counterSlices[i] = MaxCounterStructs - i - 1;
-  }
-  
-  
-  void D3D11Device::LockResourceInitContext() {
-    m_resourceInitMutex.lock();
-  }
-  
-  
-  void D3D11Device::UnlockResourceInitContext(uint64_t CommandCount) {
-    m_resourceInitCommands += CommandCount;
-    
-    if (m_resourceInitCommands >= InitCommandThreshold)
-      SubmitResourceInitCommands();
-    
-    m_resourceInitMutex.unlock();
-  }
-  
-  
-  void D3D11Device::SubmitResourceInitCommands() {
-    m_dxvkDevice->submitCommandList(
-      m_resourceInitContext->endRecording(),
-      nullptr, nullptr);
-    
-    m_resourceInitContext->beginRecording(
-      m_dxvkDevice->createCommandList());
-    
-    m_resourceInitCommands = 0;
   }
   
   

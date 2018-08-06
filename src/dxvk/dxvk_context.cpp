@@ -941,6 +941,17 @@ namespace dxvk {
   }
   
   
+  void DxvkContext::discardBuffer(
+    const Rc<DxvkBuffer>&       buffer) {
+    DxvkAccessFlags accessFlags(
+      DxvkAccess::Read,
+      DxvkAccess::Write);
+    
+    if (m_barriers.isBufferDirty(buffer->slice(), accessFlags))
+      this->invalidateBuffer(buffer, buffer->allocPhysicalSlice());
+  }
+
+
   void DxvkContext::dispatch(
           uint32_t x,
           uint32_t y,
@@ -2301,7 +2312,6 @@ namespace dxvk {
     this->updateComputeShaderResources();
     this->updateComputePipelineState();
     this->updateComputeShaderDescriptors();
-    m_barriers.recordCommands(m_cmd);
   }
   
   

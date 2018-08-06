@@ -1,7 +1,7 @@
 #pragma once
 
-#include "./vulkan/dxvk_vulkan_extensions.h"
-
+#include "dxvk_device_info.h"
+#include "dxvk_extensions.h"
 #include "dxvk_include.h"
 
 namespace dxvk {
@@ -61,10 +61,35 @@ namespace dxvk {
     /**
      * \brief Physical device properties
      * 
-     * Retrieves information about the device itself.
-     * \returns Physical device properties
+     * Returns a read-only reference to the core
+     * properties of the Vulkan physical device.
+     * \returns Physical device core properties
      */
-    VkPhysicalDeviceProperties deviceProperties() const;
+    const VkPhysicalDeviceProperties& deviceProperties() const {
+      return m_deviceInfo.core.properties;
+    }
+
+    /**
+     * \brief Device info
+     * 
+     * Returns a read-only reference to the full
+     * device info structure, including extended
+     * properties.
+     * \returns Device info struct
+     */
+    const DxvkDeviceInfo& devicePropertiesExt() const {
+      return m_deviceInfo;
+    }
+    
+    /**
+     * \brief Supportred device features
+     * 
+     * Queries the supported device features.
+     * \returns Device features
+     */
+    const DxvkDeviceFeatures& features() const {
+      return m_deviceFeatures;
+    }
     
     /**
      * \brief Memory properties
@@ -74,14 +99,6 @@ namespace dxvk {
      * \returns Device memory properties
      */
     VkPhysicalDeviceMemoryProperties memoryProperties() const;
-    
-    /**
-     * \brief Supportred device features
-     * 
-     * Queries the supported device features.
-     * \returns Device features
-     */
-    VkPhysicalDeviceFeatures features() const;
     
     /**
      * \brief Queries format support
@@ -130,7 +147,7 @@ namespace dxvk {
      * \returns \c true if all features are supported
      */
     bool checkFeatureSupport(
-      const VkPhysicalDeviceFeatures& required) const;
+      const DxvkDeviceFeatures& required) const;
     
     /**
      * \brief Creates a DXVK device
@@ -140,7 +157,7 @@ namespace dxvk {
      * \returns Device handle
      */
     Rc<DxvkDevice> createDevice(
-      const VkPhysicalDeviceFeatures& enabledFeatures);
+            DxvkDeviceFeatures  enabledFeatures);
     
     /**
      * \brief Creates a surface
@@ -166,12 +183,21 @@ namespace dxvk {
     Rc<DxvkInstance>    m_instance;
     Rc<vk::InstanceFn>  m_vki;
     VkPhysicalDevice    m_handle;
+
+    DxvkNameSet         m_deviceExtensions;
+    DxvkDeviceInfo      m_deviceInfo;
+    DxvkDeviceFeatures  m_deviceFeatures;
     
     std::vector<VkQueueFamilyProperties> m_queueFamilies;
 
-    uint32_t getAdapterIndex() const;
+    void queryExtensions();
+    void queryDeviceInfo();
+    void queryDeviceFeatures();
+    void queryDeviceQueues();
     
-    static void logNameList(const vk::NameList& names);
+    uint32_t getAdapterIndex() const;
+
+    static void logNameList(const DxvkNameList& names);
     
   };
   

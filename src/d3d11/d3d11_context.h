@@ -7,6 +7,7 @@
 #include "d3d11_annotation.h"
 #include "d3d11_context_state.h"
 #include "d3d11_device_child.h"
+#include "d3d11_uav_counter.h"
 
 namespace dxvk {
   
@@ -667,20 +668,12 @@ namespace dxvk {
     
     void ApplyViewportState();
     
+    void BindShader(
+            DxbcProgramType                   ShaderStage,
+      const D3D11CommonShader*                pShaderModule);
+    
     void BindFramebuffer(
             BOOL                              Spill);
-    
-    template<typename T>
-    void BindShader(
-            T*                                pShader,
-            VkShaderStageFlagBits             Stage) {
-      EmitCs([
-        cShader = pShader != nullptr ? pShader->GetShader() : nullptr,
-        cStage  = Stage
-      ] (DxvkContext* ctx) {
-        ctx->bindShader(cStage, cShader);
-      });
-    }
     
     void BindVertexBuffer(
             UINT                              Slot,
@@ -709,6 +702,9 @@ namespace dxvk {
             UINT                              UavSlot,
             UINT                              CtrSlot,
             D3D11UnorderedAccessView*         pUav);
+    
+    void DiscardBuffer(
+            D3D11Buffer*                      pBuffer);
     
     void SetConstantBuffers(
             DxbcProgramType                   ShaderStage,
@@ -783,6 +779,11 @@ namespace dxvk {
     
     DxvkDataSlice AllocUpdateBufferSlice(size_t Size);
     
+    template<typename T>
+    const D3D11CommonShader* GetCommonShader(T* pShader) const {
+      return pShader != nullptr ? pShader->GetCommonShader() : nullptr;
+    }
+
     template<typename Cmd>
     void EmitCs(Cmd&& command) {
       if (!m_csChunk->push(command)) {

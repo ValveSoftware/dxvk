@@ -34,11 +34,12 @@ namespace dxvk {
   }
   
   
-  D3D11ShaderModule:: D3D11ShaderModule() { }
-  D3D11ShaderModule::~D3D11ShaderModule() { }
+  D3D11CommonShader:: D3D11CommonShader() { }
+  D3D11CommonShader::~D3D11CommonShader() { }
   
   
-  D3D11ShaderModule::D3D11ShaderModule(
+  D3D11CommonShader::D3D11CommonShader(
+          D3D11Device*    pDevice,
     const D3D11ShaderKey* pShaderKey,
     const DxbcModuleInfo* pDxbcModuleInfo,
     const void*           pShaderBytecode,
@@ -55,7 +56,6 @@ namespace dxvk {
     // If requested by the user, dump both the raw DXBC
     // shader and the compiled SPIR-V module to a file.
     const std::string dumpPath = env::getEnvVar(L"DXVK_SHADER_DUMP_PATH");
-    const std::string readPath = env::getEnvVar(L"DXVK_SHADER_READ_PATH");
     
     if (dumpPath.size() != 0) {
       reader.store(std::ofstream(str::format(dumpPath, "/", m_name, ".dxbc"),
@@ -73,25 +73,36 @@ namespace dxvk {
       m_shader->dump(dumpStream);
     }
     
-    // If requested by the user, replace
-    // the shader with another file.
-    if (readPath.size() != 0) {
-      // Check whether the file exists
-      std::ifstream readStream(
-        str::format(readPath, "/", m_name, ".spv"),
-        std::ios_base::binary);
+    // Create shader constant buffer if necessary
+    if (m_shader->shaderConstants().data() != nullptr) {
+      DxvkBufferCreateInfo info;
+      info.size   = m_shader->shaderConstants().sizeInBytes();
+      info.usage  = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+      info.stages = util::pipelineStages(m_shader->stage())
+                  | VK_PIPELINE_STAGE_HOST_BIT;
+      info.access = VK_ACCESS_UNIFORM_READ_BIT
+                  | VK_ACCESS_HOST_WRITE_BIT;
       
-      if (readStream)
-        m_shader->read(readStream);
+      VkMemoryPropertyFlags memFlags
+        = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+      
+      m_buffer = pDevice->GetDXVKDevice()->createBuffer(info, memFlags);
+
+      std::memcpy(m_buffer->mapPtr(0),
+        m_shader->shaderConstants().data(),
+        m_shader->shaderConstants().sizeInBytes());
     }
   }
-  
+
   
   D3D11ShaderModuleSet:: D3D11ShaderModuleSet() { }
   D3D11ShaderModuleSet::~D3D11ShaderModuleSet() { }
   
   
-  D3D11ShaderModule D3D11ShaderModuleSet::GetShaderModule(
+  D3D11CommonShader D3D11ShaderModuleSet::GetShaderModule(
+          D3D11Device*    pDevice,
     const DxbcModuleInfo* pDxbcModuleInfo,
     const void*           pShaderBytecode,
           size_t          BytecodeLength,
@@ -108,7 +119,8 @@ namespace dxvk {
     
     // This shader has not been compiled yet, so we have to create a
     // new module. This takes a while, so we won't lock the structure.
-    D3D11ShaderModule module(&key, pDxbcModuleInfo, pShaderBytecode, BytecodeLength);
+    D3D11CommonShader module(pDevice, &key,
+      pDxbcModuleInfo, pShaderBytecode, BytecodeLength);
     
     // Insert the new module into the lookup table. If another thread
     // has compiled the same shader in the meantime, we should return

@@ -1,12 +1,13 @@
 #include "dxbc_compiler.h"
 
 namespace dxvk {
+
+  constexpr uint32_t Icb_BindingSlotId   = 14;
+  constexpr uint32_t Icb_MaxBakedDwords  = 16;
   
   constexpr uint32_t PerVertex_Position  = 0;
   constexpr uint32_t PerVertex_CullDist  = 1;
   constexpr uint32_t PerVertex_ClipDist  = 2;
-  
-  constexpr uint32_t PushConstant_InstanceId = 0;
   
   DxbcCompiler::DxbcCompiler(
     const std::string&        fileName,
@@ -205,7 +206,8 @@ namespace dxvk {
       m_resourceSlots.size(),
       m_resourceSlots.data(),
       m_interfaceSlots,
-      m_module.compile());
+      m_module.compile(),
+      std::move(m_immConstData));
   }
   
   
@@ -683,11 +685,20 @@ namespace dxvk {
     const uint32_t bufferId     = ins.dst[0].idx[0].offset;
     const uint32_t elementCount = ins.dst[0].idx[1].offset;
     
+    this->emitDclConstantBufferVar(bufferId, elementCount,
+      str::format("cb", bufferId).c_str());
+  }
+  
+  
+  void DxbcCompiler::emitDclConstantBufferVar(
+          uint32_t                regIdx,
+          uint32_t                numConstants,
+    const char*                   name) {
     // Uniform buffer data is stored as a fixed-size array
     // of 4x32-bit vectors. SPIR-V requires explicit strides.
     const uint32_t arrayType = m_module.defArrayTypeUnique(
       getVectorTypeId({ DxbcScalarType::Float32, 4 }),
-      m_module.constu32(elementCount));
+      m_module.constu32(numConstants));
     m_module.decorateArrayStride(arrayType, 16);
     
     // SPIR-V requires us to put that array into a
@@ -697,7 +708,7 @@ namespace dxvk {
     m_module.decorateBlock       (structType);
     m_module.memberDecorateOffset(structType, 0, 0);
     
-    m_module.setDebugName        (structType, str::format("struct_cb", bufferId).c_str());
+    m_module.setDebugName        (structType, str::format("struct_", name).c_str());
     m_module.setDebugMemberName  (structType, 0, "m");
     
     // Variable that we'll use to access the buffer
@@ -705,14 +716,13 @@ namespace dxvk {
       m_module.defPointerType(structType, spv::StorageClassUniform),
       spv::StorageClassUniform);
     
-    m_module.setDebugName(varId,
-      str::format("cb", bufferId).c_str());
+    m_module.setDebugName(varId, name);
     
     // Compute the DXVK binding slot index for the buffer.
     // D3D11 needs to bind the actual buffers to this slot.
     const uint32_t bindingId = computeResourceSlotId(
       m_version.type(), DxbcBindingType::ConstantBuffer,
-      bufferId);
+      regIdx);
     
     m_module.decorateDescriptorSet(varId, 0);
     m_module.decorateBinding(varId, bindingId);
@@ -722,13 +732,13 @@ namespace dxvk {
     const uint32_t specConstId = m_module.specConstBool(true);
     m_module.decorateSpecId(specConstId, bindingId);
     m_module.setDebugName(specConstId,
-      str::format("cb", bufferId, "_bound").c_str());
+      str::format(name, "_bound").c_str());
     
     DxbcConstantBuffer buf;
     buf.varId  = varId;
     buf.specId = specConstId;
-    buf.size   = elementCount;
-    m_constantBuffers.at(bufferId) = buf;
+    buf.size   = numConstants;
+    m_constantBuffers.at(regIdx) = buf;
     
     // Store descriptor info for the shader interface
     DxvkResourceSlot resource;
@@ -737,8 +747,8 @@ namespace dxvk {
     resource.view = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
     m_resourceSlots.push_back(resource);
   }
-  
-  
+
+
   void DxbcCompiler::emitDclSampler(const DxbcShaderInstruction& ins) {
     // dclSampler takes one operand:
     //    (dst0) The sampler register to declare
@@ -1301,6 +1311,19 @@ namespace dxvk {
     if ((ins.customDataSize & 0x3) != 0)
       throw DxvkError("DxbcCompiler: Immediate constant buffer size not a multiple of four DWORDs");
     
+    if (ins.customDataSize <= Icb_MaxBakedDwords) {
+      this->emitDclImmediateConstantBufferBaked(
+        ins.customDataSize, ins.customData);
+    } else {
+      this->emitDclImmediateConstantBufferUbo(
+        ins.customDataSize, ins.customData);
+    }
+  }
+
+
+  void DxbcCompiler::emitDclImmediateConstantBufferBaked(
+          uint32_t                dwordCount,
+    const uint32_t*               dwordArray) {
     // Declare individual vector constants as 4x32-bit vectors
     std::array<uint32_t, 4096> vectorIds;
     
@@ -1309,14 +1332,14 @@ namespace dxvk {
     vecType.ccount = 4;
     
     const uint32_t vectorTypeId = getVectorTypeId(vecType);
-    const uint32_t vectorCount  = ins.customDataSize / 4;
+    const uint32_t vectorCount  = dwordCount / 4;
     
     for (uint32_t i = 0; i < vectorCount; i++) {
       std::array<uint32_t, 4> scalarIds = {
-        m_module.constu32(ins.customData[4 * i + 0]),
-        m_module.constu32(ins.customData[4 * i + 1]),
-        m_module.constu32(ins.customData[4 * i + 2]),
-        m_module.constu32(ins.customData[4 * i + 3]),
+        m_module.constu32(dwordArray[4 * i + 0]),
+        m_module.constu32(dwordArray[4 * i + 1]),
+        m_module.constu32(dwordArray[4 * i + 2]),
+        m_module.constu32(dwordArray[4 * i + 3]),
       };
       
       vectorIds.at(i) = m_module.constComposite(
@@ -1345,6 +1368,14 @@ namespace dxvk {
   }
   
   
+  void DxbcCompiler::emitDclImmediateConstantBufferUbo(
+          uint32_t                dwordCount,
+    const uint32_t*               dwordArray) {
+    this->emitDclConstantBufferVar(Icb_BindingSlotId, dwordCount / 4, "icb");
+    m_immConstData = DxvkShaderConstData(dwordCount, dwordArray);
+  }
+
+
   void DxbcCompiler::emitCustomData(const DxbcShaderInstruction& ins) {
     switch (ins.customDataType) {
       case DxbcCustomDataClass::ImmConstBuf:
@@ -2288,17 +2319,20 @@ namespace dxvk {
                       |  spv::MemorySemanticsAcquireReleaseMask;
     }
     
+    // According to the SPIR-V spec, OpControlBarrier should
+    // also act as a memory barrier if the memory semantics
+    // are not 'none', but this is currently broken on RADV.
+    if (memoryScope != spv::ScopeInvocation) {
+      m_module.opMemoryBarrier(
+        m_module.constu32(memoryScope),
+        m_module.constu32(memorySemantics));
+    }
+
     if (executionScope != spv::ScopeInvocation) {
       m_module.opControlBarrier(
         m_module.constu32(executionScope),
         m_module.constu32(memoryScope),
         m_module.constu32(memorySemantics));
-    } else if (memoryScope != spv::ScopeInvocation) {
-      m_module.opMemoryBarrier(
-        m_module.constu32(memoryScope),
-        m_module.constu32(memorySemantics));
-    } else {
-      Logger::warn("DxbcCompiler: sync instruction has no effect");
     }
   }
   
@@ -4279,25 +4313,44 @@ namespace dxvk {
   
   DxbcRegisterPointer DxbcCompiler::emitGetImmConstBufPtr(
     const DxbcRegister&           operand) {
-    if (m_immConstBuf == 0)
-      throw DxvkError("DxbcCompiler: Immediate constant buffer not defined");
-    
     const DxbcRegisterValue constId
       = emitIndexLoad(operand.idx[0]);
     
-    DxbcRegisterInfo ptrInfo;
-    ptrInfo.type.ctype   = DxbcScalarType::Uint32;
-    ptrInfo.type.ccount  = 4;
-    ptrInfo.type.alength = 0;
-    ptrInfo.sclass = spv::StorageClassPrivate;
-    
-    DxbcRegisterPointer result;
-    result.type.ctype  = ptrInfo.type.ctype;
-    result.type.ccount = ptrInfo.type.ccount;
-    result.id = m_module.opAccessChain(
-      getPointerTypeId(ptrInfo),
-      m_immConstBuf, 1, &constId.id);
-    return result;
+    if (m_immConstBuf != 0) {
+      DxbcRegisterInfo ptrInfo;
+      ptrInfo.type.ctype   = DxbcScalarType::Uint32;
+      ptrInfo.type.ccount  = 4;
+      ptrInfo.type.alength = 0;
+      ptrInfo.sclass = spv::StorageClassPrivate;
+
+      DxbcRegisterPointer result;
+      result.type.ctype  = ptrInfo.type.ctype;
+      result.type.ccount = ptrInfo.type.ccount;
+      result.id = m_module.opAccessChain(
+        getPointerTypeId(ptrInfo),
+        m_immConstBuf, 1, &constId.id);
+      return result;
+    } else if (m_constantBuffers.at(Icb_BindingSlotId).varId != 0) {
+      const std::array<uint32_t, 2> indices =
+        {{ m_module.consti32(0), constId.id }};
+      
+      DxbcRegisterInfo ptrInfo;
+      ptrInfo.type.ctype   = DxbcScalarType::Float32;
+      ptrInfo.type.ccount  = 4;
+      ptrInfo.type.alength = 0;
+      ptrInfo.sclass = spv::StorageClassUniform;
+
+      DxbcRegisterPointer result;
+      result.type.ctype  = ptrInfo.type.ctype;
+      result.type.ccount = ptrInfo.type.ccount;
+      result.id = m_module.opAccessChain(
+        getPointerTypeId(ptrInfo),
+        m_constantBuffers.at(Icb_BindingSlotId).varId,
+        indices.size(), indices.data());
+      return result;
+    } else {
+      throw DxvkError("DxbcCompiler: Immediate constant buffer not defined");
+    }
   }
   
   
@@ -6267,8 +6320,8 @@ namespace dxvk {
       // VK_SAMPLE_COUNT_1_BIT
       m_module.constvec4f32(0.5f, 0.5f, 0.0f, 0.0f),
       // VK_SAMPLE_COUNT_2_BIT
-      m_module.constvec4f32(0.25f, 0.25f, 0.0f, 0.0f),
       m_module.constvec4f32(0.75f, 0.75f, 0.0f, 0.0f),
+      m_module.constvec4f32(0.25f, 0.25f, 0.0f, 0.0f),
       // VK_SAMPLE_COUNT_4_BIT
       m_module.constvec4f32(0.375f, 0.125f, 0.0f, 0.0f),
       m_module.constvec4f32(0.785f, 0.375f, 0.0f, 0.0f),

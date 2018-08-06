@@ -56,7 +56,7 @@ namespace dxvk {
     const std::array<BorderColorEntry, 3> borderColorMap = {{
       { 0.0f, 0.0f, 0.0f, 0.0f, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK },
       { 0.0f, 0.0f, 0.0f, 1.0f, VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK },
-      { 1.0f, 1.0f, 1.0f, 1.0f, VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK },
+      { 1.0f, 1.0f, 1.0f, 1.0f, VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE },
     }};
     
     for (const auto& e : borderColorMap) {
@@ -114,6 +114,19 @@ namespace dxvk {
     }
     
     return memoryFlags;
+  }
+
+
+  VkShaderStageFlagBits GetShaderStage(DxbcProgramType ProgramType) {
+    switch (ProgramType) {
+      case DxbcProgramType::VertexShader:   return VK_SHADER_STAGE_VERTEX_BIT;
+      case DxbcProgramType::HullShader:     return VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+      case DxbcProgramType::DomainShader:   return VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+      case DxbcProgramType::GeometryShader: return VK_SHADER_STAGE_GEOMETRY_BIT;
+      case DxbcProgramType::PixelShader:    return VK_SHADER_STAGE_FRAGMENT_BIT;
+      case DxbcProgramType::ComputeShader:  return VK_SHADER_STAGE_COMPUTE_BIT;
+      default:                              return VkShaderStageFlagBits(0);
+    }
   }
   
 }
