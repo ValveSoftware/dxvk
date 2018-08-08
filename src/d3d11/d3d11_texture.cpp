@@ -933,6 +933,12 @@ namespace dxvk {
       *ppvObject = ref(&m_interop);
       return S_OK;
     }
+
+    const GUID IID_IIWineD3D11Texture2D = {0x267dc993, 0xd15e, 0x4015, {0xaa, 0xac, 0xb7, 0x55, 0x9e, 0x22, 0x6c, 0xc3}};
+    if (riid == IID_IIWineD3D11Texture2D) {
+        /* wined3d interop interface, avoiding logging */
+        return E_NOINTERFACE;
+    }
     
     Logger::warn("D3D11Texture2D::QueryInterface: Unknown interface query");
     Logger::warn(str::format(riid));
