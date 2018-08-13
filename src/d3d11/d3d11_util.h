@@ -40,4 +40,16 @@ namespace dxvk {
   VkShaderStageFlagBits GetShaderStage(
           DxbcProgramType           ProgramType);
   
+  VkBufferUsageFlags GetBufferUsageFlags(
+          UINT                      BindFlags);
+  
+  VkImageUsageFlags GetImageUsageFlags(
+          UINT                      BindFlags);
+  
+  VkFormatFeatureFlags GetBufferFormatFeatures(
+          UINT                      BindFlags);
+
+  VkFormatFeatureFlags GetImageFormatFeatures(
+          UINT                      BindFlags);
+
 }

@@ -31,7 +31,7 @@ namespace dxvk {
     imageInfo.layout          = VK_IMAGE_LAYOUT_GENERAL;
 
     DecodeSampleCount(m_desc.SampleDesc.Count, &imageInfo.sampleCount);
-    
+
     // Integer clear operations on UAVs are implemented using
     // a view with a bit-compatible integer format, so we'll
     // have to include that format in the format family
@@ -49,12 +49,12 @@ namespace dxvk {
     // The image must be marked as mutable if it can be reinterpreted
     // by a view with a different format. Depth-stencil formats cannot
     // be reinterpreted in Vulkan, so we'll ignore those.
-    VkImageAspectFlags formatAspect = imageFormatInfo(formatInfo.Format)->aspectMask;
+    auto formatProperties = imageFormatInfo(formatInfo.Format);
     
     bool isTypeless = formatInfo.Aspect == 0;
     bool isMutable = formatFamily.FormatCount > 1;
 
-    if (isMutable && (formatAspect & VK_IMAGE_ASPECT_COLOR_BIT)) {
+    if (isMutable && (formatProperties->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)) {
       imageInfo.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
 
       // Typeless UAV images have relaxed reinterpretation rules
@@ -63,6 +63,12 @@ namespace dxvk {
         imageInfo.viewFormats     = formatFamily.Formats;
       }
     }
+
+    // Some games will try to create an SRGB image with the UAV
+    // bind flag set. This works on Windows, but no UAVs can be
+    // created for the image in practice.
+    bool noUav = formatProperties->flags.test(DxvkFormatFlag::ColorSpaceSrgb)
+      && !CheckFormatFeatureSupport(formatInfo.Format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
     
     // Adjust image flags based on the corresponding D3D flags
     if (m_desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
@@ -86,7 +92,7 @@ namespace dxvk {
                        |  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
     
-    if (m_desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) {
+    if (m_desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS && !noUav) {
       imageInfo.usage  |= VK_IMAGE_USAGE_STORAGE_BIT;
       imageInfo.stages |= pDevice->GetEnabledShaderStages();
       imageInfo.access |= VK_ACCESS_SHADER_READ_BIT
@@ -198,29 +204,54 @@ namespace dxvk {
   }
   
   
-  bool D3D11CommonTexture::CheckViewFormatCompatibility(DXGI_FORMAT Format) const {
-    DXGI_VK_FORMAT_MODE formatMode = GetFormatMode();
-    DXGI_VK_FORMAT_INFO baseFormat = m_device->LookupFormat(m_desc.Format, formatMode);
-    DXGI_VK_FORMAT_INFO viewFormat = m_device->LookupFormat(Format, formatMode);
-    
-    // Identical formats always pass this test
-    if (baseFormat.Format == viewFormat.Format)
-      return true;
-    
-    // The available image aspects must match
-    auto baseFormatInfo = imageFormatInfo(baseFormat.Format);
-    auto viewFormatInfo = imageFormatInfo(viewFormat.Format);
-    
-    if (baseFormatInfo->aspectMask != viewFormatInfo->aspectMask)
+  bool D3D11CommonTexture::CheckViewCompatibility(UINT BindFlags, DXGI_FORMAT Format) const {
+    const DxvkImageCreateInfo& imageInfo = m_image->info();
+
+    // Check whether the given bind flags are supported
+    VkImageUsageFlags usage = GetImageUsageFlags(BindFlags);
+
+    if ((imageInfo.usage & usage) != usage)
       return false;
+
+    // Check whether the view format is compatible
+    DXGI_VK_FORMAT_MODE formatMode = GetFormatMode();
+    DXGI_VK_FORMAT_INFO viewFormat = m_device->LookupFormat(Format,        formatMode);
+    DXGI_VK_FORMAT_INFO baseFormat = m_device->LookupFormat(m_desc.Format, formatMode);
     
-    // Color formats can be reinterpreted. This is not restricted
-    // to typeless formats, we we can create SRGB views for UNORM
-    // textures as well etc. as long as they are bit-compatible.
-    if (baseFormatInfo->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)
-      return baseFormatInfo->elementSize == viewFormatInfo->elementSize;
-    
-    return false;
+    if (imageInfo.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) {
+      // Check whether the given combination of image
+      // view type and view format is actually supported
+      VkFormatFeatureFlags features = GetImageFormatFeatures(BindFlags);
+      
+      if (!CheckFormatFeatureSupport(viewFormat.Format, features))
+        return false;
+
+      // Using the image format itself is always legal
+      if (viewFormat.Format == baseFormat.Format)
+        return true;
+      
+      // If there is a list of compatible formats, the
+      // view format must be included in that list.
+      for (size_t i = 0; i < imageInfo.viewFormatCount; i++) {
+        if (imageInfo.viewFormats[i] == viewFormat.Format)
+          return true;
+      }
+
+      // Otherwise, all bit-compatible formats can be used.
+      if (imageInfo.viewFormatCount == 0) {
+        auto baseFormatInfo = imageFormatInfo(baseFormat.Format);
+        auto viewFormatInfo = imageFormatInfo(viewFormat.Format);
+        
+        return baseFormatInfo->aspectMask  == viewFormatInfo->aspectMask
+            && baseFormatInfo->elementSize == viewFormatInfo->elementSize;
+      }
+
+      return false;
+    } else {
+      // For non-mutable images, the view format
+      // must be identical to the image format.
+      return viewFormat.Format == baseFormat.Format;
+    }
   }
   
   
@@ -261,6 +292,16 @@ namespace dxvk {
         && (pImageInfo->numLayers     <= formatProps.maxArrayLayers)
         && (pImageInfo->mipLevels     <= formatProps.maxMipLevels)
         && (pImageInfo->sampleCount    & formatProps.sampleCounts);
+  }
+
+
+  BOOL D3D11CommonTexture::CheckFormatFeatureSupport(
+          VkFormat              Format,
+          VkFormatFeatureFlags  Features) const {
+    VkFormatProperties properties = m_device->GetDXVKDevice()->adapter()->formatProperties(Format);
+
+    return (properties.linearTilingFeatures  & Features) == Features
+        || (properties.optimalTilingFeatures & Features) == Features;
   }
   
   

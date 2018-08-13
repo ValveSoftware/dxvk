@@ -339,7 +339,7 @@ namespace dxvk {
       // it as the 'new' mapped slice. This assumes that the
       // only way to invalidate a buffer is by mapping it.
       auto physicalSlice = buffer->allocPhysicalSlice();
-      pResource->GetBufferInfo()->mappedSlice = physicalSlice;
+      pResource->SetMappedSlice(physicalSlice);
       
       EmitCs([
         cBuffer        = buffer,
@@ -355,8 +355,7 @@ namespace dxvk {
     // Use map pointer from previous map operation. This
     // way we don't have to synchronize with the CS thread
     // if the map mode is D3D11_MAP_WRITE_NO_OVERWRITE.
-    const DxvkPhysicalBufferSlice physicalSlice
-      = pResource->GetBufferInfo()->mappedSlice;
+    const DxvkPhysicalBufferSlice physicalSlice = pResource->GetMappedSlice();
     
     pMappedResource->pData      = physicalSlice.mapPtr(0);
     pMappedResource->RowPitch   = physicalSlice.length();
@@ -515,7 +514,7 @@ namespace dxvk {
           UINT                              MapFlags) {
     // Some games (e.g. The Witcher 3) do not work correctly
     // when a map fails with D3D11_MAP_FLAG_DO_NOT_WAIT set
-    if (!m_parent->TestOption(D3D11Option::AllowMapFlagNoWait))
+    if (!m_parent->GetOptions()->allowMapFlagNoWait)
       MapFlags &= ~D3D11_MAP_FLAG_DO_NOT_WAIT;
     
     // Wait for the any pending D3D11 command to be executed

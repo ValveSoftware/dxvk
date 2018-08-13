@@ -11,17 +11,6 @@ namespace dxvk {
   class D3D11DeviceContext;
   
   
-  /**
-   * \brief Common buffer info
-   * 
-   * Stores where the buffer was last
-   * mapped on the immediate context.
-   */
-  struct D3D11BufferInfo {
-    DxvkPhysicalBufferSlice mappedSlice;
-  };
-  
-  
   class D3D11Buffer : public D3D11DeviceChild<ID3D11Buffer> {
     static constexpr VkDeviceSize BufferSliceAlignment = 64;
   public:
@@ -48,6 +37,14 @@ namespace dxvk {
     void STDMETHODCALLTYPE GetDesc(
             D3D11_BUFFER_DESC *pDesc) final;
     
+    bool CheckViewCompatibility(
+            UINT                BindFlags,
+            DXGI_FORMAT         Format) const;
+
+    const D3D11_BUFFER_DESC* Desc() const {
+      return &m_desc;
+    }
+    
     Rc<DxvkBuffer> GetBuffer() const {
       return m_buffer;
     }
@@ -67,22 +64,40 @@ namespace dxvk {
     VkDeviceSize GetSize() const {
       return m_buffer->info().size;
     }
-    
-    D3D11BufferInfo* GetBufferInfo() {
-      return &m_bufferInfo;
+
+    DxvkPhysicalBufferSlice GetMappedSlice() const {
+      return m_mappedSlice;
     }
-    
+
+    void SetMappedSlice(const DxvkPhysicalBufferSlice& slice) {
+      m_mappedSlice = slice;
+    }
+
   private:
     
     const Com<D3D11Device>      m_device;
     const D3D11_BUFFER_DESC     m_desc;
     
     Rc<DxvkBuffer>              m_buffer;
-    D3D11BufferInfo             m_bufferInfo;
+    DxvkPhysicalBufferSlice     m_mappedSlice;
     
     Rc<DxvkBuffer> CreateBuffer(
-      const D3D11_BUFFER_DESC* pDesc) const;
+      const D3D11_BUFFER_DESC*    pDesc) const;
+
+    BOOL CheckFormatFeatureSupport(
+            VkFormat              Format,
+            VkFormatFeatureFlags  Features) const;
     
   };
+
+
+  /**
+   * \brief Retrieves buffer from resource pointer
+   * 
+   * \param [in] pResource The resource to query
+   * \returns Pointer to buffer, or \c nullptr
+   */
+  D3D11Buffer* GetCommonBuffer(
+          ID3D11Resource*       pResource);
   
 }

@@ -81,11 +81,8 @@ Additionally, `DXVK_HUD=1` has the same effect as `DXVK_HUD=devinfo,fps`.
 ### Debugging
 The following environment variables can be used for **debugging** purposes.
 - `VK_INSTANCE_LAYERS=VK_LAYER_LUNARG_standard_validation` Enables Vulkan debug layers. Highly recommended for troubleshooting rendering issues and driver crashes. Requires the Vulkan SDK to be installed on the host system.
-- `DXVK_CUSTOM_VENDOR_ID=<ID>` Specifies a custom PCI vendor ID
-- `DXVK_CUSTOM_DEVICE_ID=<ID>` Specifies a custom PCI device ID
-- `DXVK_LOG_LEVEL=none|error|warn|info|debug` Controls message logging
-- `DXVK_FAKE_DX10_SUPPORT=1` Advertizes support for D3D10 interfaces
-- `DXVK_USE_PIPECOMPILER=1` Enable asynchronous pipeline compilation. This currently only has an effect on RADV in mesa-git.
+- `DXVK_LOG_LEVEL=none|error|warn|info|debug` Controls message logging.
+- `DXVK_CONFIG_FILE=/xxx/dxvk.conf` Sets path to the configuration file.
 
 ## Troubleshooting
 DXVK requires threading support from your mingw-w64 build environment. If you

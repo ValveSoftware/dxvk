@@ -9,10 +9,10 @@ namespace dxvk {
   D3D11Buffer::D3D11Buffer(
           D3D11Device*                pDevice,
     const D3D11_BUFFER_DESC*          pDesc)
-  : m_device    (pDevice),
-    m_desc      (*pDesc),
-    m_buffer    (CreateBuffer(pDesc)),
-    m_bufferInfo{ m_buffer->slice() } {
+  : m_device      (pDevice),
+    m_desc        (*pDesc),
+    m_buffer      (CreateBuffer(pDesc)),
+    m_mappedSlice (m_buffer->slice()) {
     
   }
   
@@ -65,6 +65,28 @@ namespace dxvk {
   }
   
   
+  bool D3D11Buffer::CheckViewCompatibility(
+          UINT                BindFlags,
+          DXGI_FORMAT         Format) const {
+    // Check whether the given bind flags are supported
+    VkBufferUsageFlags usage = GetBufferUsageFlags(BindFlags);
+
+    if ((m_buffer->info().usage & usage) != usage)
+      return false;
+
+    // Structured buffer views use no format
+    if (Format == DXGI_FORMAT_UNKNOWN)
+      return (m_desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED) != 0;
+
+    // Check whether the given combination of buffer view
+    // type and view format is supported by the device
+    DXGI_VK_FORMAT_INFO viewFormat = m_device->LookupFormat(Format, DXGI_VK_FORMAT_MODE_ANY);
+    VkFormatFeatureFlags features = GetBufferFormatFeatures(BindFlags);
+
+    return CheckFormatFeatureSupport(viewFormat.Format, features);
+  }
+
+
   Rc<DxvkBuffer> D3D11Buffer::CreateBuffer(
     const D3D11_BUFFER_DESC* pDesc) const {
     DxvkBufferCreateInfo  info;
@@ -149,5 +171,23 @@ namespace dxvk {
 
     return m_device->GetDXVKDevice()->createBuffer(info, memoryFlags);
   }
+
+
+  BOOL D3D11Buffer::CheckFormatFeatureSupport(
+          VkFormat              Format,
+          VkFormatFeatureFlags  Features) const {
+    VkFormatProperties properties = m_device->GetDXVKDevice()->adapter()->formatProperties(Format);
+    return (properties.bufferFeatures & Features) == Features;
+  }
   
+
+  D3D11Buffer* GetCommonBuffer(ID3D11Resource* pResource) {
+    D3D11_RESOURCE_DIMENSION dimension = D3D11_RESOURCE_DIMENSION_UNKNOWN;
+    pResource->GetType(&dimension);
+
+    return dimension == D3D11_RESOURCE_DIMENSION_BUFFER
+      ? static_cast<D3D11Buffer*>(pResource)
+      : nullptr;
+  }
+
 }

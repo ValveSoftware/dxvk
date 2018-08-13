@@ -4,6 +4,8 @@ util_src = files([
   
   'com/com_guid.cpp',
   'com/com_private_data.cpp',
+
+  'config/config.cpp',
   
   'log/log.cpp',
   'log/log_debug.cpp',
