@@ -244,7 +244,7 @@ namespace dxvk {
       const Rc<DxvkImageView>&    imageView,
             VkOffset3D            offset,
             VkExtent3D            extent,
-            VkClearColorValue     value);
+            VkClearValue          value);
     
     /**
      * \brief Copies data from one buffer to another
@@ -659,6 +659,18 @@ namespace dxvk {
     std::array<DxvkShaderResourceSlot, MaxNumResourceSlots>  m_rc;
     std::array<DxvkDescriptorInfo,     MaxNumActiveBindings> m_descInfos;
     std::array<uint32_t,               MaxNumActiveBindings> m_descOffsets;
+    
+    void clearImageViewFb(
+      const Rc<DxvkImageView>&    imageView,
+            VkOffset3D            offset,
+            VkExtent3D            extent,
+            VkClearValue          value);
+    
+    void clearImageViewCs(
+      const Rc<DxvkImageView>&    imageView,
+            VkOffset3D            offset,
+            VkExtent3D            extent,
+            VkClearValue          value);
     
     void startRenderPass();
     void spillRenderPass();

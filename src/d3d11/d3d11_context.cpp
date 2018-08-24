@@ -651,11 +651,11 @@ namespace dxvk {
     }
     
     // Set up clear color struct
-    VkClearColorValue clearValue;
-    clearValue.uint32[0] = Values[0];
-    clearValue.uint32[1] = Values[1];
-    clearValue.uint32[2] = Values[2];
-    clearValue.uint32[3] = Values[3];
+    VkClearValue clearValue;
+    clearValue.color.uint32[0] = Values[0];
+    clearValue.color.uint32[1] = Values[1];
+    clearValue.color.uint32[2] = Values[2];
+    clearValue.color.uint32[3] = Values[3];
     
     if (uav->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER) {
       // In case of raw and structured buffers as well as typed
@@ -693,7 +693,7 @@ namespace dxvk {
           ctx->clearBufferView(
             cDstView, 0,
             cDstView->elementCount(),
-            cClearValue);
+            cClearValue.color);
         });
       }
     } else {
@@ -729,11 +729,11 @@ namespace dxvk {
     if (uav == nullptr)
       return;
     
-    VkClearColorValue clearValue;
-    clearValue.float32[0] = Values[0];
-    clearValue.float32[1] = Values[1];
-    clearValue.float32[2] = Values[2];
-    clearValue.float32[3] = Values[3];
+    VkClearValue clearValue;
+    clearValue.color.float32[0] = Values[0];
+    clearValue.color.float32[1] = Values[1];
+    clearValue.color.float32[2] = Values[2];
+    clearValue.color.float32[3] = Values[3];
     
     if (uav->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER) {
       EmitCs([
@@ -743,7 +743,7 @@ namespace dxvk {
         ctx->clearBufferView(
           cDstView, 0,
           cDstView->elementCount(),
-          cClearValue);
+          cClearValue.color);
       });
     } else {
       EmitCs([
@@ -799,25 +799,161 @@ namespace dxvk {
     });
   }
   
+
   void STDMETHODCALLTYPE D3D11DeviceContext::ClearView(
           ID3D11View*                       pView, 
     const FLOAT                             Color[4], 
     const D3D11_RECT*                       pRect, 
           UINT                              NumRects) {
-    Logger::err("D3D11DeviceContext::ClearView: not implemented");
+    // ID3D11View has no methods to query the exact type of
+    // the view, so we'll have to check each possible class
+    auto dsv = dynamic_cast<D3D11DepthStencilView*>(pView);
+    auto rtv = dynamic_cast<D3D11RenderTargetView*>(pView);
+    auto uav = dynamic_cast<D3D11UnorderedAccessView*>(pView);
+
+    // Retrieve underlying resource view
+    Rc<DxvkBufferView> bufView;
+    Rc<DxvkImageView>  imgView;
+
+    if (dsv != nullptr)
+      imgView = dsv->GetImageView();
+
+    if (rtv != nullptr)
+      imgView = rtv->GetImageView();
+    
+    if (uav != nullptr) {
+      bufView = uav->GetBufferView();
+      imgView = uav->GetImageView();
+    }
+
+    // 3D views are unsupported
+    if (imgView != nullptr
+     && imgView->info().type == VK_IMAGE_VIEW_TYPE_3D)
+      return;
+
+    // Query the view format. We'll have to convert
+    // the clear color based on the format's data type.
+    VkFormat format = VK_FORMAT_UNDEFINED;
+
+    if (bufView != nullptr)
+      format = bufView->info().format;
+    
+    if (imgView != nullptr)
+      format = imgView->info().format;
+    
+    if (format == VK_FORMAT_UNDEFINED)
+      return;
+    
+    // We'll need the format info to determine the buffer
+    // element size, and we also need it for depth images.
+    const DxvkFormatInfo* formatInfo = imageFormatInfo(format);
+
+    // Convert the clear color format. ClearView takes
+    // the clear value for integer formats as a set of
+    // integral floats, so we'll have to convert.
+    VkClearValue clearValue;
+
+    if (imgView == nullptr || imgView->info().aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
+      for (uint32_t i = 0; i < 4; i++) {
+        if (formatInfo->flags.test(DxvkFormatFlag::SampledUInt))
+          clearValue.color.uint32[i] = uint32_t(Color[i]);
+        else if (formatInfo->flags.test(DxvkFormatFlag::SampledSInt))
+          clearValue.color.int32[i] = int32_t(Color[i]);
+        else
+          clearValue.color.float32[i] = Color[i];
+      }
+    } else {
+      clearValue.depthStencil.depth   = Color[0];
+      clearValue.depthStencil.stencil = 0;
+    }
+
+    // Clear all the rectangles that are specified
+    for (uint32_t i = 0; i < NumRects; i++) {
+      if (pRect[i].left >= pRect[i].right
+       || pRect[i].top >= pRect[i].bottom)
+        continue;
+      
+      if (bufView != nullptr) {
+        VkDeviceSize offset = pRect[i].left;
+        VkDeviceSize length = pRect[i].right - pRect[i].left;
+
+        EmitCs([
+          cBufferView   = bufView,
+          cRangeOffset  = offset,
+          cRangeLength  = length,
+          cClearValue   = clearValue
+        ] (DxvkContext* ctx) {
+          ctx->clearBufferView(
+            cBufferView,
+            cRangeOffset,
+            cRangeLength,
+            cClearValue.color);
+        });
+      }
+
+      if (imgView != nullptr) {
+        VkOffset3D offset = { pRect[i].left, pRect[i].top, 0 };
+        VkExtent3D extent = { 
+          uint32_t(pRect[i].right - pRect[i].left),
+          uint32_t(pRect[i].bottom - pRect[i].top), 1 };
+        
+        EmitCs([
+          cImageView    = imgView,
+          cAreaOffset   = offset,
+          cAreaExtent   = extent,
+          cClearValue   = clearValue
+        ] (DxvkContext* ctx) {
+          ctx->clearImageView(
+            cImageView,
+            cAreaOffset,
+            cAreaExtent,
+            cClearValue);
+        });
+      }
+    }
+
+    // The rect array is optional, so if it is not
+    // specified, we'll have to clear the entire view
+    if (pRect == nullptr) {
+      if (bufView != nullptr) {
+        EmitCs([
+          cBufferView   = bufView,
+          cClearValue   = clearValue,
+          cElementSize  = formatInfo->elementSize
+        ] (DxvkContext* ctx) {
+          ctx->clearBufferView(cBufferView,
+            cBufferView->info().rangeOffset / cElementSize,
+            cBufferView->info().rangeLength / cElementSize,
+            cClearValue.color);
+        });
+      }
+
+      if (imgView != nullptr) {
+        EmitCs([
+          cImageView    = imgView,
+          cClearValue   = clearValue
+        ] (DxvkContext* ctx) {
+          VkOffset3D offset = { 0, 0, 0 };
+          VkExtent3D extent = cImageView->mipLevelExtent(0);
+
+          ctx->clearImageView(cImageView,
+            offset, extent, cClearValue);
+        });
+      }
+    }
   }
   
+
   void STDMETHODCALLTYPE D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView* pShaderResourceView) {
     auto view = static_cast<D3D11ShaderResourceView*>(pShaderResourceView);
       
-    if (view->GetResourceType() != D3D11_RESOURCE_DIMENSION_BUFFER) {
-      EmitCs([cDstImageView = view->GetImageView()]
-      (DxvkContext* ctx) {
-        ctx->generateMipmaps(cDstImageView);
-      });
-    } else {
-      Logger::err("D3D11: GenerateMips called on a buffer");
-    }
+    if (view->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER)
+      return;
+      
+    EmitCs([cDstImageView = view->GetImageView()]
+    (DxvkContext* ctx) {
+      ctx->generateMipmaps(cDstImageView);
+    });
   }
   
   

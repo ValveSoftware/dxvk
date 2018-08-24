@@ -61,12 +61,8 @@ namespace dxvk {
       *pUMDVersion = LARGE_INTEGER();
     
     if (InterfaceName == __uuidof(ID3D10Device)
-     || InterfaceName == __uuidof(ID3D10Device1)) {
-      Logger::warn("DXGI: CheckInterfaceSupport: No D3D10 support");
-      
-      return m_factory->GetOptions()->fakeDx10Support
-        ? S_OK : DXGI_ERROR_UNSUPPORTED;
-    }
+     || InterfaceName == __uuidof(ID3D10Device1))
+      return S_OK;
     
     Logger::err("DXGI: CheckInterfaceSupport: Unsupported interface");
     Logger::err(str::format(InterfaceName));
@@ -165,7 +161,8 @@ namespace dxvk {
     }
     
     std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
-    std::mbstowcs(pDesc->Description, deviceProp.deviceName, std::size(pDesc->Description) - 1);
+    ::MultiByteToWideChar(CP_UTF8, 0, deviceProp.deviceName, -1, pDesc->Description,
+                          sizeof(pDesc->Description));
     
     VkDeviceSize deviceMemory = 0;
     VkDeviceSize sharedMemory = 0;

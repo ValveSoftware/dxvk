@@ -1,3 +1,19 @@
+d3d10_src = [
+  '../d3d10/d3d10_blend.cpp',
+  '../d3d10/d3d10_buffer.cpp',
+  '../d3d10/d3d10_depth_stencil.cpp',
+  '../d3d10/d3d10_device.cpp',
+  '../d3d10/d3d10_input_layout.cpp',
+  '../d3d10/d3d10_query.cpp',
+  '../d3d10/d3d10_rasterizer.cpp',
+  '../d3d10/d3d10_sampler.cpp',
+  '../d3d10/d3d10_texture.cpp',
+  '../d3d10/d3d10_util.cpp',
+  '../d3d10/d3d10_view_dsv.cpp',
+  '../d3d10/d3d10_view_rtv.cpp',
+  '../d3d10/d3d10_view_srv.cpp',
+]
+
 d3d11_src = [
   'd3d11_annotation.cpp',
   'd3d11_blend.cpp',
@@ -31,7 +47,7 @@ d3d11_src = [
   'd3d11_view_uav.cpp',
 ]
 
-d3d11_dll = shared_library('d3d11'+dll_ext, d3d11_src,
+d3d11_dll = shared_library('d3d11'+dll_ext, d3d11_src + d3d10_src,
   name_prefix         : '',
   link_with           : [ util_lib ],
   dependencies        : [ lib_dxgi, dxbc_dep, dxvk_dep ],
