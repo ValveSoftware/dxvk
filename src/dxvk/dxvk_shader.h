@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "dxvk_include.h"
+#include "dxvk_limits.h"
 #include "dxvk_pipelayout.h"
 
 #include "../spirv/spirv_code_buffer.h"
@@ -20,8 +21,15 @@ namespace dxvk {
    * implementation at pipeline compilation time.
    */
   enum class DxvkSpecConstantId : uint32_t {
-    RasterizerSampleCount       = 0x10000,
-    
+    /// Special constant ranges that do not count
+    /// towards the spec constant min/max values
+    ColorComponentMappings      = MaxNumResourceSlots,
+
+    // Specialization constants for pipeline state
+    SpecConstantRangeStart      = ColorComponentMappings + MaxNumRenderTargets * 4,
+    RasterizerSampleCount       = SpecConstantRangeStart + 0,
+
+    /// Lowest and highest known spec constant IDs
     SpecConstantIdMin           = RasterizerSampleCount,
     SpecConstantIdMax           = RasterizerSampleCount,
   };

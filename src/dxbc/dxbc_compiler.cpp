@@ -3732,10 +3732,10 @@ namespace dxvk {
   
   
   void DxbcCompiler::emitControlFlowRet(const DxbcShaderInstruction& ins) {
-    m_module.opReturn();
-    
     if (m_controlFlowBlocks.size() != 0) {
       uint32_t labelId = m_module.allocateId();
+      
+      m_module.opReturn();
       m_module.opLabel(labelId);
 
       // return can be used in place of break to terminate a case block
@@ -3743,7 +3743,7 @@ namespace dxvk {
         m_controlFlowBlocks.back().b_switch.labelCase = labelId;
     } else {
       // Last instruction in the current function
-      m_module.functionEnd();
+      this->emitFunctionEnd();
     }
   }
 
@@ -3767,7 +3767,6 @@ namespace dxvk {
       zeroTest.id, returnLabel, continueLabel);
     
     m_module.opLabel(returnLabel);
- 
     m_module.opReturn();
 
     m_module.opLabel(continueLabel);
@@ -5203,6 +5202,41 @@ namespace dxvk {
       }
     }
   }
+
+
+  void DxbcCompiler::emitOutputMapping() {
+    // For pixel shaders, we need to swizzle the
+    // output vectors using some spec constants.
+    for (uint32_t i = 0; i < m_oRegs.size(); i++) {
+      if (m_oRegs[i].id == 0 || m_oRegs[i].type.ccount < 2)
+        continue;
+      
+      DxbcRegisterValue vector = emitValueLoad(m_oRegs[i]);
+
+      uint32_t specTypeId = getScalarTypeId(DxbcScalarType::Uint32);
+      uint32_t compTypeId = getScalarTypeId(vector.type.ctype);
+      
+      std::array<uint32_t, 4> scalars;
+
+      for (uint32_t c = 0; c < vector.type.ccount; c++) {
+        const char* components = "rgba";
+
+        uint32_t specId = m_module.specConst32(specTypeId, c);
+        m_module.decorateSpecId(specId, uint32_t(DxvkSpecConstantId::ColorComponentMappings) + 4 * i + c);
+        m_module.setDebugName(specId, str::format("omap", i, ".", components[c]).c_str());
+
+        scalars[c] = m_module.opVectorExtractDynamic(compTypeId, vector.id, specId);
+      }
+
+      vector.id = m_module.opCompositeConstruct(
+        getVectorTypeId(vector.type),
+        vector.type.ccount,
+        scalars.data());
+      
+      emitValueStore(m_oRegs[i], vector,
+        DxbcRegMask::firstN(vector.type.ccount));
+    }
+  }
   
   
   DxbcRegisterValue DxbcCompiler::emitVsSystemValueLoad(
@@ -5783,20 +5817,42 @@ namespace dxvk {
   }
   
   
-  void DxbcCompiler::emitMainFunctionBegin() {
+  void DxbcCompiler::emitFunctionBegin(
+          uint32_t                entryPoint,
+          uint32_t                returnType,
+          uint32_t                funcType) {
+    this->emitFunctionEnd();
+      
     m_module.functionBegin(
-      m_module.defVoidType(),
-      m_entryPointId,
-      m_module.defFunctionType(
-        m_module.defVoidType(), 0, nullptr),
+      returnType, entryPoint, funcType,
       spv::FunctionControlMaskNone);
+    
+    m_insideFunction = true;
+  }
+  
+  
+  void DxbcCompiler::emitFunctionEnd() {
+    if (m_insideFunction) {
+      m_module.opReturn();
+      m_module.functionEnd();
+    }
+    
+    m_insideFunction = false;
+  }
+  
+  
+  void DxbcCompiler::emitFunctionLabel() {
     m_module.opLabel(m_module.allocateId());
   }
   
   
-  void DxbcCompiler::emitMainFunctionEnd() {
-    m_module.opReturn();
-    m_module.functionEnd();
+  void DxbcCompiler::emitMainFunctionBegin() {
+    this->emitFunctionBegin(
+      m_entryPointId,
+      m_module.defVoidType(),
+      m_module.defFunctionType(
+        m_module.defVoidType(), 0, nullptr));
+    this->emitFunctionLabel();
   }
   
   
@@ -5836,13 +5892,12 @@ namespace dxvk {
     m_vs.functionId = m_module.allocateId();
     m_module.setDebugName(m_vs.functionId, "vs_main");
     
-    m_module.functionBegin(
-      m_module.defVoidType(),
+    this->emitFunctionBegin(
       m_vs.functionId,
+      m_module.defVoidType(),
       m_module.defFunctionType(
-        m_module.defVoidType(), 0, nullptr),
-      spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+        m_module.defVoidType(), 0, nullptr));
+    this->emitFunctionLabel();
   }
   
   
@@ -5896,13 +5951,12 @@ namespace dxvk {
     m_ds.functionId = m_module.allocateId();
     m_module.setDebugName(m_ds.functionId, "ds_main");
     
-    m_module.functionBegin(
-      m_module.defVoidType(),
+    this->emitFunctionBegin(
       m_ds.functionId,
+      m_module.defVoidType(),
       m_module.defFunctionType(
-        m_module.defVoidType(), 0, nullptr),
-      spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+        m_module.defVoidType(), 0, nullptr));
+    this->emitFunctionLabel();
   }
   
   
@@ -5938,13 +5992,12 @@ namespace dxvk {
     m_gs.functionId = m_module.allocateId();
     m_module.setDebugName(m_gs.functionId, "gs_main");
     
-    m_module.functionBegin(
-      m_module.defVoidType(),
+    this->emitFunctionBegin(
       m_gs.functionId,
+      m_module.defVoidType(),
       m_module.defFunctionType(
-        m_module.defVoidType(), 0, nullptr),
-      spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+        m_module.defVoidType(), 0, nullptr));
+    this->emitFunctionLabel();
   }
   
   
@@ -5983,13 +6036,12 @@ namespace dxvk {
     m_ps.functionId = m_module.allocateId();
     m_module.setDebugName(m_ps.functionId, "ps_main");
     
-    m_module.functionBegin(
-      m_module.defVoidType(),
+    this->emitFunctionBegin(
       m_ps.functionId,
+      m_module.defVoidType(),
       m_module.defFunctionType(
-        m_module.defVoidType(), 0, nullptr),
-      spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+        m_module.defVoidType(), 0, nullptr));
+    this->emitFunctionLabel();
   }
   
   
@@ -5998,13 +6050,12 @@ namespace dxvk {
     m_cs.functionId = m_module.allocateId();
     m_module.setDebugName(m_cs.functionId, "cs_main");
     
-    m_module.functionBegin(
-      m_module.defVoidType(),
+    this->emitFunctionBegin(
       m_cs.functionId,
+      m_module.defVoidType(),
       m_module.defFunctionType(
-        m_module.defVoidType(), 0, nullptr),
-      spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+        m_module.defVoidType(), 0, nullptr));
+    this->emitFunctionLabel();
   }
   
   
@@ -6017,7 +6068,7 @@ namespace dxvk {
     this->emitOutputSetup();
     this->emitClipCullStore(DxbcSystemValue::ClipDistance, m_clipDistances);
     this->emitClipCullStore(DxbcSystemValue::CullDistance, m_cullDistances);
-    this->emitMainFunctionEnd();
+    this->emitFunctionEnd();
   }
   
   
@@ -6042,7 +6093,7 @@ namespace dxvk {
     
     this->emitOutputSetup();
     this->emitHsInvocationBlockEnd();
-    this->emitMainFunctionEnd();
+    this->emitFunctionEnd();
   }
   
   
@@ -6054,7 +6105,7 @@ namespace dxvk {
     this->emitOutputSetup();
     this->emitClipCullStore(DxbcSystemValue::ClipDistance, m_clipDistances);
     this->emitClipCullStore(DxbcSystemValue::CullDistance, m_cullDistances);
-    this->emitMainFunctionEnd();
+    this->emitFunctionEnd();
   }
   
   
@@ -6067,7 +6118,7 @@ namespace dxvk {
       m_gs.functionId, 0, nullptr);
     // No output setup at this point as that was
     // already done during the EmitVertex step
-    this->emitMainFunctionEnd();
+    this->emitFunctionEnd();
   }
   
   
@@ -6098,7 +6149,8 @@ namespace dxvk {
     }
     
     this->emitOutputSetup();
-    this->emitMainFunctionEnd();
+    this->emitOutputMapping();
+    this->emitFunctionEnd();
   }
   
   
@@ -6107,7 +6159,7 @@ namespace dxvk {
     m_module.opFunctionCall(
       m_module.defVoidType(),
       m_cs.functionId, 0, nullptr);
-    this->emitMainFunctionEnd();
+    this->emitFunctionEnd();
   }
   
   
@@ -6212,9 +6264,10 @@ namespace dxvk {
     
     uint32_t funId = m_module.allocateId();
     
-    m_module.functionBegin(m_module.defVoidType(),
-      funId, funTypeId, spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+    this->emitFunctionBegin(funId,
+      m_module.defVoidType(),
+      funTypeId);
+    this->emitFunctionLabel();
     
     DxbcCompilerHsControlPointPhase result;
     result.functionId = funId;
@@ -6230,9 +6283,10 @@ namespace dxvk {
     uint32_t funId = m_module.allocateId();
     m_module.setDebugName(funId, "hs_passthrough");
     
-    m_module.functionBegin(m_module.defVoidType(),
-      funId, funTypeId, spv::FunctionControlMaskNone);
-    m_module.opLabel(m_module.allocateId());
+    this->emitFunctionBegin(funId,
+      m_module.defVoidType(),
+      funTypeId);
+    this->emitFunctionLabel();
     
     // We'll basically copy each input variable to the corresponding
     // output, using the shader's invocation ID as the array index.
@@ -6270,8 +6324,7 @@ namespace dxvk {
     }
     
     // End function
-    m_module.opReturn();
-    m_module.functionEnd();
+    this->emitFunctionEnd();
     
     DxbcCompilerHsControlPointPhase result;
     result.functionId = funId;
@@ -6286,11 +6339,12 @@ namespace dxvk {
     
     uint32_t funId = m_module.allocateId();
     
-    m_module.functionBegin(m_module.defVoidType(),
-      funId, funTypeId, spv::FunctionControlMaskNone);
+    this->emitFunctionBegin(funId,
+      m_module.defVoidType(),
+      funTypeId);
     
     uint32_t argId = m_module.functionParameter(argTypeId);
-    m_module.opLabel(m_module.allocateId());
+    this->emitFunctionLabel();
     
     DxbcCompilerHsForkJoinPhase result;
     result.functionId = funId;

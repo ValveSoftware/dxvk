@@ -171,6 +171,46 @@ namespace dxvk::util {
    * \returns Data size, in bytes
    */
   VkDeviceSize computeImageDataSize(VkFormat format, VkExtent3D extent);
+
+  /**
+   * \brief Applies a component mapping to a component mask
+   * 
+   * For each component, the component specified in the mapping
+   * is used to look up the flag of the original component mask.
+   * If the component mapping is zero or one, the corresponding
+   * mask bit will be set to zero.
+   * \param [in] mask The original component mask
+   * \param [in] mapping Component mapping to apply
+   * \returns Remapped component mask
+   */
+  VkColorComponentFlags remapComponentMask(
+          VkColorComponentFlags       mask,
+          VkComponentMapping          mapping);
+  
+  /**
+   * \brief Inverts a component mapping
+   *
+   * Transforms a component mapping so that components can
+   * be mapped back to their original location. Requires
+   * that each component is used only once.
+   * 
+   * For example. when given a mapping of (0,0,0,R),
+   * this function will return the mapping (A,0,0,0).
+   * \returns Inverted component mapping
+   */
+  VkComponentMapping invertComponentMapping(
+          VkComponentMapping          mapping);
+  
+  /**
+   * \brief Computes component index for a component swizzle
+   * 
+   * \param [in] component The component swizzle
+   * \param [in] identity Value for SWIZZLE_IDENTITY
+   * \returns Component index
+   */
+  uint32_t getComponentIndex(
+          VkComponentSwizzle          component,
+          uint32_t                    identity);
   
 }
 
