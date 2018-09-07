@@ -31,6 +31,7 @@ if meson.get_cross_property('winelib', false)
   lib_dxgi    = declare_dependency(link_args: [ '-ldxgi' ])
   lib_d3dcompiler_43 = declare_dependency(link_args: [ '-L'+dxvk_library_path, '-ld3dcompiler_43' ])
   lib_d3dcompiler_47 = declare_dependency(link_args: [ '-ld3dcompiler' ])
+  proton_dep = dependency('proton')
   exe_ext = '.exe.so'
   dll_ext = '.dll'
   def_spec_ext = '.spec'
