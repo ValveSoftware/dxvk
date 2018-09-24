@@ -146,9 +146,8 @@ namespace dxvk {
   
   
   bool D3D11Query::HasBeginEnabled() const {
-    return m_desc.Query == D3D11_QUERY_OCCLUSION
-        || m_desc.Query == D3D11_QUERY_OCCLUSION_PREDICATE
-        || m_desc.Query == D3D11_QUERY_PIPELINE_STATISTICS;
+    return m_desc.Query != D3D11_QUERY_EVENT
+        && m_desc.Query != D3D11_QUERY_TIMESTAMP;
   }
   
   
@@ -201,9 +200,15 @@ namespace dxvk {
     } else {
       DxvkQueryData queryData = {};
       
-      if (m_query                     != nullptr
-       && m_query->getData(queryData) != DxvkQueryStatus::Available)
-        return S_FALSE;
+      if (m_query != nullptr) {
+        DxvkQueryStatus status = m_query->getData(queryData);
+
+        if (status == DxvkQueryStatus::Created)
+          return DXGI_ERROR_INVALID_CALL;
+        
+        if (status != DxvkQueryStatus::Available)
+          return S_FALSE;
+      }
       
       if (pData == nullptr)
         return S_OK;

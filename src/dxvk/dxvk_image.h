@@ -376,7 +376,7 @@ namespace dxvk {
     VkImageLayout pickLayout(VkImageLayout layout) const {
       return m_image->pickLayout(layout);
     }
-    
+
   private:
     
     Rc<vk::DeviceFn>  m_vkd;
@@ -384,7 +384,7 @@ namespace dxvk {
     
     DxvkImageViewCreateInfo m_info;
     VkImageView             m_views[ViewCount];
-    
+
     void createView(VkImageViewType type, uint32_t numLayers);
     
   };

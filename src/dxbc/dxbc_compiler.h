@@ -246,6 +246,8 @@ namespace dxvk {
     
     uint32_t invocationBlockBegin  = 0;
     uint32_t invocationBlockEnd    = 0;
+
+    uint32_t outputPerPatchMask    = 0;
     
     DxbcCompilerHsControlPointPhase          cpPhase;
     std::vector<DxbcCompilerHsForkJoinPhase> forkPhases;
@@ -430,6 +432,11 @@ namespace dxvk {
     // Control flow information. Stores labels for
     // currently active if-else blocks and loops.
     std::vector<DxbcCfgBlock> m_controlFlowBlocks;
+    
+    //////////////////////////////////////////////
+    // Function state tracking. Required in order
+    // to properly end functions in some cases.
+    bool m_insideFunction = false;
     
     ///////////////////////////////////////////////
     // Specialization constants. These are defined
@@ -817,6 +824,10 @@ namespace dxvk {
             DxbcRegisterValue       value,
             DxbcZeroTest            test);
     
+    DxbcRegisterValue emitRegisterMaskBits(
+            DxbcRegisterValue       value,
+            uint32_t                mask);
+    
     DxbcRegisterValue emitSrcOperandModifiers(
             DxbcRegisterValue       value,
             DxbcRegModifiers        modifiers);
@@ -942,6 +953,7 @@ namespace dxvk {
     void emitInputSetup(uint32_t vertexCount);
     
     void emitOutputSetup();
+    void emitOutputMapping();
     
     //////////////////////////////////////////
     // System value load methods (per shader)
@@ -955,10 +967,6 @@ namespace dxvk {
             uint32_t                vertexId);
     
     DxbcRegisterValue emitPsSystemValueLoad(
-            DxbcSystemValue         sv,
-            DxbcRegMask             mask);
-    
-    DxbcRegisterValue emitCsSystemValueLoad(
             DxbcSystemValue         sv,
             DxbcRegMask             mask);
     
@@ -1008,9 +1016,16 @@ namespace dxvk {
     // Common function definition methods
     void emitInit();
     
-    void emitMainFunctionBegin();
+    void emitFunctionBegin(
+            uint32_t                entryPoint,
+            uint32_t                returnType,
+            uint32_t                funcType);
     
-    void emitMainFunctionEnd();
+    void emitFunctionEnd();
+    
+    void emitFunctionLabel();
+    
+    void emitMainFunctionBegin();
     
     /////////////////////////////////
     // Shader initialization methods
@@ -1044,6 +1059,8 @@ namespace dxvk {
             uint32_t                          count);
     
     void emitHsInvocationBlockEnd();
+
+    void emitHsOutputSetup();
     
     uint32_t emitTessInterfacePerPatch(
             spv::StorageClass                 storageClass);

@@ -272,12 +272,25 @@ namespace dxvk {
     std::lock_guard<std::mutex> lockWin(m_lockWindow);
     std::lock_guard<std::mutex> lockBuf(m_lockBuffer);
 
+    // We'll apply certainl user options to the presenter
+    const DxgiOptions* options = m_factory->GetOptions();
+
+    // Retrieve the number of back buffers. If this option
+    // was defined by the user, it overrides app settings.
+    uint32_t bufferCount = m_desc.BufferCount;
+
+    if (options->numBackBuffers > 0)
+      bufferCount = options->numBackBuffers;
+
     // Higher values are not allowed according to the Microsoft documentation:
     // 
     //   "1 through 4 - Synchronize presentation after the nth vertical blank."
     //   https://msdn.microsoft.com/en-us/library/windows/desktop/bb174576(v=vs.85).aspx
     SyncInterval = std::min<UINT>(SyncInterval, 4);
-    
+
+    if (options->syncInterval >= 0)
+      SyncInterval = options->syncInterval;
+
     try {
       // If in fullscreen mode, apply any updated gamma curve
       // if it has been changed since the last present call.
@@ -298,11 +311,7 @@ namespace dxvk {
       // up vertical synchronization properly, but also apply
       // changes that were made to the window size even if the
       // Vulkan swap chain itself remains valid.
-      VkPresentModeKHR presentMode = SyncInterval == 0
-        ? VK_PRESENT_MODE_IMMEDIATE_KHR
-        : VK_PRESENT_MODE_FIFO_KHR;
-      
-      m_presenter->RecreateSwapchain(m_desc.Format, presentMode, GetWindowSize());
+      m_presenter->RecreateSwapchain(m_desc.Format, SyncInterval != 0, GetWindowSize(), bufferCount);
       m_presenter->PresentImage(SyncInterval, m_device->GetFrameSyncEvent());
       return S_OK;
     } catch (const DxvkError& err) {

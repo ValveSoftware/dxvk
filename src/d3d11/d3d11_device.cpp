@@ -113,16 +113,16 @@ namespace dxvk {
       throw DxvkError("D3D11Device: Failed to query adapter");
     
     m_initializer = new D3D11Initializer(m_dxvkDevice);
-    m_uavCounters = new D3D11UavCounterAllocator(this);
     m_context     = new D3D11ImmediateContext(this, m_dxvkDevice);
     m_d3d10Device = new D3D10Device(this, m_context);
+
+    m_uavCounters = CreateUAVCounterBuffer();
   }
   
   
   D3D11Device::~D3D11Device() {
     delete m_d3d10Device;
     delete m_context;
-    delete m_uavCounters;
     delete m_initializer;
   }
   
@@ -612,6 +612,7 @@ namespace dxvk {
 
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
+    moduleInfo.tess    = nullptr;
     
     if (FAILED(this->CreateShaderModule(&module,
         pShaderBytecode, BytecodeLength, pClassLinkage,
@@ -636,6 +637,7 @@ namespace dxvk {
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
+    moduleInfo.tess    = nullptr;
 
     if (FAILED(this->CreateShaderModule(&module,
         pShaderBytecode, BytecodeLength, pClassLinkage,
@@ -679,6 +681,7 @@ namespace dxvk {
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
+    moduleInfo.tess    = nullptr;
 
     if (FAILED(this->CreateShaderModule(&module,
         pShaderBytecode, BytecodeLength, pClassLinkage,
@@ -701,8 +704,15 @@ namespace dxvk {
     InitReturnPtr(ppHullShader);
     D3D11CommonShader module;
     
+    DxbcTessInfo tessInfo;
+    tessInfo.maxTessFactor = float(m_d3d11Options.maxTessFactor);
+
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
+    moduleInfo.tess    = nullptr;
+
+    if (tessInfo.maxTessFactor >= 8.0f)
+      moduleInfo.tess = &tessInfo;
 
     if (FAILED(this->CreateShaderModule(&module,
         pShaderBytecode, BytecodeLength, pClassLinkage,
@@ -727,6 +737,7 @@ namespace dxvk {
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
+    moduleInfo.tess    = nullptr;
 
     if (FAILED(this->CreateShaderModule(&module,
         pShaderBytecode, BytecodeLength, pClassLinkage,
@@ -751,6 +762,7 @@ namespace dxvk {
     
     DxbcModuleInfo moduleInfo;
     moduleInfo.options = m_dxbcOptions;
+    moduleInfo.tess    = nullptr;
 
     if (FAILED(this->CreateShaderModule(&module,
         pShaderBytecode, BytecodeLength, pClassLinkage,
@@ -1312,6 +1324,9 @@ namespace dxvk {
 
     enabled.core.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
     enabled.core.pNext = nullptr;
+
+    enabled.extVertexAttributeDivisor.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT;
+    enabled.extVertexAttributeDivisor.pNext = nullptr;
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_1) {
       enabled.core.features.depthClamp                            = VK_TRUE;
@@ -1364,7 +1379,38 @@ namespace dxvk {
       enabled.core.features.vertexPipelineStoresAndAtomics        = VK_TRUE;
     }
     
+    if (supported.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor
+     && supported.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor) {
+      enabled.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor      = VK_TRUE;
+      enabled.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor  = VK_TRUE;
+    }
+
     return enabled;
+  }
+  
+  
+  Rc<D3D11CounterBuffer> D3D11Device::CreateUAVCounterBuffer() {
+    // UAV counters are going to be used as raw storage buffers, so
+    // we need to align them to the minimum SSBO offset alignment
+    const auto& devInfo = m_dxvkAdapter->deviceProperties();
+
+    VkDeviceSize uavCounterSliceLength = align<VkDeviceSize>(
+      sizeof(D3D11UavCounter), devInfo.limits.minStorageBufferOffsetAlignment);
+
+    DxvkBufferCreateInfo uavCounterInfo;
+    uavCounterInfo.size   = 4096 * uavCounterSliceLength;
+    uavCounterInfo.usage  = VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                          | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+                          | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    uavCounterInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
+                          | GetEnabledShaderStages();
+    uavCounterInfo.access = VK_ACCESS_TRANSFER_READ_BIT
+                          | VK_ACCESS_TRANSFER_WRITE_BIT
+                          | VK_ACCESS_SHADER_READ_BIT
+                          | VK_ACCESS_SHADER_WRITE_BIT;
+    
+    return new D3D11CounterBuffer(m_dxvkDevice,
+      uavCounterInfo, uavCounterSliceLength);
   }
   
   
@@ -1387,8 +1433,8 @@ namespace dxvk {
       return E_FAIL;
     }
   }
-  
-  
+
+
   HRESULT D3D11Device::GetFormatSupportFlags(DXGI_FORMAT Format, UINT* pFlags1, UINT* pFlags2) const {
     // Query some general information from DXGI, DXVK and Vulkan about the format
     const DXGI_VK_FORMAT_INFO fmtMapping = m_dxgiAdapter->LookupFormat(Format, DXGI_VK_FORMAT_MODE_ANY);

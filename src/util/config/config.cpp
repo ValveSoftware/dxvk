@@ -11,9 +11,18 @@
 namespace dxvk {
 
   const static std::unordered_map<std::string, Config> g_appDefaults = {{
+    /* Assassin's Creed Syndicate - amdags issues */
+    { "ACS.exe", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
     /* Dishonored 2                               */
     { "Dishonored2.exe", {{
       { "d3d11.allowMapFlagNoWait",         "True" }
+    }} },
+    /* Dragon Quest 2 - keeps searching for NVAPI */
+    { "DRAGON QUEST XI.exe", {{
+      { "dxgi.customVendorId",              "1002" },
+      { "dxgi.customDeviceId",              "e366" },
     }} },
     /* F1 2015                                    */
     { "F1_2015.exe", {{
@@ -34,6 +43,16 @@ namespace dxvk {
     /* Just Cause 2 (Dx10)                        */
     { "JustCause2.exe", {{
       { "dxgi.fakeDx10Support",             "True" },
+    }} },
+    /* Grand Theft Auto V                         */
+    { "GTA5.exe", {{
+      { "dxgi.customVendorId",              "1002" },
+      { "dxgi.customDeviceId",              "e366" },
+    }} },
+    /* Batman: Arkham Knight                      */
+    { "BatmanAK.exe", {{
+      { "dxgi.customVendorId",              "1002" },
+      { "dxgi.customDeviceId",              "e366" },
     }} },
     /* Mafia 3                                    */
     { "mafia3.exe", {{
@@ -197,8 +216,13 @@ namespace dxvk {
 
   Config Config::getAppConfig(const std::string& appName) {
     auto appConfig = g_appDefaults.find(appName);
-    if (appConfig != g_appDefaults.end())
+    if (appConfig != g_appDefaults.end()) {
+      // Inform the user that we loaded a default config
+      Logger::info(str::format("Found built-in config: ", appName));
+
       return appConfig->second;
+    }
+
     return Config();
   }
 
@@ -217,6 +241,10 @@ namespace dxvk {
 
     if (!stream)
       return config;
+    
+    // Inform the user that we loaded a file, might
+    // help when debugging configuration issues
+    Logger::info(str::format("Found config file: ", filePath));
 
     // Parse the file line by line
     std::string line;
@@ -225,6 +253,16 @@ namespace dxvk {
       parseUserConfigLine(config, line);
     
     return config;
+  }
+
+
+  void Config::logOptions() const {
+    if (!m_options.empty()) {
+      Logger::info("Effective configuration:");
+
+      for (auto& pair : m_options)
+        Logger::info(str::format("  ", pair.first, " = ", pair.second));
+    }
   }
 
 }

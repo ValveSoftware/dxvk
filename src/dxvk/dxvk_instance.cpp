@@ -13,6 +13,7 @@ namespace dxvk {
 
     m_config = Config::getUserConfig();
     m_config.merge(Config::getAppConfig(env::getExeName()));
+    m_config.logOptions();
 
     g_vrInstance.initInstanceExtensions();
 
@@ -88,6 +89,8 @@ namespace dxvk {
   
   
   std::vector<Rc<DxvkAdapter>> DxvkInstance::queryAdapters() {
+    DxvkDeviceFilter filter;
+    
     uint32_t numAdapters = 0;
     if (m_vki->vkEnumeratePhysicalDevices(m_vki->instance(), &numAdapters, nullptr) != VK_SUCCESS)
       throw DxvkError("DxvkInstance::enumAdapters: Failed to enumerate adapters");
@@ -97,14 +100,23 @@ namespace dxvk {
       throw DxvkError("DxvkInstance::enumAdapters: Failed to enumerate adapters");
     
     std::vector<Rc<DxvkAdapter>> result;
-    for (uint32_t i = 0; i < numAdapters; i++)
-      result.push_back(new DxvkAdapter(this, adapters[i]));
+    for (uint32_t i = 0; i < numAdapters; i++) {
+      Rc<DxvkAdapter> adapter = new DxvkAdapter(this, adapters[i]);
+      
+      if (filter.testAdapter(adapter))
+        result.push_back(adapter);
+    }
     
     std::sort(result.begin(), result.end(),
       [this] (const Rc<DxvkAdapter>& a, const Rc<DxvkAdapter>& b) -> bool {
         return a->deviceProperties().deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
             && b->deviceProperties().deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
       });
+    
+    if (result.size() == 0) {
+      Logger::warn("DXVK: No adapters found. Please check your "
+                   "device filter settings and Vulkan setup.");
+    }
     
     return result;
   }

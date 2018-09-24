@@ -7,16 +7,18 @@
 
 #include "../dxgi/dxgi_object.h"
 
+#include "../dxvk/dxvk_cs.h"
+
 #include "../d3d10/d3d10_device.h"
 
 #include "../util/com/com_private_data.h"
 
+#include "d3d11_counter_buffer.h"
 #include "d3d11_initializer.h"
 #include "d3d11_interfaces.h"
 #include "d3d11_options.h"
 #include "d3d11_shader.h"
 #include "d3d11_state.h"
-#include "d3d11_uav_counter.h"
 #include "d3d11_util.h"
 
 namespace dxvk {
@@ -338,7 +340,12 @@ namespace dxvk {
     void FreeCounterSlice(const DxvkBufferSlice& Slice) {
       m_uavCounters->FreeSlice(Slice);
     }
-
+    
+    DxvkCsChunkRef AllocCsChunk() {
+      DxvkCsChunk* chunk = m_csChunkPool.allocChunk();
+      return DxvkCsChunkRef(chunk, &m_csChunkPool);
+    }
+    
     const D3D11Options* GetOptions() const {
       return &m_d3d11Options;
     }
@@ -369,10 +376,13 @@ namespace dxvk {
     const D3D11Options              m_d3d11Options;
     const DxbcOptions               m_dxbcOptions;
     
+    DxvkCsChunkPool                 m_csChunkPool;
+    
     D3D11Initializer*               m_initializer = nullptr;
-    D3D11UavCounterAllocator*       m_uavCounters = nullptr;
     D3D11ImmediateContext*          m_context     = nullptr;
     D3D10Device*                    m_d3d10Device = nullptr;
+
+    Rc<D3D11CounterBuffer>          m_uavCounters;
     
     D3D11StateObjectSet<D3D11BlendState>        m_bsStateObjects;
     D3D11StateObjectSet<D3D11DepthStencilState> m_dsStateObjects;
@@ -380,6 +390,8 @@ namespace dxvk {
     D3D11StateObjectSet<D3D11SamplerState>      m_samplerObjects;
     D3D11ShaderModuleSet                        m_shaderModules;
     
+    Rc<D3D11CounterBuffer> CreateUAVCounterBuffer();
+
     HRESULT CreateShaderModule(
             D3D11CommonShader*      pShaderModule,
       const void*                   pShaderBytecode,

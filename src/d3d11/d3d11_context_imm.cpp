@@ -520,7 +520,6 @@ namespace dxvk {
     // Wait for the any pending D3D11 command to be executed
     // on the CS thread so that we can determine whether the
     // resource is currently in use or not.
-    FlushCsChunk();
     SynchronizeCsThread();
     
     if (Resource->isInUse()) {
@@ -534,6 +533,7 @@ namespace dxvk {
         // Make sure pending commands using the resource get
         // executed on the the GPU if we have to wait for it
         Flush();
+        SynchronizeCsThread();
         
         while (Resource->isInUse())
           dxvk::this_thread::yield();
@@ -544,7 +544,7 @@ namespace dxvk {
   }
   
   
-  void D3D11ImmediateContext::EmitCsChunk(Rc<DxvkCsChunk>&& chunk) {
+  void D3D11ImmediateContext::EmitCsChunk(DxvkCsChunkRef&& chunk) {
     m_csThread.dispatchChunk(std::move(chunk));
     m_csIsBusy = true;
   }

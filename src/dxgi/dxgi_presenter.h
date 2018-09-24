@@ -103,13 +103,15 @@ namespace dxvk {
      * if any of the properties have changed. If no
      * properties have changed, this is a no-op.
      * \param [in] Format New surface format
-     * \param [in] PresentMode Present mode
+     * \param [in] Vsync Enable vertical sync
      * \param [in] WindowSize Window size
+     * \param [in] BufferCount Swap image count
      */
     void RecreateSwapchain(
             DXGI_FORMAT       Format,
-            VkPresentModeKHR  PresentMode,
-            VkExtent2D        WindowSize);
+            BOOL              Vsync,
+            VkExtent2D        WindowSize,
+            UINT              BufferCount);
     
     /**
      * \brief Sets gamma curve
@@ -164,7 +166,7 @@ namespace dxvk {
     
     VkSurfaceFormatKHR PickSurfaceFormat(DXGI_FORMAT Fmt) const;
     
-    VkPresentModeKHR PickPresentMode(VkPresentModeKHR Preferred) const;
+    VkPresentModeKHR PickPresentMode(BOOL Vsync) const;
     
     Rc<DxvkSurface> CreateSurface();
     

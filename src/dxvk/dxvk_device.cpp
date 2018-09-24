@@ -106,8 +106,8 @@ namespace dxvk {
     Rc<DxvkCommandList> cmdList = m_recycledCommandLists.retrieveObject();
     
     if (cmdList == nullptr) {
-      cmdList = new DxvkCommandList(m_vkd,
-        this, m_adapter->graphicsQueueFamily());
+      cmdList = new DxvkCommandList(this,
+        m_adapter->graphicsQueueFamily());
     }
     
     return cmdList;
@@ -166,13 +166,6 @@ namespace dxvk {
   }
   
   
-  Rc<DxvkQueryPool> DxvkDevice::createQueryPool(
-          VkQueryType               queryType,
-          uint32_t                  queryCount) {
-    return new DxvkQueryPool(m_vkd, queryType, queryCount);
-  }
-  
-  
   Rc<DxvkSampler> DxvkDevice::createSampler(
     const DxvkSamplerCreateInfo&  createInfo) {
     return new DxvkSampler(m_vkd, createInfo);
@@ -213,6 +206,11 @@ namespace dxvk {
     std::lock_guard<sync::Spinlock> lock(m_statLock);
     result.merge(m_statCounters);
     return result;
+  }
+
+
+  uint32_t DxvkDevice::getCurrentFrameId() const {
+    return m_statCounters.getCtr(DxvkStatCounter::QueuePresentCount);
   }
   
   

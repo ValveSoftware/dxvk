@@ -2,36 +2,30 @@
 
 #include "d3d11_include.h"
 
+#include "../dxvk/dxvk_buffer.h"
+#include "../dxvk/dxvk_device.h"
+
 namespace dxvk {
 
   class D3D11Device;
 
   /**
-   * \brief UAV counter structure
-   * 
-   * Data structure passed to shaders that use
-   * append/consume buffer functionality.
-   */
-  struct D3D11UavCounter {
-    uint32_t atomicCtr;
-  };
-
-
-  /**
    * \brief D3D11 UAV counter slice allocator
    * 
-   * Thread-safe allocator for UAV counter slices.
-   * The resulting slices are aligned to the device's
-   * \c minStorageBufferOffsetAlignment.
+   * Thread safe allocator for buffer slices of
+   * the same size, which are typically used to
+   * store counters (such as UAV counters).
    */
-  class D3D11UavCounterAllocator {
-    constexpr static VkDeviceSize SlicesPerBuffer = 16384;
+  class D3D11CounterBuffer : public RcObject {
+
   public:
 
-    D3D11UavCounterAllocator(
-            D3D11Device*          pDevice);
+    D3D11CounterBuffer(
+      const Rc<DxvkDevice>&       Device,
+      const DxvkBufferCreateInfo& BufferInfo,
+            VkDeviceSize          SliceLength);
     
-    ~D3D11UavCounterAllocator();
+    ~D3D11CounterBuffer();
 
     /**
      * \brief Allocates a counter slice
@@ -54,15 +48,15 @@ namespace dxvk {
 
   private:
 
-    D3D11Device*                  m_device;
-    VkDeviceSize                  m_alignment;
+    Rc<DxvkDevice>                m_device;
+
+    DxvkBufferCreateInfo          m_bufferInfo;
+    VkDeviceSize                  m_sliceLength;
 
     std::mutex                    m_mutex;
     std::vector<DxvkBufferSlice>  m_freeSlices;
 
-    void CreateBuffer(VkDeviceSize SliceCount);
-
-    VkDeviceSize GetOffsetAlignment() const;
+    void CreateBuffer();
 
   };
 

@@ -153,9 +153,9 @@ namespace dxvk {
       case VK_IMAGE_VIEW_TYPE_3D: {
         this->createView(VK_IMAGE_VIEW_TYPE_3D, 1);
         
-        if (m_image->info().flags & VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT_KHR) {
+        if (m_image->info().flags & VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT_KHR && info.numLevels == 1) {
           this->createView(VK_IMAGE_VIEW_TYPE_2D,       1);
-          this->createView(VK_IMAGE_VIEW_TYPE_2D_ARRAY, m_image->info().extent.depth);
+          this->createView(VK_IMAGE_VIEW_TYPE_2D_ARRAY, m_image->mipLevelExtent(info.minLevel).depth);
         }
       } break;
       
@@ -193,6 +193,12 @@ namespace dxvk {
     viewInfo.format           = m_info.format;
     viewInfo.components       = m_info.swizzle;
     viewInfo.subresourceRange = subresourceRange;
+
+    if (m_info.usage == VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
+      viewInfo.components = {
+        VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+        VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+    }
     
     if (m_vkd->vkCreateImageView(m_vkd->device(),
           &viewInfo, nullptr, &m_views[type]) != VK_SUCCESS) {
