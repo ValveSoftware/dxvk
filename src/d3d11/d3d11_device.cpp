@@ -282,6 +282,9 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppSRView) {
     InitReturnPtr(ppSRView);
 
+    if (pResource == nullptr)
+      return E_INVALIDARG;
+    
     D3D11_COMMON_RESOURCE_DESC resourceDesc;
     GetCommonResourceDesc(pResource, &resourceDesc);
     
@@ -327,6 +330,9 @@ namespace dxvk {
           ID3D11UnorderedAccessView**       ppUAView) {
     InitReturnPtr(ppUAView);
     
+    if (pResource == nullptr)
+      return E_INVALIDARG;
+    
     D3D11_COMMON_RESOURCE_DESC resourceDesc;
     GetCommonResourceDesc(pResource, &resourceDesc);
 
@@ -371,18 +377,18 @@ namespace dxvk {
     const D3D11_RENDER_TARGET_VIEW_DESC*    pDesc,
           ID3D11RenderTargetView**          ppRTView) {
     InitReturnPtr(ppRTView);
+
+    if (pResource == nullptr)
+      return E_INVALIDARG;
     
     // DXVK only supports render target views for image resources
-    D3D11_RESOURCE_DIMENSION resourceDim = D3D11_RESOURCE_DIMENSION_UNKNOWN;
-    pResource->GetType(&resourceDim);
+    D3D11_COMMON_RESOURCE_DESC resourceDesc;
+    GetCommonResourceDesc(pResource, &resourceDesc);
     
-    if (resourceDim == D3D11_RESOURCE_DIMENSION_BUFFER) {
+    if (resourceDesc.Dim == D3D11_RESOURCE_DIMENSION_BUFFER) {
       Logger::warn("D3D11: Cannot create render target view for a buffer");
       return S_OK; // It is required to run Battlefield 3 and Battlefield 4.
     }
-    
-    D3D11_COMMON_RESOURCE_DESC resourceDesc;
-    GetCommonResourceDesc(pResource, &resourceDesc);
     
     // The view description is optional. If not defined, it
     // will use the resource's format and all array layers.
@@ -425,6 +431,9 @@ namespace dxvk {
     const D3D11_DEPTH_STENCIL_VIEW_DESC*    pDesc,
           ID3D11DepthStencilView**          ppDepthStencilView) {
     InitReturnPtr(ppDepthStencilView);
+    
+    if (pResource == nullptr)
+      return E_INVALIDARG;
     
     D3D11_COMMON_RESOURCE_DESC resourceDesc;
     GetCommonResourceDesc(pResource, &resourceDesc);
@@ -1143,25 +1152,24 @@ namespace dxvk {
         if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D11_OPTIONS))
           return E_INVALIDARG;
         
-        // TODO implement, most of these are required for FL 11.1
         // https://msdn.microsoft.com/en-us/library/windows/desktop/hh404457(v=vs.85).aspx
-        const DxvkDeviceFeatures& features = m_dxvkDevice->features();
-        
+        const auto& features = m_dxvkDevice->features();
+
         auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS*>(pFeatureSupportData);
         info->OutputMergerLogicOp                     = features.core.features.logicOp;
-        info->UAVOnlyRenderingForcedSampleCount       = FALSE;
+        info->UAVOnlyRenderingForcedSampleCount       = features.core.features.variableMultisampleRate;
         info->DiscardAPIsSeenByDriver                 = TRUE;
         info->FlagsForUpdateAndCopySeenByDriver       = TRUE;
         info->ClearView                               = TRUE;
-        info->CopyWithOverlap                         = FALSE;
+        info->CopyWithOverlap                         = TRUE;
         info->ConstantBufferPartialUpdate             = TRUE;
         info->ConstantBufferOffsetting                = TRUE;
         info->MapNoOverwriteOnDynamicConstantBuffer   = TRUE;
         info->MapNoOverwriteOnDynamicBufferSRV        = TRUE;
-        info->MultisampleRTVWithForcedSampleCountOne  = FALSE;
+        info->MultisampleRTVWithForcedSampleCountOne  = TRUE; /* not really */
         info->SAD4ShaderInstructions                  = FALSE;
         info->ExtendedDoublesShaderInstructions       = TRUE;
-        info->ExtendedResourceSharing                 = FALSE;
+        info->ExtendedResourceSharing                 = TRUE; /* not really */
       } return S_OK;
 
       case D3D11_FEATURE_ARCHITECTURE_INFO: {
@@ -1300,7 +1308,6 @@ namespace dxvk {
   bool D3D11Device::CheckFeatureLevelSupport(
     const Rc<DxvkAdapter>&  adapter,
           D3D_FEATURE_LEVEL featureLevel) {
-    // We currently only support 11_0 interfaces
     if (featureLevel > GetMaxFeatureLevel(adapter))
       return false;
     
@@ -1356,6 +1363,7 @@ namespace dxvk {
       enabled.core.features.logicOp                               = supported.core.features.logicOp;
       enabled.core.features.shaderImageGatherExtended             = VK_TRUE;
       enabled.core.features.textureCompressionBC                  = VK_TRUE;
+      enabled.core.features.variableMultisampleRate               = supported.core.features.variableMultisampleRate;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_10_1) {
@@ -1376,6 +1384,7 @@ namespace dxvk {
     
     if (featureLevel >= D3D_FEATURE_LEVEL_11_1) {
       enabled.core.features.logicOp                               = VK_TRUE;
+      enabled.core.features.variableMultisampleRate               = VK_TRUE;
       enabled.core.features.vertexPipelineStoresAndAtomics        = VK_TRUE;
     }
     
@@ -1604,7 +1613,7 @@ namespace dxvk {
     
     return entry != s_featureLevels.end()
       ? entry->second
-      : D3D_FEATURE_LEVEL_11_0;
+      : D3D_FEATURE_LEVEL_11_1;
   }
   
 }

@@ -567,6 +567,36 @@ namespace dxvk {
   }
   
   
+  void DxvkContext::copyBufferRegion(
+    const Rc<DxvkBuffer>&       dstBuffer,
+          VkDeviceSize          dstOffset,
+          VkDeviceSize          srcOffset,
+          VkDeviceSize          numBytes) {
+    VkDeviceSize loOvl = std::max(dstOffset, srcOffset);
+    VkDeviceSize hiOvl = std::min(dstOffset, srcOffset) + numBytes;
+
+    if (hiOvl > loOvl) {
+      DxvkBufferCreateInfo bufInfo;
+      bufInfo.size    = numBytes;
+      bufInfo.usage   = VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+      bufInfo.stages  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      bufInfo.access  = VK_ACCESS_TRANSFER_WRITE_BIT
+                      | VK_ACCESS_TRANSFER_READ_BIT;
+
+      auto tmpBuffer = m_device->createBuffer(
+        bufInfo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+      
+      VkDeviceSize tmpOffset = 0;
+      
+      this->copyBuffer(tmpBuffer, tmpOffset, dstBuffer, srcOffset, numBytes);
+      this->copyBuffer(dstBuffer, dstOffset, tmpBuffer, tmpOffset, numBytes);
+    } else {
+      this->copyBuffer(dstBuffer, dstOffset, dstBuffer, srcOffset, numBytes);
+    }
+  }
+
+
   void DxvkContext::copyBufferToImage(
     const Rc<DxvkImage>&        dstImage,
           VkImageSubresourceLayers dstSubresource,
@@ -783,6 +813,72 @@ namespace dxvk {
   }
   
   
+  void DxvkContext::copyImageRegion(
+    const Rc<DxvkImage>&        dstImage,
+          VkImageSubresourceLayers dstSubresource,
+          VkOffset3D            dstOffset,
+          VkOffset3D            srcOffset,
+          VkExtent3D            extent) {
+    VkOffset3D loOvl = {
+      std::max(dstOffset.x, srcOffset.x),
+      std::max(dstOffset.y, srcOffset.y),
+      std::max(dstOffset.z, srcOffset.z) };
+    
+    VkOffset3D hiOvl = {
+      std::min(dstOffset.x, srcOffset.x) + int32_t(extent.width),
+      std::min(dstOffset.y, srcOffset.y) + int32_t(extent.height),
+      std::min(dstOffset.z, srcOffset.z) + int32_t(extent.depth) };
+    
+    bool overlap = hiOvl.x > loOvl.x
+                && hiOvl.y > loOvl.y
+                && hiOvl.z > loOvl.z;
+    
+    if (overlap) {
+      DxvkImageCreateInfo imgInfo;
+      imgInfo.type          = dstImage->info().type;
+      imgInfo.format        = dstImage->info().format;
+      imgInfo.flags         = 0;
+      imgInfo.sampleCount   = dstImage->info().sampleCount;
+      imgInfo.extent        = extent;
+      imgInfo.numLayers     = dstSubresource.layerCount;
+      imgInfo.mipLevels     = 1;
+      imgInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      imgInfo.stages        = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      imgInfo.access        = VK_ACCESS_TRANSFER_WRITE_BIT
+                            | VK_ACCESS_TRANSFER_READ_BIT;
+      imgInfo.tiling        = dstImage->info().tiling;
+      imgInfo.layout        = VK_IMAGE_LAYOUT_GENERAL;
+
+      auto tmpImage = m_device->createImage(
+        imgInfo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+      
+      VkImageSubresourceLayers tmpSubresource;
+      tmpSubresource.aspectMask     = dstSubresource.aspectMask;
+      tmpSubresource.mipLevel       = 0;
+      tmpSubresource.baseArrayLayer = 0;
+      tmpSubresource.layerCount     = dstSubresource.layerCount;
+
+      VkOffset3D tmpOffset = { 0, 0, 0 };
+
+      this->copyImage(
+        tmpImage, tmpSubresource, tmpOffset,
+        dstImage, dstSubresource, srcOffset,
+        extent);
+      
+      this->copyImage(
+        dstImage, dstSubresource, dstOffset,
+        tmpImage, tmpSubresource, tmpOffset,
+        extent);
+    } else {
+      this->copyImage(
+        dstImage, dstSubresource, dstOffset,
+        dstImage, dstSubresource, srcOffset,
+        extent);
+    }
+  }
+
+
   void DxvkContext::copyImageToBuffer(
     const Rc<DxvkBuffer>&       dstBuffer,
           VkDeviceSize          dstOffset,
@@ -1562,6 +1658,7 @@ namespace dxvk {
     m_state.gp.state.rsPolygonMode       = rs.polygonMode;
     m_state.gp.state.rsCullMode          = rs.cullMode;
     m_state.gp.state.rsFrontFace         = rs.frontFace;
+    m_state.gp.state.rsSampleCount       = rs.sampleCount;
 
     m_state.ds.depthBiasConstant = rs.depthBiasConstant;
     m_state.ds.depthBiasClamp    = rs.depthBiasClamp;
@@ -1902,7 +1999,7 @@ namespace dxvk {
     if (m_flags.test(DxvkContextFlag::CpDirtyPipeline)) {
       m_flags.clr(DxvkContextFlag::CpDirtyPipeline);
       
-      m_state.cp.state.bsBindingState.clear();
+      m_state.cp.state.bsBindingMask.clear();
       m_state.cp.pipeline = m_pipeMgr->createComputePipeline(m_state.cp.cs.shader);
       
       if (m_state.cp.pipeline != nullptr)
@@ -1916,7 +2013,7 @@ namespace dxvk {
       m_flags.clr(DxvkContextFlag::CpDirtyPipelineState);
       
       m_cpActivePipeline = m_state.cp.pipeline != nullptr
-        ? m_state.cp.pipeline->getPipelineHandle(m_state.cp.state, m_cmd->statCounters())
+        ? m_state.cp.pipeline->getPipelineHandle(m_state.cp.state)
         : VK_NULL_HANDLE;
       
       if (m_cpActivePipeline != VK_NULL_HANDLE) {
@@ -1944,7 +2041,7 @@ namespace dxvk {
     if (m_flags.test(DxvkContextFlag::GpDirtyPipeline)) {
       m_flags.clr(DxvkContextFlag::GpDirtyPipeline);
       
-      m_state.gp.state.bsBindingState.clear();
+      m_state.gp.state.bsBindingMask.clear();
       m_state.gp.pipeline = m_pipeMgr->createGraphicsPipeline(
         m_state.gp.vs.shader,
         m_state.gp.tcs.shader, m_state.gp.tes.shader,
@@ -1974,7 +2071,7 @@ namespace dxvk {
       
       m_gpActivePipeline = m_state.gp.pipeline != nullptr && m_state.om.framebuffer != nullptr
         ? m_state.gp.pipeline->getPipelineHandle(m_state.gp.state,
-            m_state.om.framebuffer->getRenderPass(), m_cmd->statCounters())
+            m_state.om.framebuffer->getRenderPass())
         : VK_NULL_HANDLE;
       
       if (m_gpActivePipeline != VK_NULL_HANDLE) {
@@ -2003,6 +2100,7 @@ namespace dxvk {
 
       this->updateShaderResources(
         VK_PIPELINE_BIND_POINT_COMPUTE,
+        m_state.cp.state.bsBindingMask,
         m_state.cp.pipeline->layout());
 
       m_flags.set(
@@ -2019,7 +2117,6 @@ namespace dxvk {
     if (m_flags.test(DxvkContextFlag::CpDirtyDescriptorSet)) {
       m_cpSet = this->updateShaderDescriptors(
         VK_PIPELINE_BIND_POINT_COMPUTE,
-        m_state.cp.state.bsBindingState,
         m_state.cp.pipeline->layout());
     }
 
@@ -2046,6 +2143,7 @@ namespace dxvk {
 
       this->updateShaderResources(
         VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_state.gp.state.bsBindingMask,
         m_state.gp.pipeline->layout());
 
       m_flags.set(
@@ -2062,7 +2160,6 @@ namespace dxvk {
     if (m_flags.test(DxvkContextFlag::GpDirtyDescriptorSet)) {
       m_gpSet = this->updateShaderDescriptors(
         VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_state.gp.state.bsBindingState,
         m_state.gp.pipeline->layout());
     }
 
@@ -2080,12 +2177,8 @@ namespace dxvk {
   
   void DxvkContext::updateShaderResources(
           VkPipelineBindPoint     bindPoint,
+          DxvkBindingMask&        bindMask,
     const DxvkPipelineLayout*     layout) {
-    DxvkBindingState& bindingState =
-      bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS
-        ? m_state.gp.state.bsBindingState
-        : m_state.cp.state.bsBindingState;
-    
     bool updatePipelineState = false;
     
     DxvkAttachment depthAttachment;
@@ -2100,7 +2193,7 @@ namespace dxvk {
       switch (binding.type) {
         case VK_DESCRIPTOR_TYPE_SAMPLER:
           if (res.sampler != nullptr) {
-            updatePipelineState |= bindingState.setBound(i);
+            updatePipelineState |= bindMask.setBound(i);
             
             m_descInfos[i].image.sampler     = res.sampler->handle();
             m_descInfos[i].image.imageView   = VK_NULL_HANDLE;
@@ -2108,14 +2201,14 @@ namespace dxvk {
             
             m_cmd->trackResource(res.sampler);
           } else {
-            updatePipelineState |= bindingState.setUnbound(i);
+            updatePipelineState |= bindMask.setUnbound(i);
             m_descInfos[i].image = m_device->dummySamplerDescriptor();
           } break;
         
         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
           if (res.imageView != nullptr && res.imageView->handle(binding.view) != VK_NULL_HANDLE) {
-            updatePipelineState |= bindingState.setBound(i);
+            updatePipelineState |= bindMask.setBound(i);
             
             m_descInfos[i].image.sampler     = VK_NULL_HANDLE;
             m_descInfos[i].image.imageView   = res.imageView->handle(binding.view);
@@ -2128,14 +2221,14 @@ namespace dxvk {
             m_cmd->trackResource(res.imageView);
             m_cmd->trackResource(res.imageView->image());
           } else {
-            updatePipelineState |= bindingState.setUnbound(i);
+            updatePipelineState |= bindMask.setUnbound(i);
             m_descInfos[i].image = m_device->dummyImageViewDescriptor(binding.view);
           } break;
         
         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
           if (res.bufferView != nullptr) {
-            updatePipelineState |= bindingState.setBound(i);
+            updatePipelineState |= bindMask.setBound(i);
             
             res.bufferView->updateView();
             m_descInfos[i].texelBuffer = res.bufferView->handle();
@@ -2143,39 +2236,31 @@ namespace dxvk {
             m_cmd->trackResource(res.bufferView->viewResource());
             m_cmd->trackResource(res.bufferView->bufferResource());
           } else {
-            updatePipelineState |= bindingState.setUnbound(i);
+            updatePipelineState |= bindMask.setUnbound(i);
             m_descInfos[i].texelBuffer = m_device->dummyBufferViewDescriptor();
           } break;
         
         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
           if (res.bufferSlice.defined()) {
-            updatePipelineState |= bindingState.setBound(i);
+            updatePipelineState |= bindMask.setBound(i);
+            m_descInfos[i] = res.bufferSlice.getDescriptor(true);
             
-            auto physicalSlice = res.bufferSlice.physicalSlice();
-            m_descInfos[i].buffer.buffer = physicalSlice.handle();
-            m_descInfos[i].buffer.offset = physicalSlice.offset();
-            m_descInfos[i].buffer.range  = physicalSlice.length();
-            
-            m_cmd->trackResource(physicalSlice.resource());
+            m_cmd->trackResource(res.bufferSlice.resource());
           } else {
-            updatePipelineState |= bindingState.setUnbound(i);
+            updatePipelineState |= bindMask.setUnbound(i);
             m_descInfos[i].buffer = m_device->dummyBufferDescriptor();
           } break;
         
         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
           if (res.bufferSlice.defined()) {
-            updatePipelineState |= bindingState.setBound(i);
+            updatePipelineState |= bindMask.setBound(i);
+            m_descInfos[i] = res.bufferSlice.getDescriptor(false);
             
-            auto physicalSlice = res.bufferSlice.physicalSlice();
-            m_descInfos[i].buffer.buffer = physicalSlice.handle();
-            m_descInfos[i].buffer.offset = 0; /* dynamic */
-            m_descInfos[i].buffer.range  = physicalSlice.length();
-            
-            m_cmd->trackResource(physicalSlice.resource());
+            m_cmd->trackResource(res.bufferSlice.resource());
           } else {
-            updatePipelineState |= bindingState.setUnbound(i);
+            updatePipelineState |= bindMask.setUnbound(i);
             m_descInfos[i].buffer = m_device->dummyBufferDescriptor();
           } break;
         
@@ -2194,7 +2279,6 @@ namespace dxvk {
   
   VkDescriptorSet DxvkContext::updateShaderDescriptors(
           VkPipelineBindPoint     bindPoint,
-    const DxvkBindingState&       bindingState,
     const DxvkPipelineLayout*     layout) {
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
 
@@ -2221,7 +2305,7 @@ namespace dxvk {
         const auto& res     = m_rc[binding.slot];
 
         m_descOffsets[i] = res.bufferSlice.defined()
-          ? res.bufferSlice.physicalSlice().offset()
+          ? res.bufferSlice.getDynamicOffset()
           : 0;
       }
       
@@ -2411,7 +2495,7 @@ namespace dxvk {
     bool requiresBarrier = false;
 
     for (uint32_t i = 0; i < layout->bindingCount() && !requiresBarrier; i++) {
-      if (m_state.cp.state.bsBindingState.isBound(i)) {
+      if (m_state.cp.state.bsBindingMask.isBound(i)) {
         const DxvkDescriptorSlot binding = layout->binding(i);
         const DxvkShaderResourceSlot& slot = m_rc[binding.slot];
 
@@ -2464,7 +2548,7 @@ namespace dxvk {
     auto layout = m_state.cp.pipeline->layout();
     
     for (uint32_t i = 0; i < layout->bindingCount(); i++) {
-      if (m_state.cp.state.bsBindingState.isBound(i)) {
+      if (m_state.cp.state.bsBindingMask.isBound(i)) {
         const DxvkDescriptorSlot binding = layout->binding(i);
         const DxvkShaderResourceSlot& slot = m_rc[binding.slot];
 

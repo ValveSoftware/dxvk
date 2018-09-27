@@ -2,7 +2,7 @@
 
 #include <limits>
 
-#include "dxvk_binding.h"
+#include "dxvk_bind_mask.h"
 #include "dxvk_buffer.h"
 #include "dxvk_descriptor.h"
 #include "dxvk_event_tracker.h"
@@ -131,8 +131,8 @@ namespace dxvk {
      * the device can guarantee that the submission has
      * completed.
      */
-    void trackResource(const Rc<DxvkResource>& rc) {
-      m_resources.trackResource(rc);
+    void trackResource(Rc<DxvkResource> rc) {
+      m_resources.trackResource(std::move(rc));
     }
     
     /**

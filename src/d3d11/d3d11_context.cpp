@@ -63,10 +63,13 @@ namespace dxvk {
   
 
   void STDMETHODCALLTYPE D3D11DeviceContext::DiscardResource(ID3D11Resource* pResource) {
+    if (!pResource)
+      return;
+    
+    // We don't support the Discard API for images
     D3D11_RESOURCE_DIMENSION resType = D3D11_RESOURCE_DIMENSION_UNKNOWN;
     pResource->GetType(&resType);
 
-    // We don't support the Discard API for images
     if (resType == D3D11_RESOURCE_DIMENSION_BUFFER)
       DiscardBuffer(static_cast<D3D11Buffer*>(pResource));
   }
@@ -197,7 +200,7 @@ namespace dxvk {
   
   
   void STDMETHODCALLTYPE D3D11DeviceContext::Begin(ID3D11Asynchronous *pAsync) {
-    if (pAsync == nullptr)
+    if (!pAsync)
       return;
     
     Com<ID3D11Query> query;
@@ -217,7 +220,7 @@ namespace dxvk {
   
   
   void STDMETHODCALLTYPE D3D11DeviceContext::End(ID3D11Asynchronous *pAsync) {
-    if (pAsync == nullptr)
+    if (!pAsync)
       return;
     
     Com<ID3D11Query> query;
@@ -342,12 +345,22 @@ namespace dxvk {
         cDstSlice = dstBuffer.subSlice(dstOffset, regLength),
         cSrcSlice = srcBuffer.subSlice(srcOffset, regLength)
       ] (DxvkContext* ctx) {
-        ctx->copyBuffer(
-          cDstSlice.buffer(),
-          cDstSlice.offset(),
-          cSrcSlice.buffer(),
-          cSrcSlice.offset(),
-          cSrcSlice.length());
+        bool sameResource = cDstSlice.buffer() == cSrcSlice.buffer();
+
+        if (!sameResource) {
+          ctx->copyBuffer(
+            cDstSlice.buffer(),
+            cDstSlice.offset(),
+            cSrcSlice.buffer(),
+            cSrcSlice.offset(),
+            cSrcSlice.length());
+        } else {
+          ctx->copyBufferRegion(
+            cDstSlice.buffer(),
+            cDstSlice.offset(),
+            cSrcSlice.offset(),
+            cSrcSlice.length());
+        }
       });
     } else {
       const D3D11CommonTexture* dstTextureInfo = GetCommonTexture(pDstResource);
@@ -476,10 +489,20 @@ namespace dxvk {
         cSrcOffset = srcOffset,
         cExtent    = regExtent
       ] (DxvkContext* ctx) {
-        ctx->copyImage(
-          cDstImage, cDstLayers, cDstOffset,
-          cSrcImage, cSrcLayers, cSrcOffset,
-          cExtent);
+        bool sameSubresource = cDstImage  == cSrcImage
+                            && cDstLayers == cSrcLayers;
+        
+        if (!sameSubresource) {
+          ctx->copyImage(
+            cDstImage, cDstLayers, cDstOffset,
+            cSrcImage, cSrcLayers, cSrcOffset,
+            cExtent);
+        } else {
+          ctx->copyImageRegion(
+            cDstImage, cDstLayers,
+            cDstOffset, cSrcOffset,
+            cExtent);
+        }
       });
     }
   }
@@ -488,6 +511,9 @@ namespace dxvk {
   void STDMETHODCALLTYPE D3D11DeviceContext::CopyResource(
           ID3D11Resource*                   pDstResource,
           ID3D11Resource*                   pSrcResource) {
+    if (!pDstResource || !pSrcResource)
+      return;
+    
     D3D11_RESOURCE_DIMENSION dstResourceDim = D3D11_RESOURCE_DIMENSION_UNKNOWN;
     D3D11_RESOURCE_DIMENSION srcResourceDim = D3D11_RESOURCE_DIMENSION_UNKNOWN;
     
@@ -586,6 +612,9 @@ namespace dxvk {
     auto buf = static_cast<D3D11Buffer*>(pDstBuffer);
     auto uav = static_cast<D3D11UnorderedAccessView*>(pSrcView);
 
+    if (!buf || !uav)
+      return;
+
     EmitCs([
       cDstSlice = buf->GetBufferSlice(DstAlignedByteOffset),
       cSrcSlice = uav->GetCounterSlice()
@@ -605,7 +634,7 @@ namespace dxvk {
     const FLOAT                             ColorRGBA[4]) {
     auto rtv = static_cast<D3D11RenderTargetView*>(pRenderTargetView);
     
-    if (rtv == nullptr)
+    if (!rtv)
       return;
     
     const Rc<DxvkImageView> view = rtv->GetImageView();
@@ -633,7 +662,7 @@ namespace dxvk {
     const UINT                              Values[4]) {
     auto uav = static_cast<D3D11UnorderedAccessView*>(pUnorderedAccessView);
     
-    if (uav == nullptr)
+    if (!uav)
       return;
     
     // Gather UAV format info. We'll use this to determine
@@ -726,7 +755,7 @@ namespace dxvk {
     const FLOAT                             Values[4]) {
     auto uav = static_cast<D3D11UnorderedAccessView*>(pUnorderedAccessView);
     
-    if (uav == nullptr)
+    if (!uav)
       return;
     
     VkClearValue clearValue;
@@ -766,7 +795,7 @@ namespace dxvk {
           UINT8                             Stencil) {
     auto dsv = static_cast<D3D11DepthStencilView*>(pDepthStencilView);
     
-    if (dsv == nullptr)
+    if (!dsv)
       return;
     
     // Figure out which aspects to clear based
@@ -946,8 +975,8 @@ namespace dxvk {
 
   void STDMETHODCALLTYPE D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView* pShaderResourceView) {
     auto view = static_cast<D3D11ShaderResourceView*>(pShaderResourceView);
-      
-    if (view->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER)
+
+    if (!view || view->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER)
       return;
       
     EmitCs([cDstImageView = view->GetImageView()]
@@ -978,6 +1007,9 @@ namespace dxvk {
           UINT                              SrcRowPitch, 
           UINT                              SrcDepthPitch, 
           UINT                              CopyFlags) {
+    if (!pDstResource)
+      return;
+    
     // We need a different code path for buffers
     D3D11_RESOURCE_DIMENSION resourceType;
     pDstResource->GetType(&resourceType);
@@ -1114,6 +1146,9 @@ namespace dxvk {
           ID3D11Resource*                   pSrcResource,
           UINT                              SrcSubresource,
           DXGI_FORMAT                       Format) {
+    if (!pDstResource || !pSrcResource)
+      return;
+    
     D3D11_RESOURCE_DIMENSION dstResourceType;
     D3D11_RESOURCE_DIMENSION srcResourceType;
     

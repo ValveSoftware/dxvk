@@ -5,12 +5,14 @@
 #include "dxvk_include.h"
 #include "dxvk_limits.h"
 #include "dxvk_pipelayout.h"
+#include "dxvk_shader_key.h"
 
 #include "../spirv/spirv_code_buffer.h"
 
 namespace dxvk {
   
   class DxvkShader;
+  class DxvkShaderModule;
   
   /**
    * \brief Built-in specialization constants
@@ -84,59 +86,6 @@ namespace dxvk {
     size_t    m_size = 0;
     uint32_t* m_data = nullptr;
 
-  };
-  
-  
-  /**
-   * \brief Shader module object
-   * 
-   * Manages a Vulkan shader module. This will not
-   * perform any shader compilation. Instead, the
-   * context will create pipeline objects on the
-   * fly when executing draw calls.
-   */
-  class DxvkShaderModule : public RcObject {
-    
-  public:
-    
-    DxvkShaderModule(
-      const Rc<vk::DeviceFn>&     vkd,
-      const Rc<DxvkShader>&       shader,
-      const SpirvCodeBuffer&      code);
-    
-    ~DxvkShaderModule();
-    
-    /**
-     * \brief Shader module handle
-     * \returns Shader module handle
-     */
-    VkShaderModule handle() const {
-      return m_module;
-    }
-    
-    /**
-     * \brief Shader stage creation info
-     * 
-     * \param [in] specInfo Specialization info
-     * \returns Shader stage create info
-     */
-    VkPipelineShaderStageCreateInfo stageInfo(
-      const VkSpecializationInfo* specInfo) const;
-    
-    /**
-     * \brief Shader object
-     * \returns The shader
-     */
-    Rc<DxvkShader> shader() const {
-      return m_shader;
-    }
-    
-  private:
-    
-    Rc<vk::DeviceFn>      m_vkd;
-    Rc<DxvkShader>        m_shader;
-    VkShaderModule        m_module;
-    
   };
   
   
@@ -236,14 +185,19 @@ namespace dxvk {
     void dump(std::ostream& outputStream) const;
     
     /**
-     * \brief Sets the shader's debug name
-     * 
-     * Debug names may be used by the backend in
-     * order to help debug shader compiler issues.
-     * \param [in] name The shader's name
+     * \brief Sets the shader key
+     * \param [in] key Unique key
      */
-    void setDebugName(const std::string& name) {
-      m_debugName = name;
+    void setShaderKey(const DxvkShaderKey& key) {
+      m_key = key;
+    }
+
+    /**
+     * \brief Retrieves shader key
+     * \returns The unique shader key
+     */
+    DxvkShaderKey getShaderKey() const {
+      return m_key;
     }
     
     /**
@@ -251,7 +205,7 @@ namespace dxvk {
      * \returns The shader's name
      */
     std::string debugName() const {
-      return m_debugName;
+      return m_key.toString();
     }
     
   private:
@@ -263,7 +217,68 @@ namespace dxvk {
     std::vector<size_t>           m_idOffsets;
     DxvkInterfaceSlots            m_interface;
     DxvkShaderConstData           m_constData;
-    std::string                   m_debugName;
+    DxvkShaderKey                 m_key;
+    
+  };
+  
+
+  /**
+   * \brief Shader module object
+   * 
+   * Manages a Vulkan shader module. This will not
+   * perform any shader compilation. Instead, the
+   * context will create pipeline objects on the
+   * fly when executing draw calls.
+   */
+  class DxvkShaderModule : public RcObject {
+    
+  public:
+    
+    DxvkShaderModule(
+      const Rc<vk::DeviceFn>&     vkd,
+      const Rc<DxvkShader>&       shader,
+      const SpirvCodeBuffer&      code);
+    
+    ~DxvkShaderModule();
+    
+    /**
+     * \brief Shader module handle
+     * \returns Shader module handle
+     */
+    VkShaderModule handle() const {
+      return m_module;
+    }
+    
+    /**
+     * \brief Shader stage creation info
+     * 
+     * \param [in] specInfo Specialization info
+     * \returns Shader stage create info
+     */
+    VkPipelineShaderStageCreateInfo stageInfo(
+      const VkSpecializationInfo* specInfo) const;
+    
+    /**
+     * \brief Shader object
+     * \returns The shader
+     */
+    Rc<DxvkShader> shader() const {
+      return m_shader;
+    }
+
+    /**
+     * \brief Retrieves shader key
+     * \returns Unique shader key
+     */
+    DxvkShaderKey getShaderKey() const {
+      return m_shader->getShaderKey();
+    }
+    
+  private:
+    
+    Rc<vk::DeviceFn>      m_vkd;
+    Rc<DxvkShader>        m_shader;
+    VkShaderModule        m_module;
     
   };
   

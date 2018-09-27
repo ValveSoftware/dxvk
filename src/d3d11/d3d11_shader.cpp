@@ -3,49 +3,18 @@
 
 namespace dxvk {
   
-  D3D11ShaderKey::D3D11ShaderKey(
-          DxbcProgramType ProgramType,
-    const void*           pShaderBytecode,
-          size_t          BytecodeLength)
-  : m_type(ProgramType),
-    m_hash(Sha1Hash::compute(
-      reinterpret_cast<const uint8_t*>(pShaderBytecode),
-      BytecodeLength)) { }
-  
-  
-  std::string D3D11ShaderKey::GetName() const {
-    static const std::array<const char*, 6> s_prefix
-      = {{ "PS_", "VS_", "GS_", "HS_", "DS_", "CS_" }};
-    
-    return str::format(
-      s_prefix.at(uint32_t(m_type)),
-      m_hash.toString());
-  }
-  
-  
-  size_t D3D11ShaderKey::GetHash() const {
-    DxvkHashState result;
-    result.add(uint32_t(m_type));
-    
-    for (uint32_t i = 0; i < 5; i++)
-      result.add(m_hash.dword(i));
-    
-    return result;
-  }
-  
-  
   D3D11CommonShader:: D3D11CommonShader() { }
   D3D11CommonShader::~D3D11CommonShader() { }
   
   
   D3D11CommonShader::D3D11CommonShader(
           D3D11Device*    pDevice,
-    const D3D11ShaderKey* pShaderKey,
+    const DxvkShaderKey*  pShaderKey,
     const DxbcModuleInfo* pDxbcModuleInfo,
     const void*           pShaderBytecode,
-          size_t          BytecodeLength)
-  : m_name(pShaderKey->GetName()) {
-    Logger::debug(str::format("Compiling shader ", m_name));
+          size_t          BytecodeLength) {
+    const std::string name = pShaderKey->toString();
+    Logger::debug(str::format("Compiling shader ", name));
     
     DxbcReader reader(
       reinterpret_cast<const char*>(pShaderBytecode),
@@ -58,16 +27,16 @@ namespace dxvk {
     const std::string dumpPath = env::getEnvVar(L"DXVK_SHADER_DUMP_PATH");
     
     if (dumpPath.size() != 0) {
-      reader.store(std::ofstream(str::format(dumpPath, "/", m_name, ".dxbc"),
+      reader.store(std::ofstream(str::format(dumpPath, "/", name, ".dxbc"),
         std::ios_base::binary | std::ios_base::trunc));
     }
     
-    m_shader = module.compile(*pDxbcModuleInfo, m_name);
-    m_shader->setDebugName(m_name);
+    m_shader = module.compile(*pDxbcModuleInfo, name);
+    m_shader->setShaderKey(*pShaderKey);
     
     if (dumpPath.size() != 0) {
       std::ofstream dumpStream(
-        str::format(dumpPath, "/", m_name, ".spv"),
+        str::format(dumpPath, "/", name, ".spv"),
         std::ios_base::binary | std::ios_base::trunc);
       
       m_shader->dump(dumpStream);
@@ -94,6 +63,8 @@ namespace dxvk {
         m_shader->shaderConstants().data(),
         m_shader->shaderConstants().sizeInBytes());
     }
+
+    pDevice->GetDXVKDevice()->registerShader(m_shader);
   }
 
   
@@ -108,7 +79,7 @@ namespace dxvk {
           size_t          BytecodeLength,
           DxbcProgramType ProgramType) {
     // Compute the shader's unique key so that we can perform a lookup
-    D3D11ShaderKey key(ProgramType, pShaderBytecode, BytecodeLength);
+    DxvkShaderKey key(GetShaderStage(ProgramType), pShaderBytecode, BytecodeLength);
     
     { std::unique_lock<std::mutex> lock(m_mutex);
       

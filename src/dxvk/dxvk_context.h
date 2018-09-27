@@ -1,7 +1,7 @@
 #pragma once
 
 #include "dxvk_barrier.h"
-#include "dxvk_binding.h"
+#include "dxvk_bind_mask.h"
 #include "dxvk_cmdlist.h"
 #include "dxvk_context_state.h"
 #include "dxvk_data.h"
@@ -264,6 +264,24 @@ namespace dxvk {
             VkDeviceSize          numBytes);
     
     /**
+     * \brief Copies overlapping buffer region
+     * 
+     * Can be used to copy potentially overlapping
+     * buffer regions within the same buffer. If
+     * the source and destination regions do not
+     * overlap, it will behave as \ref copyBuffer.
+     * \param [in] dstBuffer The buffer
+     * \param [in] dstOffset Offset of target region
+     * \param [in] srcOffset Offset of source region
+     * \param [in] numBytes Number of bytes to copy
+     */
+    void copyBufferRegion(
+      const Rc<DxvkBuffer>&       dstBuffer,
+            VkDeviceSize          dstOffset,
+            VkDeviceSize          srcOffset,
+            VkDeviceSize          numBytes);
+    
+    /**
      * \brief Copies data from a buffer to an image
      * 
      * \param [in] dstImage Destination image
@@ -300,6 +318,22 @@ namespace dxvk {
             VkOffset3D            dstOffset,
       const Rc<DxvkImage>&        srcImage,
             VkImageSubresourceLayers srcSubresource,
+            VkOffset3D            srcOffset,
+            VkExtent3D            extent);
+    
+    /**
+     * \brief Copies overlapping image region
+     *
+     * \param [in] dstImage The image
+     * \param [in] dstSubresource The image subresource
+     * \param [in] dstOffset Destination region offset
+     * \param [in] srcOffset Source region offset
+     * \param [in] extent Size of the copy region
+     */
+    void copyImageRegion(
+      const Rc<DxvkImage>&        dstImage,
+            VkImageSubresourceLayers dstSubresource,
+            VkOffset3D            dstOffset,
             VkOffset3D            srcOffset,
             VkExtent3D            extent);
     
@@ -701,11 +735,11 @@ namespace dxvk {
     
     void updateShaderResources(
             VkPipelineBindPoint     bindPoint,
+            DxvkBindingMask&        bindMask,
       const DxvkPipelineLayout*     layout);
     
     VkDescriptorSet updateShaderDescriptors(
             VkPipelineBindPoint     bindPoint,
-      const DxvkBindingState&       bindingState,
       const DxvkPipelineLayout*     layout);
     
     void updateShaderDescriptorSetBinding(
@@ -728,8 +762,6 @@ namespace dxvk {
     
     void commitComputeInitBarriers();
     void commitComputePostBarriers();
-
-    Rc<DxvkBuffer> getTransferBuffer(VkDeviceSize size);
     
   };
   

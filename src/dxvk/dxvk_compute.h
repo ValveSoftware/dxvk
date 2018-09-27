@@ -1,8 +1,9 @@
 #pragma once
 
+#include <atomic>
 #include <vector>
 
-#include "dxvk_binding.h"
+#include "dxvk_bind_mask.h"
 #include "dxvk_pipecache.h"
 #include "dxvk_pipelayout.h"
 #include "dxvk_resource.h"
@@ -12,6 +13,7 @@
 namespace dxvk {
   
   class DxvkDevice;
+  class DxvkPipelineManager;
   
   /**
    * \brief Compute pipeline state info
@@ -20,7 +22,7 @@ namespace dxvk {
     bool operator == (const DxvkComputePipelineStateInfo& other) const;
     bool operator != (const DxvkComputePipelineStateInfo& other) const;
     
-    DxvkBindingState bsBindingState;
+    DxvkBindingMask bsBindingMask;
   };
   
   
@@ -37,8 +39,7 @@ namespace dxvk {
   public:
     
     DxvkComputePipeline(
-      const DxvkDevice*             device,
-      const Rc<DxvkPipelineCache>&  cache,
+            DxvkPipelineManager*    pipeMgr,
       const Rc<DxvkShader>&         cs);
     ~DxvkComputePipeline();
     
@@ -61,8 +62,7 @@ namespace dxvk {
      * \returns Pipeline handle
      */
     VkPipeline getPipelineHandle(
-      const DxvkComputePipelineStateInfo& state,
-            DxvkStatCounters&             stats);
+      const DxvkComputePipelineStateInfo& state);
     
   private:
     
@@ -71,17 +71,16 @@ namespace dxvk {
       VkPipeline                   pipeline;
     };
     
-    const DxvkDevice* const m_device;
-    const Rc<vk::DeviceFn>  m_vkd;
+    Rc<vk::DeviceFn>        m_vkd;
+    DxvkPipelineManager*    m_pipeMgr;
     
-    Rc<DxvkPipelineCache>   m_cache;
     Rc<DxvkPipelineLayout>  m_layout;
     Rc<DxvkShaderModule>    m_cs;
     
     sync::Spinlock              m_mutex;
     std::vector<PipelineStruct> m_pipelines;
     
-    VkPipeline m_basePipeline = VK_NULL_HANDLE;
+    std::atomic<VkPipeline> m_basePipeline = { VK_NULL_HANDLE };
     
     bool findPipeline(
       const DxvkComputePipelineStateInfo& state,
@@ -91,7 +90,11 @@ namespace dxvk {
       const DxvkComputePipelineStateInfo& state,
             VkPipeline                    baseHandle) const;
     
-    void destroyPipelines();
+    void destroyPipeline(
+            VkPipeline                    pipeline);
+
+    void writePipelineStateToCache(
+      const DxvkComputePipelineStateInfo& state) const;
     
   };
   

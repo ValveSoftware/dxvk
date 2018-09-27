@@ -3,7 +3,9 @@
 
 #include "dxvk_compute.h"
 #include "dxvk_device.h"
+#include "dxvk_pipemanager.h"
 #include "dxvk_spec_const.h"
+#include "dxvk_state_cache.h"
 
 namespace dxvk {
   
@@ -18,17 +20,16 @@ namespace dxvk {
   
   
   DxvkComputePipeline::DxvkComputePipeline(
-    const DxvkDevice*             device,
-    const Rc<DxvkPipelineCache>&  cache,
+          DxvkPipelineManager*    pipeMgr,
     const Rc<DxvkShader>&         cs)
-  : m_device(device), m_vkd(device->vkd()),
-    m_cache(cache) {
+  : m_vkd(pipeMgr->m_device->vkd()),
+    m_pipeMgr(pipeMgr) {
     DxvkDescriptorSlotMapping slotMapping;
     cs->defineResourceSlots(slotMapping);
 
     slotMapping.makeDescriptorsDynamic(
-      device->options().maxNumDynamicUniformBuffers,
-      device->options().maxNumDynamicStorageBuffers);
+      m_pipeMgr->m_device->options().maxNumDynamicUniformBuffers,
+      m_pipeMgr->m_device->options().maxNumDynamicStorageBuffers);
     
     m_layout = new DxvkPipelineLayout(m_vkd,
       slotMapping.bindingCount(),
@@ -40,13 +41,13 @@ namespace dxvk {
   
   
   DxvkComputePipeline::~DxvkComputePipeline() {
-    this->destroyPipelines();
+    for (const auto& instance : m_pipelines)
+      this->destroyPipeline(instance.pipeline);
   }
   
   
   VkPipeline DxvkComputePipeline::getPipelineHandle(
-    const DxvkComputePipelineStateInfo& state,
-          DxvkStatCounters&             stats) {
+    const DxvkComputePipelineStateInfo& state) {
     VkPipeline pipeline = VK_NULL_HANDLE;
     
     { std::lock_guard<sync::Spinlock> lock(m_mutex);
@@ -55,28 +56,41 @@ namespace dxvk {
         return pipeline;
     }
     
-    // If no pipeline exists with the given state vector,
-    // create a new one and add it to the pipeline set.
-    VkPipeline newPipeline = this->compilePipeline(state, m_basePipeline);
+    // If no pipeline instance exists with the given state
+    // vector, create a new one and add it to the list.
+    VkPipeline newPipelineBase   = m_basePipeline.load();
+    VkPipeline newPipelineHandle = VK_NULL_HANDLE;
+
+    // FIXME for some reason, compiling the exact
+    // same pipeline crashes inside driver code
+    { std::lock_guard<sync::Spinlock> lock(m_mutex);
+      newPipelineHandle = this->compilePipeline(
+        state, newPipelineBase);
+    }
     
     { std::lock_guard<sync::Spinlock> lock(m_mutex);
       
       // Discard the pipeline if another thread
       // was faster compiling the same pipeline
       if (this->findPipeline(state, pipeline)) {
-        m_vkd->vkDestroyPipeline(m_vkd->device(), newPipeline, nullptr);
+        this->destroyPipeline(newPipelineHandle);
+        m_vkd->vkDestroyPipeline(m_vkd->device(), newPipelineHandle, nullptr);
         return pipeline;
       }
       
       // Add new pipeline to the set
-      m_pipelines.push_back({ state, newPipeline });
-      
-      if (m_basePipeline == VK_NULL_HANDLE)
-        m_basePipeline = newPipeline;
-      
-      stats.addCtr(DxvkStatCounter::PipeCountCompute, 1);
-      return newPipeline;
+      m_pipelines.push_back({ state, newPipelineHandle });
+      m_pipeMgr->m_numComputePipelines += 1;
     }
+
+    // Use the new pipeline as the base pipeline for derivative pipelines
+    if (newPipelineBase == VK_NULL_HANDLE && newPipelineHandle != VK_NULL_HANDLE)
+      m_basePipeline.compare_exchange_strong(newPipelineBase, newPipelineHandle);
+    
+    if (newPipelineHandle != VK_NULL_HANDLE)
+      this->writePipelineStateToCache(state);
+    
+    return newPipelineHandle;
   }
   
   
@@ -107,7 +121,7 @@ namespace dxvk {
     DxvkSpecConstantData specData;
     
     for (uint32_t i = 0; i < MaxNumActiveBindings; i++)
-      specData.activeBindings[i] = state.bsBindingState.isBound(i) ? VK_TRUE : VK_FALSE;
+      specData.activeBindings[i] = state.bsBindingMask.isBound(i) ? VK_TRUE : VK_FALSE;
     
     VkSpecializationInfo specInfo;
     specInfo.mapEntryCount        = g_specConstantMap.mapEntryCount();
@@ -131,7 +145,7 @@ namespace dxvk {
     
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (m_vkd->vkCreateComputePipelines(m_vkd->device(),
-          m_cache->handle(), 1, &info, nullptr, &pipeline) != VK_SUCCESS) {
+          m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline) != VK_SUCCESS) {
       Logger::err("DxvkComputePipeline: Failed to compile pipeline");
       Logger::err(str::format("  cs  : ", m_cs->shader()->debugName()));
       return VK_NULL_HANDLE;
@@ -142,11 +156,24 @@ namespace dxvk {
     Logger::debug(str::format("DxvkComputePipeline: Finished in ", td.count(), " ms"));
     return pipeline;
   }
+
+
+  void DxvkComputePipeline::destroyPipeline(VkPipeline pipeline) {
+    m_vkd->vkDestroyPipeline(m_vkd->device(), pipeline, nullptr);
+  }
   
   
-  void DxvkComputePipeline::destroyPipelines() {
-    for (const PipelineStruct& pair : m_pipelines)
-      m_vkd->vkDestroyPipeline(m_vkd->device(), pair.pipeline, nullptr);
+  void DxvkComputePipeline::writePipelineStateToCache(
+    const DxvkComputePipelineStateInfo& state) const {
+    if (m_pipeMgr->m_stateCache == nullptr)
+      return;
+    
+    DxvkStateCacheKey key;
+
+    if (m_cs != nullptr)
+      key.cs = m_cs->getShaderKey();
+
+    m_pipeMgr->m_stateCache->addComputePipeline(key, state);
   }
   
 }
