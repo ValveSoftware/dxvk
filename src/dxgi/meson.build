@@ -18,7 +18,7 @@ dxgi_src = [
 
 dxgi_dll = shared_library('dxgi'+dll_ext, dxgi_src, glsl_generator.process(dxgi_shaders),
   name_prefix         : '',
-  dependencies        : [ dxvk_dep, proton_dep ],
+  dependencies        : [ dxvk_dep ],
   include_directories : dxvk_include_path,
   install             : true,
   vs_module_defs      : 'dxgi'+def_spec_ext,

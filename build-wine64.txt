@@ -3,7 +3,6 @@ c = 'winegcc'
 cpp = 'wineg++'
 ar = 'ar'
 strip = 'strip'
-pkgconfig = 'pkg-config'
 
 [properties]
 needs_exe_wrapper = true
