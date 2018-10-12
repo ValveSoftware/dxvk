@@ -15,6 +15,10 @@ namespace dxvk {
     { "ACS.exe", {{
       { "dxgi.customVendorId",              "10de" },
     }} },
+    /* Bioshock (original)                        */
+    { "Bioshock.exe", {{
+      { "d3d10.enable",                     "False" },
+    }} },
     /* Dishonored 2                               */
     { "Dishonored2.exe", {{
       { "d3d11.allowMapFlagNoWait",         "True" }
@@ -23,6 +27,14 @@ namespace dxvk {
     { "DRAGON QUEST XI.exe", {{
       { "dxgi.customVendorId",              "1002" },
       { "dxgi.customDeviceId",              "e366" },
+    }} },
+    /* The Evil Within                            */
+    { "EvilWithin.exe", {{
+      { "d3d11.dcMapSpeedHack",             "False" },
+    }} },
+    /* The Evil Within Demo                       */
+    { "EvilWithinDemo.exe", {{
+      { "d3d11.dcMapSpeedHack",             "False" },
     }} },
     /* F1 2015                                    */
     { "F1_2015.exe", {{

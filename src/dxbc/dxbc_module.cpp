@@ -46,7 +46,7 @@ namespace dxvk {
     DxbcAnalysisInfo analysisInfo;
     
     DxbcAnalyzer analyzer(moduleInfo,
-      m_shexChunk->version(),
+      m_shexChunk->programInfo(),
       m_isgnChunk, m_osgnChunk,
       analysisInfo);
     
@@ -54,7 +54,7 @@ namespace dxvk {
     
     DxbcCompiler compiler(
       fileName, moduleInfo,
-      m_shexChunk->version(),
+      m_shexChunk->programInfo(),
       m_isgnChunk, m_osgnChunk,
       analysisInfo);
     
@@ -64,6 +64,25 @@ namespace dxvk {
   }
   
   
+  Rc<DxvkShader> DxbcModule::compilePassthroughShader(
+    const DxbcModuleInfo& moduleInfo,
+    const std::string&    fileName) const {
+    if (m_shexChunk == nullptr)
+      throw DxvkError("DxbcModule::compile: No SHDR/SHEX chunk");
+    
+    DxbcAnalysisInfo analysisInfo;
+
+    DxbcCompiler compiler(
+      fileName, moduleInfo,
+      DxbcProgramType::GeometryShader,
+      m_osgnChunk, m_osgnChunk,
+      analysisInfo);
+    
+    compiler.processXfbPassthrough();
+    return compiler.finalize();
+  }
+
+
   void DxbcModule::runAnalyzer(
           DxbcAnalyzer&       analyzer,
           DxbcCodeSlice       slice) const {

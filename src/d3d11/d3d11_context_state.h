@@ -99,6 +99,11 @@ namespace dxvk {
     UINT             offset = 0;
     DXGI_FORMAT      format = DXGI_FORMAT_UNKNOWN;
   };
+
+
+  struct D3D11ContextStateID {
+    Com<D3D11Buffer> argBuffer = nullptr;
+  };
   
   
   struct D3D11ContextStateIA {
@@ -134,10 +139,16 @@ namespace dxvk {
     
     Com<D3D11RasterizerState> state;
   };
+
+
+  struct D3D11ContextSoTarget {
+    Com<D3D11Buffer> buffer;
+    UINT             offset;
+  };
   
-  
+
   struct D3D11ContextStateSO {
-    std::array<Com<D3D11Buffer>, D3D11_SO_STREAM_COUNT> targets;
+    std::array<D3D11ContextSoTarget, D3D11_SO_BUFFER_SLOT_COUNT> targets;
   };
   
   
@@ -158,6 +169,7 @@ namespace dxvk {
     D3D11ContextStatePS ps;
     D3D11ContextStateVS vs;
     
+    D3D11ContextStateID id;
     D3D11ContextStateIA ia;
     D3D11ContextStateOM om;
     D3D11ContextStateRS rs;

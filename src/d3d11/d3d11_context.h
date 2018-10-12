@@ -7,6 +7,7 @@
 #include "d3d11_annotation.h"
 #include "d3d11_context_state.h"
 #include "d3d11_device_child.h"
+#include "d3d11_texture.h"
 
 namespace dxvk {
   
@@ -630,6 +631,11 @@ namespace dxvk {
             UINT                              NumBuffers,
             ID3D11Buffer**                    ppSOTargets) final;
     
+    void STDMETHODCALLTYPE SOGetTargetsWithOffsets(
+            UINT                              NumBuffers,
+            ID3D11Buffer**                    ppSOTargets,
+            UINT*                             pOffsets);
+    
     void STDMETHODCALLTYPE TransitionSurfaceLayout(
             IDXGIVkInteropSurface*    pSurface,
       const VkImageSubresourceRange*  pSubresources,
@@ -675,6 +681,9 @@ namespace dxvk {
     void BindFramebuffer(
             BOOL                              Spill);
     
+    void BindDrawBuffer(
+            D3D11Buffer*                      pBuffer);
+    
     void BindVertexBuffer(
             UINT                              Slot,
             D3D11Buffer*                      pBuffer,
@@ -685,6 +694,11 @@ namespace dxvk {
             D3D11Buffer*                      pBuffer,
             UINT                              Offset,
             DXGI_FORMAT                       Format);
+    
+    void BindXfbBuffer(
+            UINT                              Slot,
+            D3D11Buffer*                      pBuffer,
+            UINT                              Offset);
     
     void BindConstantBuffer(
             UINT                              Slot,
@@ -701,10 +715,17 @@ namespace dxvk {
     void BindUnorderedAccessView(
             UINT                              UavSlot,
             UINT                              CtrSlot,
-            D3D11UnorderedAccessView*         pUav);
+            D3D11UnorderedAccessView*         pUav,
+            UINT                              Counter);
     
     void DiscardBuffer(
             D3D11Buffer*                      pBuffer);
+    
+    void DiscardTexture(
+            D3D11CommonTexture*               pTexture);
+    
+    void SetDrawBuffer(
+            ID3D11Buffer*                     pBuffer);
     
     void SetConstantBuffers(
             DxbcProgramType                   ShaderStage,
@@ -734,17 +755,13 @@ namespace dxvk {
             D3D11UnorderedAccessBindings&     Bindings,
             UINT                              StartSlot,
             UINT                              NumUAVs,
-            ID3D11UnorderedAccessView* const* ppUnorderedAccessViews);
+            ID3D11UnorderedAccessView* const* ppUnorderedAccessViews,
+      const UINT*                             pUAVInitialCounts);
     
     void SetRenderTargets(
             UINT                              NumViews,
             ID3D11RenderTargetView* const*    ppRenderTargetViews,
             ID3D11DepthStencilView*           pDepthStencilView);
-    
-    void InitUnorderedAccessViewCounters(
-            UINT                              NumUAVs,
-            ID3D11UnorderedAccessView* const* ppUnorderedAccessViews,
-      const UINT*                             pUAVInitialCounts);
     
     void GetConstantBuffers(
       const D3D11ConstantBufferBindings&      Bindings,

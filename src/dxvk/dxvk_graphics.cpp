@@ -69,6 +69,9 @@ namespace dxvk {
     
     m_vsIn  = vs != nullptr ? vs->interfaceSlots().inputSlots  : 0;
     m_fsOut = fs != nullptr ? fs->interfaceSlots().outputSlots : 0;
+
+    if (gs != nullptr && gs->hasCapability(spv::CapabilityTransformFeedback))
+      m_flags.set(DxvkGraphicsPipelineFlag::HasTransformFeedback);
     
     m_common.msSampleShadingEnable = fs != nullptr && fs->hasCapability(spv::CapabilitySampleRateShading);
     m_common.msSampleShadingFactor = 1.0f;
@@ -81,49 +84,50 @@ namespace dxvk {
   }
   
   
+  Rc<DxvkShader> DxvkGraphicsPipeline::getShader(
+          VkShaderStageFlagBits             stage) const {
+    switch (stage) {
+      case VK_SHADER_STAGE_VERTEX_BIT:
+        return m_vs != nullptr ? m_vs->shader() : nullptr;
+      case VK_SHADER_STAGE_GEOMETRY_BIT:
+        return m_gs != nullptr ? m_gs->shader() : nullptr;
+      case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:
+        return m_tcs != nullptr ? m_tcs->shader() : nullptr;
+      case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT:
+        return m_tes != nullptr ? m_tes->shader() : nullptr;
+      case VK_SHADER_STAGE_FRAGMENT_BIT:
+        return m_fs != nullptr ? m_fs->shader() : nullptr;
+      default:
+        return nullptr;
+    }
+  }
+
+
   VkPipeline DxvkGraphicsPipeline::getPipelineHandle(
     const DxvkGraphicsPipelineStateInfo& state,
     const DxvkRenderPass&                renderPass) {
     VkRenderPass renderPassHandle = renderPass.getDefaultHandle();
+    
+    VkPipeline newPipelineBase   = VK_NULL_HANDLE;
+    VkPipeline newPipelineHandle = VK_NULL_HANDLE;
 
     { std::lock_guard<sync::Spinlock> lock(m_mutex);
-      
-      const DxvkGraphicsPipelineInstance* instance =
-        this->findInstance(state, renderPassHandle);
+    
+      auto instance = this->findInstance(state, renderPassHandle);
       
       if (instance != nullptr)
         return instance->pipeline();
-    }
     
-    // If the pipeline state vector is invalid, don't try
-    // to create a new pipeline, it won't work anyway.
-    if (!this->validatePipelineState(state))
-      return VK_NULL_HANDLE;
-    
-    // If no pipeline instance exists with the given state
-    // vector, create a new one and add it to the list.
-    VkPipeline newPipelineBase   = m_basePipeline.load();
-    VkPipeline newPipelineHandle = VK_NULL_HANDLE;
-    
-    // FIXME for some reason, compiling the exact
-    // same pipeline crashes inside driver code
-    { std::lock_guard<sync::Spinlock> lock(m_mutex);
-      newPipelineHandle = this->compilePipeline(
-        state, renderPassHandle, newPipelineBase);
-    }
+      // If the pipeline state vector is invalid, don't try
+      // to create a new pipeline, it won't work anyway.
+      if (!this->validatePipelineState(state))
+        return VK_NULL_HANDLE;
+      
+      // If no pipeline instance exists with the given state
+      // vector, create a new one and add it to the list.
+      newPipelineBase   = m_basePipeline.load();
+      newPipelineHandle = this->compilePipeline(state, renderPassHandle, newPipelineBase);
 
-    { std::lock_guard<sync::Spinlock> lock(m_mutex);
-      
-      // Discard the pipeline if another thread
-      // was faster compiling the same pipeline
-      const DxvkGraphicsPipelineInstance* instance =
-        this->findInstance(state, renderPassHandle);
-      
-      if (instance != nullptr) {
-        this->destroyPipeline(newPipelineHandle);
-        return instance->pipeline();
-      }
-      
       // Add new pipeline to the set
       m_pipelines.emplace_back(state, renderPassHandle, newPipelineHandle);
       m_pipeMgr->m_numGraphicsPipelines += 1;
@@ -225,7 +229,11 @@ namespace dxvk {
         viDivisorDesc[id].divisor = state.ilDivisors[i];
       }
     }
-    
+
+    int32_t rasterizedStream = m_gs != nullptr
+      ? m_gs->shader()->shaderOptions().rasterizedStream
+      : 0;
+
     VkPipelineVertexInputDivisorStateCreateInfoEXT viDivisorInfo;
     viDivisorInfo.sType                     = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT;
     viDivisorInfo.pNext                     = nullptr;
@@ -270,12 +278,18 @@ namespace dxvk {
     vpInfo.scissorCount           = state.rsViewportCount;
     vpInfo.pScissors              = nullptr;
     
+    VkPipelineRasterizationStateStreamCreateInfoEXT xfbStreamInfo;
+    xfbStreamInfo.sType           = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT;
+    xfbStreamInfo.pNext           = nullptr;
+    xfbStreamInfo.flags           = 0;
+    xfbStreamInfo.rasterizationStream = uint32_t(rasterizedStream);
+
     VkPipelineRasterizationStateCreateInfo rsInfo;
     rsInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rsInfo.pNext                  = nullptr;
     rsInfo.flags                  = 0;
     rsInfo.depthClampEnable       = state.rsDepthClampEnable;
-    rsInfo.rasterizerDiscardEnable= VK_FALSE;
+    rsInfo.rasterizerDiscardEnable = rasterizedStream < 0;
     rsInfo.polygonMode            = state.rsPolygonMode;
     rsInfo.cullMode               = state.rsCullMode;
     rsInfo.frontFace              = state.rsFrontFace;
@@ -285,6 +299,9 @@ namespace dxvk {
     rsInfo.depthBiasSlopeFactor   = 0.0f;
     rsInfo.lineWidth              = 1.0f;
     
+    if (rasterizedStream > 0)
+      rsInfo.pNext = &xfbStreamInfo;
+
     VkPipelineMultisampleStateCreateInfo msInfo;
     msInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     msInfo.pNext                  = nullptr;
@@ -395,6 +412,11 @@ namespace dxvk {
     // If there are no tessellation shaders, we
     // obviously cannot use tessellation patches.
     if ((state.iaPatchVertexCount != 0) && (m_tcs == nullptr || m_tes == nullptr))
+      return false;
+    
+    // Prevent unintended out-of-bounds access to the IL arrays
+    if (state.ilAttributeCount > DxvkLimits::MaxNumVertexAttributes
+     || state.ilBindingCount   > DxvkLimits::MaxNumVertexBindings)
       return false;
     
     // No errors
