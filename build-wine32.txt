@@ -10,7 +10,7 @@ winelib = true
 
 c_args=['-m32', @PROTON_C_ARGS@]
 cpp_args=['-m32', '--no-gnu-unique', '-Wno-attributes', @PROTON_C_ARGS@]
-cpp_link_args=['-m32', '-mwindows', '-ldl', @PROTON_C_LINK_ARGS@]
+cpp_link_args=['-m32', '-mwindows', @PROTON_C_LINK_ARGS@]
 
 [host_machine]
 system = 'linux'
