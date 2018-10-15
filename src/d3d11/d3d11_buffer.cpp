@@ -11,7 +11,7 @@ namespace dxvk {
     const D3D11_BUFFER_DESC*          pDesc)
   : m_device      (pDevice),
     m_desc        (*pDesc),
-    m_d3d10       (this) {
+    m_d3d10       (this, pDevice->GetD3D10Interface()) {
     DxvkBufferCreateInfo  info;
     info.size   = pDesc->ByteWidth;
     info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT

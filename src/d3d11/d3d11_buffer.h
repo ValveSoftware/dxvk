@@ -105,9 +105,6 @@ namespace dxvk {
     DxvkPhysicalBufferSlice     m_mapped;
 
     D3D10Buffer                 m_d3d10;
-    
-    Rc<DxvkBuffer> CreateBuffer(
-      const D3D11_BUFFER_DESC*    pDesc) const;
 
     BOOL CheckFormatFeatureSupport(
             VkFormat              Format,

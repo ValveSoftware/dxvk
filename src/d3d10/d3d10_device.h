@@ -3,6 +3,9 @@
 #include "d3d10_include.h"
 
 namespace dxvk {
+
+  using D3D10DeviceMutex = sync::Spinlock;
+  using D3D10DeviceLock = std::unique_lock<D3D10DeviceMutex>;
   
   class D3D11Device;
   class D3D11ImmediateContext;
@@ -470,10 +473,19 @@ namespace dxvk {
             UINT*                             pWidth,
             UINT*                             pHeight);
     
+    D3D10DeviceLock LockDevice() {
+      return m_threadSafe
+        ? D3D10DeviceLock(m_mutex)
+        : D3D10DeviceLock();
+    }
+    
   private:
 
+    D3D10DeviceMutex        m_mutex;
     D3D11Device*            m_device;
     D3D11ImmediateContext*  m_context;
+
+    bool m_threadSafe = true;
 
   };
 

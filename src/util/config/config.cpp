@@ -15,10 +15,6 @@ namespace dxvk {
     { "ACS.exe", {{
       { "dxgi.customVendorId",              "10de" },
     }} },
-    /* Bioshock (original)                        */
-    { "Bioshock.exe", {{
-      { "d3d10.enable",                     "False" },
-    }} },
     /* Dishonored 2                               */
     { "Dishonored2.exe", {{
       { "d3d11.allowMapFlagNoWait",         "True" }
@@ -69,6 +65,21 @@ namespace dxvk {
     /* Overwatch                                  */
     { "Overwatch.exe", {{
       { "d3d11.fakeStreamOutSupport",       "True" },
+    }} },
+    /* Star Citizen                               */
+    { "StarCitizen.exe", {{
+      { "dxgi.customVendorId",              "1002" },
+      { "dxgi.customDeviceId",              "e366" },
+    }} },
+    /* Dauntless                                  */
+    { "Dauntless-Win64-Shipping.exe", {{
+      { "dxgi.customVendorId",              "1002" },
+      { "dxgi.customDeviceId",              "e366" },
+    }} },
+    /* Redout                                     */
+    { "redout-Win64-Shipping.exe", {{
+      { "dxgi.customVendorId",              "1002" },
+      { "dxgi.customDeviceId",              "e366" },
     }} },
   }};
 
