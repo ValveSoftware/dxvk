@@ -46,34 +46,6 @@ namespace dxvk {
   }
   
   
-  VkBorderColor DecodeBorderColor(const FLOAT BorderColor[4]) {
-    struct BorderColorEntry {
-      float r, g, b, a;
-      VkBorderColor bc;
-    };
-    
-    // Vulkan only supports a very limited set of border colors
-    const std::array<BorderColorEntry, 3> borderColorMap = {{
-      { 0.0f, 0.0f, 0.0f, 0.0f, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK },
-      { 0.0f, 0.0f, 0.0f, 1.0f, VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK },
-      { 1.0f, 1.0f, 1.0f, 1.0f, VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE },
-    }};
-    
-    for (const auto& e : borderColorMap) {
-      if (e.r == BorderColor[0] && e.g == BorderColor[1]
-       && e.b == BorderColor[2] && e.a == BorderColor[3])
-        return e.bc;
-    }
-      
-    Logger::warn(str::format(
-      "D3D11Device: No matching border color found for (",
-      BorderColor[0], ",", BorderColor[1], ",",
-      BorderColor[2], ",", BorderColor[3], ")"));
-    
-    return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-  }
-  
-  
   VkCompareOp DecodeCompareOp(D3D11_COMPARISON_FUNC Mode) {
     switch (Mode) {
       case D3D11_COMPARISON_NEVER:          return VK_COMPARE_OP_NEVER;
@@ -183,6 +155,26 @@ namespace dxvk {
       features |= VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
     
     return features;
+  }
+
+
+  VkFormat GetPackedDepthStencilFormat(DXGI_FORMAT Format) {
+    switch (Format) {
+      case DXGI_FORMAT_R24G8_TYPELESS:
+      case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+      case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
+      case DXGI_FORMAT_D24_UNORM_S8_UINT:
+        return VK_FORMAT_D24_UNORM_S8_UINT;
+      
+      case DXGI_FORMAT_R32G8X24_TYPELESS:
+      case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+      case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
+      case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+        return VK_FORMAT_D32_SFLOAT_S8_UINT;
+      
+      default:
+        return VK_FORMAT_UNDEFINED;
+    }
   }
 
 }

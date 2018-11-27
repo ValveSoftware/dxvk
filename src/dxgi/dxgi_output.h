@@ -7,6 +7,21 @@ namespace dxvk {
   class DxgiAdapter;
   
   /**
+   * \brief Number of gamma control points
+   */
+  constexpr uint32_t DXGI_VK_GAMMA_CP_COUNT = 1024;
+  
+  /**
+   * \brief Computes gamma control point location
+   * 
+   * \param [in] CpIndex Control point ID
+   * \returns Location of the control point
+   */
+  inline float GammaControlPointLocation(uint32_t CpIndex) {
+    return float(CpIndex) / float(DXGI_VK_GAMMA_CP_COUNT - 1);
+  }
+  
+  /**
    * \brief Per-output data
    * 
    * Persistent data for a single output, which
@@ -19,7 +34,7 @@ namespace dxvk {
   };
   
   
-  class DxgiOutput : public DxgiObject<IDXGIOutput> {
+  class DxgiOutput : public DxgiObject<IDXGIOutput4> {
     
   public:
     
@@ -41,6 +56,11 @@ namespace dxvk {
       const DXGI_MODE_DESC*       pModeToMatch,
             DXGI_MODE_DESC*       pClosestMatch,
             IUnknown*             pConcernedDevice) final;
+
+    HRESULT STDMETHODCALLTYPE FindClosestMatchingMode1(
+      const DXGI_MODE_DESC1*      pModeToMatch,
+            DXGI_MODE_DESC1*      pClosestMatch,
+            IUnknown*             pConcernedDevice) final;
     
     HRESULT STDMETHODCALLTYPE GetDesc(
             DXGI_OUTPUT_DESC*     pDesc) final;
@@ -51,8 +71,17 @@ namespace dxvk {
             UINT*                 pNumModes,
             DXGI_MODE_DESC*       pDesc) final;
     
+    HRESULT STDMETHODCALLTYPE GetDisplayModeList1(
+            DXGI_FORMAT           EnumFormat,
+            UINT                  Flags,
+            UINT*                 pNumModes,
+            DXGI_MODE_DESC1*      pDesc) final;
+    
     HRESULT STDMETHODCALLTYPE GetDisplaySurfaceData(
             IDXGISurface*         pDestination) final;
+
+    HRESULT STDMETHODCALLTYPE GetDisplaySurfaceData1(
+            IDXGIResource*        pDestination) final;
     
     HRESULT STDMETHODCALLTYPE GetFrameStatistics(
             DXGI_FRAME_STATISTICS* pStats) final;
@@ -76,6 +105,23 @@ namespace dxvk {
             BOOL                  Exclusive) final;
     
     HRESULT STDMETHODCALLTYPE WaitForVBlank() final;
+
+    HRESULT STDMETHODCALLTYPE DuplicateOutput(
+            IUnknown*                 pDevice,
+            IDXGIOutputDuplication**  ppOutputDuplication) final;
+    
+    BOOL STDMETHODCALLTYPE SupportsOverlays() final;
+
+    HRESULT STDMETHODCALLTYPE CheckOverlaySupport(
+            DXGI_FORMAT           EnumFormat,
+            IUnknown*             pConcernedDevice,
+            UINT*                 pFlags) final;
+    
+    HRESULT STDMETHODCALLTYPE CheckOverlayColorSpaceSupport(
+            DXGI_FORMAT           Format,
+            DXGI_COLOR_SPACE_TYPE ColorSpace,
+            IUnknown*             pConcernedDevice,
+            UINT*                 pFlags) final;
     
     HRESULT GetDisplayMode(
             DXGI_MODE_DESC*       pMode,

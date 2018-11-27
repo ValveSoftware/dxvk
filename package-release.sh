@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 if [ -z "$1" ] || [ -z "$2" ]; then
   echo "Usage: package-release.sh version destdir [--no-package]"
   exit 1
@@ -39,7 +41,6 @@ function build_arch {
   cp "$DXVK_BUILD_DIR/install.$1/bin/d3d11.dll" "$DXVK_BUILD_DIR/x$1/d3d11.dll"
   cp "$DXVK_BUILD_DIR/install.$1/bin/dxgi.dll" "$DXVK_BUILD_DIR/x$1/dxgi.dll"
   
-  rm -R "$DXVK_BUILD_DIR/wine.$1"
   rm -R "$DXVK_BUILD_DIR/build.$1"
   rm -R "$DXVK_BUILD_DIR/install.$1"
 }

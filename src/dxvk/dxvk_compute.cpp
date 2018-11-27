@@ -36,7 +36,10 @@ namespace dxvk {
       slotMapping.bindingInfos(),
       VK_PIPELINE_BIND_POINT_COMPUTE);
     
-    m_cs = cs->createShaderModule(m_vkd, slotMapping);
+    DxvkShaderModuleCreateInfo moduleInfo;
+    moduleInfo.fsDualSrcBlend = false;
+
+    m_cs = cs->createShaderModule(m_vkd, slotMapping, moduleInfo);
   }
   
   
@@ -48,7 +51,6 @@ namespace dxvk {
   
   VkPipeline DxvkComputePipeline::getPipelineHandle(
     const DxvkComputePipelineStateInfo& state) {
-    VkPipeline newPipelineBase   = VK_NULL_HANDLE;
     VkPipeline newPipelineHandle = VK_NULL_HANDLE;
 
     { std::lock_guard<sync::Spinlock> lock(m_mutex);
@@ -58,17 +60,15 @@ namespace dxvk {
     
       // If no pipeline instance exists with the given state
       // vector, create a new one and add it to the list.
-      newPipelineBase   = m_basePipeline.load();
-      newPipelineHandle = this->compilePipeline(state, newPipelineBase);
+      newPipelineHandle = this->compilePipeline(state, m_basePipeline);
       
       // Add new pipeline to the set
       m_pipelines.push_back({ state, newPipelineHandle });
       m_pipeMgr->m_numComputePipelines += 1;
+      
+      if (!m_basePipeline && newPipelineHandle)
+        m_basePipeline = newPipelineHandle;
     }
-
-    // Use the new pipeline as the base pipeline for derivative pipelines
-    if (newPipelineBase == VK_NULL_HANDLE && newPipelineHandle != VK_NULL_HANDLE)
-      m_basePipeline.compare_exchange_strong(newPipelineBase, newPipelineHandle);
     
     if (newPipelineHandle != VK_NULL_HANDLE)
       this->writePipelineStateToCache(state);

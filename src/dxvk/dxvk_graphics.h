@@ -21,9 +21,11 @@ namespace dxvk {
    */
   enum class DxvkGraphicsPipelineFlag {
     HasTransformFeedback,
+    HasFsStorageDescriptors,
+    HasVsStorageDescriptors,
   };
 
-  using DxvkGraphicsCommonPipelineFlags = Flags<DxvkGraphicsPipelineFlag>;
+  using DxvkGraphicsPipelineFlags = Flags<DxvkGraphicsPipelineFlag>;
 
   
   /**
@@ -170,7 +172,7 @@ namespace dxvk {
      * \brief Returns graphics pipeline flags
      * \returns Graphics pipeline property flags
      */
-    DxvkGraphicsCommonPipelineFlags flags() const {
+    DxvkGraphicsPipelineFlags flags() const {
       return m_flags;
     }
     
@@ -227,11 +229,12 @@ namespace dxvk {
     Rc<DxvkShaderModule>    m_tes;
     Rc<DxvkShaderModule>    m_gs;
     Rc<DxvkShaderModule>    m_fs;
+    Rc<DxvkShaderModule>    m_fs2;
     
     uint32_t m_vsIn  = 0;
     uint32_t m_fsOut = 0;
     
-    DxvkGraphicsCommonPipelineFlags     m_flags;
+    DxvkGraphicsPipelineFlags           m_flags;
     DxvkGraphicsCommonPipelineStateInfo m_common;
     
     // List of pipeline instances, shared between threads
@@ -239,7 +242,7 @@ namespace dxvk {
     std::vector<DxvkGraphicsPipelineInstance> m_pipelines;
     
     // Pipeline handles used for derivative pipelines
-    std::atomic<VkPipeline> m_basePipeline = { VK_NULL_HANDLE };
+    VkPipeline m_basePipeline = VK_NULL_HANDLE;
     
     const DxvkGraphicsPipelineInstance* findInstance(
       const DxvkGraphicsPipelineStateInfo& state,

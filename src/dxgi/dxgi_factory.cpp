@@ -3,9 +3,10 @@
 
 namespace dxvk {
   
-  DxgiFactory::DxgiFactory()
+  DxgiFactory::DxgiFactory(UINT Flags)
   : m_instance(new DxvkInstance()),
-    m_options (m_instance->config()) {
+    m_options (m_instance->config()),
+    m_flags   (Flags) {
     for (uint32_t i = 0; m_instance->enumAdapters(i) != nullptr; i++)
       m_instance->enumAdapters(i)->logAdapterInfo();
   }
@@ -23,7 +24,9 @@ namespace dxvk {
      || riid == __uuidof(IDXGIObject)
      || riid == __uuidof(IDXGIFactory)
      || riid == __uuidof(IDXGIFactory1)
-     || riid == __uuidof(IDXGIFactory2)) {
+     || riid == __uuidof(IDXGIFactory2)
+     || riid == __uuidof(IDXGIFactory3)
+     || riid == __uuidof(IDXGIFactory4)) {
       *ppvObject = ref(this);
       return S_OK;
     }
@@ -193,6 +196,42 @@ namespace dxvk {
   }
   
   
+  HRESULT STDMETHODCALLTYPE DxgiFactory::EnumAdapterByLuid(
+          LUID                  AdapterLuid,
+          REFIID                riid,
+          void**                ppvAdapter) {
+    InitReturnPtr(ppvAdapter);
+    uint32_t adapterId = 0;
+
+    while (true) {
+      Com<IDXGIAdapter> adapter;
+      HRESULT hr = EnumAdapters(adapterId++, &adapter);
+
+      if (FAILED(hr))
+        return hr;
+      
+      DXGI_ADAPTER_DESC desc;
+      adapter->GetDesc(&desc);
+
+      if (!std::memcmp(&AdapterLuid, &desc.AdapterLuid, sizeof(LUID)))
+        return adapter->QueryInterface(riid, ppvAdapter);
+    }
+
+    // This should be unreachable
+    return DXGI_ERROR_NOT_FOUND;
+  }
+
+  
+  HRESULT STDMETHODCALLTYPE DxgiFactory::EnumWarpAdapter(
+          REFIID                riid,
+          void**                ppvAdapter) {
+    InitReturnPtr(ppvAdapter);
+
+    Logger::err("DxgiFactory::EnumWarpAdapter: Not implemented");
+    return E_NOTIMPL;
+  }
+
+
   HRESULT STDMETHODCALLTYPE DxgiFactory::GetWindowAssociation(HWND *pWindowHandle) {
     if (pWindowHandle == nullptr)
       return DXGI_ERROR_INVALID_CALL;
@@ -265,6 +304,11 @@ namespace dxvk {
   void STDMETHODCALLTYPE DxgiFactory::UnregisterOcclusionStatus(
           DWORD                 dwCookie) {
     Logger::err("DxgiFactory::UnregisterOcclusionStatus: Not implemented");
+  }
+
+
+  UINT STDMETHODCALLTYPE DxgiFactory::GetCreationFlags() {
+    return m_flags;
   }
   
 }

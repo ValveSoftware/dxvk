@@ -2,18 +2,18 @@
 
 #include <vector>
 
-#include <dxvk_instance.h>
-
 #include "dxgi_adapter.h"
 #include "dxgi_options.h"
 
+#include "../dxvk/dxvk_instance.h"
+
 namespace dxvk {
     
-  class DxgiFactory : public DxgiObject<IDXGIFactory2> {
+  class DxgiFactory : public DxgiObject<IDXGIFactory4> {
     
   public:
     
-    DxgiFactory();
+    DxgiFactory(UINT Flags);
     ~DxgiFactory();
     
     HRESULT STDMETHODCALLTYPE QueryInterface(
@@ -64,6 +64,15 @@ namespace dxvk {
             UINT                  Adapter,
             IDXGIAdapter1**       ppAdapter) final;
     
+    HRESULT STDMETHODCALLTYPE EnumAdapterByLuid(
+            LUID                  AdapterLuid,
+            REFIID                riid,
+            void**                ppvAdapter) final;
+    
+    HRESULT STDMETHODCALLTYPE EnumWarpAdapter(
+            REFIID                riid,
+            void**                ppvAdapter) final;
+
     HRESULT STDMETHODCALLTYPE GetWindowAssociation(
             HWND*                 pWindowHandle) final;
     
@@ -101,6 +110,8 @@ namespace dxvk {
     void STDMETHODCALLTYPE UnregisterOcclusionStatus(
             DWORD                 dwCookie) final;
     
+    UINT STDMETHODCALLTYPE GetCreationFlags() final;
+    
     const DxgiOptions* GetOptions() const {
       return &m_options;
     }
@@ -109,6 +120,7 @@ namespace dxvk {
     
     Rc<DxvkInstance> m_instance;
     DxgiOptions      m_options;
+    UINT             m_flags;
     
     HWND m_associatedWindow = nullptr;
     

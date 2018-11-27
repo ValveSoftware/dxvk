@@ -9,6 +9,7 @@
 #include "dxvk_meta_clear.h"
 #include "dxvk_meta_copy.h"
 #include "dxvk_meta_mipgen.h"
+#include "dxvk_meta_pack.h"
 #include "dxvk_meta_resolve.h"
 #include "dxvk_pipecache.h"
 #include "dxvk_pipemanager.h"
@@ -36,6 +37,7 @@ namespace dxvk {
       const Rc<DxvkMetaClearObjects>&   metaClearObjects,
       const Rc<DxvkMetaCopyObjects>&    metaCopyObjects,
       const Rc<DxvkMetaMipGenObjects>&  metaMipGenObjects,
+      const Rc<DxvkMetaPackObjects>&    metaPackObjects,
       const Rc<DxvkMetaResolveObjects>& metaResolveObjects);
     ~DxvkContext();
     
@@ -62,6 +64,14 @@ namespace dxvk {
      * \returns Active command list
      */
     Rc<DxvkCommandList> endRecording();
+
+    /**
+     * \brief Flushes command buffer
+     * 
+     * Transparently submits the current command
+     * buffer and allocates a new one.
+     */
+    void flushCommandList();
     
     /**
      * \brief Begins generating query data
@@ -243,6 +253,16 @@ namespace dxvk {
       const VkImageSubresourceRange&  subresources);
     
     /**
+     * \brief Clears a compressed image to black
+     *
+     * \param [in] image The image to clear
+     * \param [in] subresources Subresources to clear
+     */
+    void clearCompressedColorImage(
+      const Rc<DxvkImage>&            image,
+      const VkImageSubresourceRange&  subresources);
+    
+    /**
      * \brief Clears an active render target
      * 
      * \param [in] imageView Render target view to clear
@@ -380,6 +400,30 @@ namespace dxvk {
             VkImageSubresourceLayers srcSubresource,
             VkOffset3D            srcOffset,
             VkExtent3D            srcExtent);
+    
+    /**
+     * \brief Packs depth-stencil image data to a buffer
+     * 
+     * Packs data from both the depth and stencil aspects
+     * of an image into a buffer. The supported formats are:
+     * - \c VK_FORMAT_D24_UNORM_S8_UINT: 0xssdddddd
+     * - \c VK_FORMAT_D32_SFLOAT_S8_UINT: 0xdddddddd 0x000000ss
+     * \param [in] dstBuffer Destination buffer
+     * \param [in] dstOffset Destination offset, in bytes
+     * \param [in] srcImage Source image
+     * \param [in] srcSubresource Source subresource
+     * \param [in] srcOffset Source area offset
+     * \param [in] srcExtent Source area size
+     * \param [in] format Packed data format
+     */
+    void copyDepthStencilImageToPackedBuffer(
+      const Rc<DxvkBuffer>&       dstBuffer,
+            VkDeviceSize          dstOffset,
+      const Rc<DxvkImage>&        srcImage,
+            VkImageSubresourceLayers srcSubresource,
+            VkOffset2D            srcOffset,
+            VkExtent2D            srcExtent,
+            VkFormat              format);
     
     /**
      * \brief Discards a buffer
@@ -721,6 +765,7 @@ namespace dxvk {
     const Rc<DxvkMetaClearObjects>    m_metaClear;
     const Rc<DxvkMetaCopyObjects>     m_metaCopy;
     const Rc<DxvkMetaMipGenObjects>   m_metaMipGen;
+    const Rc<DxvkMetaPackObjects>     m_metaPack;
     const Rc<DxvkMetaResolveObjects>  m_metaResolve;
     
     Rc<DxvkCommandList> m_cmd;
@@ -849,6 +894,8 @@ namespace dxvk {
     
     void commitComputeInitBarriers();
     void commitComputePostBarriers();
+    
+    void commitGraphicsPostBarriers();
 
     void emitMemoryBarrier(
             VkPipelineStageFlags      srcStages,

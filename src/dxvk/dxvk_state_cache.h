@@ -13,6 +13,8 @@
 
 namespace dxvk {
 
+  class DxvkDevice;
+
   /**
    * \brief State cache entry key
    * 
@@ -81,6 +83,7 @@ namespace dxvk {
   public:
 
     DxvkStateCache(
+      const DxvkDevice*           device,
             DxvkPipelineManager*  pipeManager,
             DxvkRenderPassPool*   passManager);
     
@@ -164,7 +167,6 @@ namespace dxvk {
     std::mutex                        m_writerLock;
     std::condition_variable           m_writerCond;
     std::queue<WriterItem>            m_writerQueue;
-    std::ofstream                     m_writerFile;
     dxvk::thread                      m_writerThread;
 
     DxvkShaderKey getShaderKey(

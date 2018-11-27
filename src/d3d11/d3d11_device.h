@@ -31,7 +31,7 @@ namespace dxvk {
   class D3D11DeviceContext;
   class D3D11ImmediateContext;
   class D3D11Predicate;
-  class D3D11Presenter;
+  class D3D11PresentDevice;
   class D3D11Query;
   class D3D11Texture1D;
   class D3D11Texture2D;
@@ -59,10 +59,10 @@ namespace dxvk {
             REFIID                  riid,
             void**                  ppParent);
     
-    IDXGIVkDevice*  m_dxgiDevice      = nullptr;
-    D3D11Device*    m_d3d11Device     = nullptr;
-    D3D11Presenter* m_d3d11Presenter  = nullptr;
-    D3D11VkInterop* m_d3d11VkInterop  = nullptr;
+    IDXGIVkDevice*      m_dxgiDevice      = nullptr;
+    D3D11Device*        m_d3d11Device     = nullptr;
+    D3D11PresentDevice* m_d3d11Presenter  = nullptr;
+    D3D11VkInterop*     m_d3d11VkInterop  = nullptr;
     
   };
   
@@ -333,8 +333,8 @@ namespace dxvk {
             DXGI_FORMAT           Format,
             DXGI_VK_FORMAT_MODE   Mode) const;
     
-    DxvkCsChunkRef AllocCsChunk() {
-      DxvkCsChunk* chunk = m_csChunkPool.allocChunk();
+    DxvkCsChunkRef AllocCsChunk(DxvkCsChunkFlags flags) {
+      DxvkCsChunk* chunk = m_csChunkPool.allocChunk(flags);
       return DxvkCsChunkRef(chunk, &m_csChunkPool);
     }
     
@@ -394,11 +394,11 @@ namespace dxvk {
 
     HRESULT CreateShaderModule(
             D3D11CommonShader*      pShaderModule,
+            DxvkShaderKey           ShaderKey,
       const void*                   pShaderBytecode,
             size_t                  BytecodeLength,
             ID3D11ClassLinkage*     pClassLinkage,
-      const DxbcModuleInfo*         pModuleInfo,
-            DxbcProgramType         ProgramType);
+      const DxbcModuleInfo*         pModuleInfo);
     
     HRESULT GetFormatSupportFlags(
             DXGI_FORMAT Format,

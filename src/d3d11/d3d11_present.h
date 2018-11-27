@@ -4,31 +4,11 @@
 #include "../dxgi/dxgi_interfaces.h"
 
 #include "d3d11_include.h"
-#include "d3d11_texture.h"
+#include "d3d11_swapchain.h"
 
 namespace dxvk {
   
   class D3D11Device;
-  
-  class D3D11VkBackBuffer : public ComObject<IDXGIVkBackBuffer> {
-    
-  public:
-    
-    D3D11VkBackBuffer(D3D11Texture2D* pTexture);
-    ~D3D11VkBackBuffer();
-    
-    HRESULT STDMETHODCALLTYPE QueryInterface(
-            REFIID                  riid,
-            void**                  ppvObject) final;
-    
-    Rc<DxvkImage> GetDXVKImage() final;
-    
-  public:
-    
-    D3D11Texture2D* m_texture;
-    
-  };
-  
   
   /**
    * \brief Present device
@@ -36,14 +16,14 @@ namespace dxvk {
    * Wires up some swap chain related
    * functions to the D3D11 device.
    */
-  class D3D11Presenter final : public IDXGIVkPresenter {
+  class D3D11PresentDevice final : public IDXGIVkPresentDevice {
     
   public:
     
-    D3D11Presenter(
+    D3D11PresentDevice(
             IDXGIObject*  pContainer,
             ID3D11Device* pDevice);
-    ~D3D11Presenter();
+    ~D3D11PresentDevice();
     
     ULONG STDMETHODCALLTYPE AddRef();
     
@@ -53,15 +33,10 @@ namespace dxvk {
             REFIID                  riid,
             void**                  ppvObject);
     
-    HRESULT STDMETHODCALLTYPE CreateSwapChainBackBuffer(
-      const DXGI_SWAP_CHAIN_DESC1*  pSwapChainDesc,
-            IDXGIVkBackBuffer**     ppInterface);
-    
-    HRESULT STDMETHODCALLTYPE FlushRenderingCommands();
-    
-    HRESULT STDMETHODCALLTYPE GetDevice(
-            REFGUID                 riid,
-            void**                  ppvDevice);
+    HRESULT STDMETHODCALLTYPE CreateSwapChainForHwnd(
+            HWND                    hWnd,
+      const DXGI_SWAP_CHAIN_DESC1*  pDesc,
+            IDXGIVkSwapChain**      ppSwapChain);
     
   private:
     

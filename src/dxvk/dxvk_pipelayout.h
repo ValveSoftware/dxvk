@@ -217,6 +217,31 @@ namespace dxvk {
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
+    
+    /**
+     * \brief Checks whether buffers or images are written to
+     * 
+     * It is assumed that storage images and buffers
+     * will be written to if they are present. Used
+     * for synchronization purposes.
+     * \param [in] stages Shader stages to check
+     */
+    VkShaderStageFlags getStorageDescriptorStages() const {
+      VkShaderStageFlags stages = 0;
+
+      for (const auto& slot : m_bindingSlots) {
+        bool isStorageDescriptor =
+          slot.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER         ||
+          slot.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC ||
+          slot.type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER   ||
+          slot.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        
+        if (isStorageDescriptor)
+          stages |= slot.stages;
+      }
+      
+      return stages;
+    }
 
   private:
     

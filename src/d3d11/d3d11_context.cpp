@@ -10,11 +10,13 @@
 namespace dxvk {
   
   D3D11DeviceContext::D3D11DeviceContext(
-          D3D11Device*    pParent,
-    const Rc<DxvkDevice>& Device)
+          D3D11Device*            pParent,
+    const Rc<DxvkDevice>&         Device,
+          DxvkCsChunkFlags        CsFlags)
   : m_parent    (pParent),
     m_annotation(this),
     m_device    (Device),
+    m_csFlags   (CsFlags),
     m_csChunk   (AllocCsChunk()) {
     // Create default state objects. We won't ever return them
     // to the application, but we'll use them to apply state.
@@ -226,18 +228,13 @@ namespace dxvk {
     if (!pAsync)
       return;
     
-    Com<ID3D11Query> query;
-    
-    if (SUCCEEDED(pAsync->QueryInterface(__uuidof(ID3D11Query), reinterpret_cast<void**>(&query)))) {
-      Com<D3D11Query> queryPtr = static_cast<D3D11Query*>(query.ptr());
+    Com<D3D11Query> queryPtr = static_cast<D3D11Query*>(pAsync);
       
-      if (queryPtr->HasBeginEnabled()) {
-        const uint32_t revision = queryPtr->Reset();
-        
-        EmitCs([revision, queryPtr] (DxvkContext* ctx) {
-          queryPtr->Begin(ctx, revision);
-        });
-      }
+    if (queryPtr->HasBeginEnabled()) {
+      uint32_t revision = queryPtr->Reset();
+      EmitCs([revision, queryPtr] (DxvkContext* ctx) {
+        queryPtr->Begin(ctx, revision);
+      });
     }
   }
   
@@ -246,22 +243,17 @@ namespace dxvk {
     if (!pAsync)
       return;
     
-    Com<ID3D11Query> query;
+    Com<D3D11Query> queryPtr = static_cast<D3D11Query*>(pAsync);
     
-    if (SUCCEEDED(pAsync->QueryInterface(__uuidof(ID3D11Query), reinterpret_cast<void**>(&query)))) {
-      Com<D3D11Query> queryPtr = static_cast<D3D11Query*>(query.ptr());
-      
-      if (queryPtr->HasBeginEnabled()) {
-        EmitCs([queryPtr] (DxvkContext* ctx) {
-          queryPtr->End(ctx);
-        });
-      } else {
-        const uint32_t revision = queryPtr->Reset();
-        
-        EmitCs([revision, queryPtr] (DxvkContext* ctx) {
-          queryPtr->Signal(ctx, revision);
-        });
-      }
+    if (queryPtr->HasBeginEnabled()) {
+      EmitCs([queryPtr] (DxvkContext* ctx) {
+        queryPtr->End(ctx);
+      });
+    } else {
+      uint32_t revision = queryPtr->Reset();
+      EmitCs([revision, queryPtr] (DxvkContext* ctx) {
+        queryPtr->Signal(ctx, revision);
+      });
     }
   }
   
@@ -271,7 +263,7 @@ namespace dxvk {
           BOOL                              PredicateValue) {
     static bool s_errorShown = false;
     
-    if (!std::exchange(s_errorShown, true))
+    if (pPredicate && !std::exchange(s_errorShown, true))
       Logger::err("D3D11DeviceContext::SetPredication: Stub");
     
     m_state.pr.predicateObject = static_cast<D3D11Query*>(pPredicate);
@@ -696,7 +688,6 @@ namespace dxvk {
     VkFormat uavFormat = m_parent->LookupFormat(uavDesc.Format, DXGI_VK_FORMAT_MODE_ANY).Format;
     VkFormat rawFormat = m_parent->LookupFormat(uavDesc.Format, DXGI_VK_FORMAT_MODE_RAW).Format;
     
-    // FIXME support packed formats
     if (uavFormat != rawFormat && rawFormat == VK_FORMAT_UNDEFINED) {
       Logger::err(str::format("D3D11: ClearUnorderedAccessViewUint: No raw format found for ", uavFormat));
       return;
@@ -708,6 +699,13 @@ namespace dxvk {
     clearValue.color.uint32[1] = Values[1];
     clearValue.color.uint32[2] = Values[2];
     clearValue.color.uint32[3] = Values[3];
+
+    // This is the only packed format that has UAV support
+    if (uavFormat == VK_FORMAT_B10G11R11_UFLOAT_PACK32) {
+      clearValue.color.uint32[0] = ((Values[0] & 0x7FF) <<  0)
+                                 | ((Values[1] & 0x7FF) << 11)
+                                 | ((Values[2] & 0x3FF) << 22);
+    }
     
     if (uav->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER) {
       // In case of raw and structured buffers as well as typed
@@ -2297,7 +2295,7 @@ namespace dxvk {
           ID3D11RenderTargetView* const*    ppRenderTargetViews,
           ID3D11DepthStencilView*           pDepthStencilView) {
     SetRenderTargets(NumViews, ppRenderTargetViews, pDepthStencilView);
-    BindFramebuffer(std::exchange(m_state.om.isUavRendering, false));
+    BindFramebuffer(false);
   }
   
   
@@ -2309,17 +2307,15 @@ namespace dxvk {
           UINT                              NumUAVs,
           ID3D11UnorderedAccessView* const* ppUnorderedAccessViews,
     const UINT*                             pUAVInitialCounts) {
-    bool spillOnBind = m_state.om.isUavRendering;
-
+    bool isUavRendering = false;
+    
     if (NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
       SetRenderTargets(NumRTVs, ppRenderTargetViews, pDepthStencilView);
     
     if (NumUAVs != D3D11_KEEP_UNORDERED_ACCESS_VIEWS) {
       // Check whether there actually are any UAVs bound
-      m_state.om.isUavRendering = false;
-
-      for (uint32_t i = 0; i < NumUAVs && !m_state.om.isUavRendering; i++)
-        m_state.om.isUavRendering = ppUnorderedAccessViews[i] != nullptr;
+      for (uint32_t i = 0; i < NumUAVs && !isUavRendering; i++)
+        isUavRendering = ppUnorderedAccessViews[i] != nullptr;
 
       // UAVs are made available to all shader stages in
       // the graphics pipeline even though this code may
@@ -2332,7 +2328,7 @@ namespace dxvk {
         pUAVInitialCounts);
     }
 
-    BindFramebuffer(spillOnBind);
+    BindFramebuffer(isUavRendering);
   }
   
   
@@ -3053,7 +3049,7 @@ namespace dxvk {
       
       UINT constantOffset = 0;
       UINT constantCount  = newBuffer != nullptr
-        ? newBuffer->GetSize() / 16
+        ? newBuffer->Desc()->ByteWidth / 16
         : 0;
       
       if (newBuffer != nullptr && pFirstConstant != nullptr && pNumConstants != nullptr) {
@@ -3183,7 +3179,7 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::RestoreState() {
-    BindFramebuffer(m_state.om.isUavRendering);
+    BindFramebuffer(false);
     
     BindShader(DxbcProgramType::VertexShader,   GetCommonShader(m_state.vs.shader.ptr()));
     BindShader(DxbcProgramType::HullShader,     GetCommonShader(m_state.hs.shader.ptr()));
@@ -3356,7 +3352,7 @@ namespace dxvk {
   
   
   DxvkCsChunkRef D3D11DeviceContext::AllocCsChunk() {
-    return m_parent->AllocCsChunk();
+    return m_parent->AllocCsChunk(m_csFlags);
   }
   
 }

@@ -2,9 +2,19 @@
 
 #include "../util/config/config.h"
 
+#include "../dxgi/dxgi_options.h"
+
 #include "d3d11_include.h"
 
 namespace dxvk {
+  
+  /**
+   * \brief Sync mode
+   */
+  enum class D3D11SwapChainSyncMode : int32_t {
+    Default   = 0,
+    Mailbox   = 1,
+  };
   
   struct D3D11Options {
     D3D11Options(const Config& config);
@@ -21,7 +31,7 @@ namespace dxvk {
     /// This can substantially speed up some games, but may
     /// cause issues if the game submits command lists more
     /// than once.
-    bool dcMapSpeedHack;
+    bool dcSingleUseMode;
 
     /// Fakes stream output support.
     /// 
@@ -30,6 +40,12 @@ namespace dxvk {
     /// well enough without it. Will be removed once
     /// Stream Output is properly supported in DXVK.
     bool fakeStreamOutSupport;
+
+    /// Zero-initialize workgroup memory
+    ///
+    /// Workargound for games that don't initialize
+    /// TGSM in compute shaders before reading it.
+    bool zeroInitWorkgroupMemory;
 
     /// Maximum tessellation factor.
     ///
@@ -43,6 +59,22 @@ namespace dxvk {
     /// Enforces anisotropic filtering with the
     /// given anisotropy value for all samplers.
     int32_t samplerAnisotropy;
+    
+    /// Back buffer count for the Vulkan swap chain.
+    /// Overrides DXGI_SWAP_CHAIN_DESC::BufferCount.
+    int32_t numBackBuffers;
+
+    /// Sync interval. Overrides the value
+    /// passed to IDXGISwapChain::Present.
+    int32_t syncInterval;
+
+    /// Defer surface creation until first present call. This
+    /// fixes issues with games that create multiple swap chains
+    /// for a single window that may interfere with each other.
+    bool deferSurfaceCreation;
+
+    /// Vsync mode
+    D3D11SwapChainSyncMode syncMode;
   };
   
 }

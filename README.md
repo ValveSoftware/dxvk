@@ -23,7 +23,7 @@ Verify that your application uses DXVK instead of wined3d by checking for the pr
 ### Requirements:
 - [wine 3.10](https://www.winehq.org/) or newer
 - [Meson](http://mesonbuild.com/) build system (at least version 0.43)
-- [MinGW64](http://mingw-w64.org/) compiler and headers (requires threading support)
+- [MinGW64](http://mingw-w64.org/) 6.0 compiler and headers
 - [glslang](https://github.com/KhronosGroup/glslang) compile
 
 ### Building DLLs
@@ -40,11 +40,8 @@ This will create a folder `dxvk-master` in `/your/target/directory`, which conta
 ```
 # 64-bit build. For 32-bit builds, replace
 # build-win64.txt with build-win32.txt
-meson --cross-file build-win64.txt --prefix /your/dxvk/directory build.w64
+meson --cross-file build-win64.txt --buildtype release --prefix /your/dxvk/directory build.w64
 cd build.w64
-meson configure 
-# for an optimized release build:
-meson configure -Dbuildtype=release
 ninja
 ninja install
 ```

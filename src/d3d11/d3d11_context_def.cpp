@@ -7,7 +7,7 @@ namespace dxvk {
           D3D11Device*    pParent,
     const Rc<DxvkDevice>& Device,
           UINT            ContextFlags)
-  : D3D11DeviceContext(pParent, Device),
+  : D3D11DeviceContext(pParent, Device, GetCsChunkFlags(pParent)),
     m_contextFlags(ContextFlags),
     m_commandList (CreateCommandList()) {
     ClearState();
@@ -159,9 +159,6 @@ namespace dxvk {
     D3D11Buffer* pBuffer = static_cast<D3D11Buffer*>(pResource);
     const Rc<DxvkBuffer> buffer = pBuffer->GetBuffer();
     
-    D3D11_BUFFER_DESC bufferDesc;
-    pBuffer->GetDesc(&bufferDesc);
-    
     if (!(buffer->memFlags() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
       Logger::err("D3D11: Cannot map a device-local buffer");
       return E_INVALIDARG;
@@ -170,10 +167,10 @@ namespace dxvk {
     pMapEntry->pResource    = pResource;
     pMapEntry->Subresource  = 0;
     pMapEntry->MapType      = D3D11_MAP_WRITE_DISCARD;
-    pMapEntry->RowPitch     = pBuffer->GetSize();
-    pMapEntry->DepthPitch   = pBuffer->GetSize();
+    pMapEntry->RowPitch     = pBuffer->Desc()->ByteWidth;
+    pMapEntry->DepthPitch   = pBuffer->Desc()->ByteWidth;
     
-    if (bufferDesc.Usage == D3D11_USAGE_DYNAMIC && m_parent->GetOptions()->dcMapSpeedHack) {
+    if (pBuffer->Desc()->Usage == D3D11_USAGE_DYNAMIC && m_csFlags.test(DxvkCsChunkFlag::SingleUse)) {
       // For resources that cannot be written by the GPU,
       // we may write to the buffer resource directly and
       // just swap in the physical buffer slice as needed.
@@ -182,7 +179,7 @@ namespace dxvk {
     } else {
       // For GPU-writable resources, we need a data slice
       // to perform the update operation at execution time.
-      pMapEntry->DataSlice   = AllocUpdateBufferSlice(pBuffer->GetSize());
+      pMapEntry->DataSlice   = AllocUpdateBufferSlice(pBuffer->Desc()->ByteWidth);
       pMapEntry->MapPointer  = pMapEntry->DataSlice.ptr();
     }
     
@@ -240,10 +237,7 @@ namespace dxvk {
     const D3D11DeferredContextMapEntry* pMapEntry) {
     D3D11Buffer* pBuffer = static_cast<D3D11Buffer*>(pResource);
     
-    D3D11_BUFFER_DESC bufferDesc;
-    pBuffer->GetDesc(&bufferDesc);
-    
-    if (bufferDesc.Usage == D3D11_USAGE_DYNAMIC && m_parent->GetOptions()->dcMapSpeedHack) {
+    if (pBuffer->Desc()->Usage == D3D11_USAGE_DYNAMIC && m_csFlags.test(DxvkCsChunkFlag::SingleUse)) {
       EmitCs([
         cDstBuffer = pBuffer->GetBuffer(),
         cPhysSlice = pMapEntry->BufferSlice
@@ -302,6 +296,14 @@ namespace dxvk {
   
   void D3D11DeferredContext::EmitCsChunk(DxvkCsChunkRef&& chunk) {
     m_commandList->AddChunk(std::move(chunk));
+  }
+
+
+  DxvkCsChunkFlags D3D11DeferredContext::GetCsChunkFlags(
+          D3D11Device*                  pDevice) {
+    return pDevice->GetOptions()->dcSingleUseMode
+      ? DxvkCsChunkFlags(DxvkCsChunkFlag::SingleUse)
+      : DxvkCsChunkFlags();
   }
 
 }

@@ -1,33 +1,38 @@
-#include <unordered_map>
+#include "../d3d11/d3d11_options.h"
 
 #include "dxbc_options.h"
 
 namespace dxvk {
   
-  const static std::unordered_map<std::string, DxbcOptions> g_dxbcAppOptions = {{
-    
-  }};
-  
-  
-  DxbcOptions getDxbcAppOptions(const std::string& appName) {
-    auto appOptions = g_dxbcAppOptions.find(appName);
-    
-    return appOptions != g_dxbcAppOptions.end()
-      ? appOptions->second
-      : DxbcOptions();
+  DxbcOptions::DxbcOptions() {
+
   }
-  
-  
-  DxbcOptions getDxbcDeviceOptions(const Rc<DxvkDevice>& device) {
-    DxbcOptions flags;
-    
+
+
+  DxbcOptions::DxbcOptions(const Rc<DxvkDevice>& device, const D3D11Options& options) {
     const DxvkDeviceFeatures& devFeatures = device->features();
+    const DxvkDeviceInfo& devInfo = device->adapter()->devicePropertiesExt();
     
-    if (devFeatures.core.features.shaderStorageImageReadWithoutFormat)
-      flags.set(DxbcOption::UseStorageImageReadWithoutFormat);
+    useStorageImageReadWithoutFormat
+      = devFeatures.core.features.shaderStorageImageReadWithoutFormat;
+    useSubgroupOpsForEarlyDiscard
+      = (devInfo.coreSubgroup.subgroupSize >= 4)
+     && (devInfo.coreSubgroup.supportedStages     & VK_SHADER_STAGE_FRAGMENT_BIT)
+     && (devInfo.coreSubgroup.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT);
+    useSubgroupOpsClustered = useSubgroupOpsForEarlyDiscard
+     && (devInfo.coreSubgroup.supportedOperations & VK_SUBGROUP_FEATURE_CLUSTERED_BIT);
     
-    flags.set(DxbcOption::DeferKill);
-    return flags;
+    zeroInitWorkgroupMemory = options.zeroInitWorkgroupMemory;
+    
+    // Disable early discard on AMD due to GPU hangs
+    // Disable early discard on Nvidia because it may hurt performance
+    auto vendor = DxvkGpuVendor(devInfo.core.properties.vendorID);
+
+    if (vendor == DxvkGpuVendor::Amd
+     || vendor == DxvkGpuVendor::Nvidia) {
+      useSubgroupOpsForEarlyDiscard = false;
+      useSubgroupOpsClustered       = false;
+    }
   }
   
 }

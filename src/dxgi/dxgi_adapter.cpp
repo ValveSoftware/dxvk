@@ -11,8 +11,6 @@
 #include "dxgi_options.h"
 #include "dxgi_output.h"
 
-#include "../dxvk/vulkan/dxvk_vulkan_names.h"
-
 namespace dxvk {
 
   DxgiAdapter::DxgiAdapter(
@@ -38,6 +36,7 @@ namespace dxvk {
      || riid == __uuidof(IDXGIAdapter)
      || riid == __uuidof(IDXGIAdapter1)
      || riid == __uuidof(IDXGIAdapter2)
+     || riid == __uuidof(IDXGIAdapter3)
      || riid == __uuidof(IDXGIVkAdapter)) {
       *ppvObject = ref(this);
       return S_OK;
@@ -164,10 +163,18 @@ namespace dxvk {
     if (options->customDeviceId >= 0)
       deviceProp.deviceID = options->customDeviceId;
     
+    // XXX nvapi workaround for a lot of Unreal Engine 4 games
+    if (options->customVendorId < 0 && options->customDeviceId < 0
+     && deviceProp.vendorID == uint16_t(DxvkGpuVendor::Nvidia)) {
+      Logger::info("DXGI: NvAPI workaround enabled, reporting AMD GPU");
+      deviceProp.vendorID = uint16_t(DxvkGpuVendor::Amd);
+      deviceProp.deviceID = 0x67df; /* RX 480 */
+    }
+    
     // Convert device name
     std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
     ::MultiByteToWideChar(CP_UTF8, 0, deviceProp.deviceName, -1,
-        pDesc->Description, sizeof(pDesc->Description));
+        pDesc->Description, sizeof(pDesc->Description) / sizeof(*pDesc->Description));
     
     // Get amount of video memory
     // based on the Vulkan heaps
@@ -215,6 +222,95 @@ namespace dxvk {
   }
   
   
+  HRESULT STDMETHODCALLTYPE DxgiAdapter::QueryVideoMemoryInfo(
+          UINT                          NodeIndex,
+          DXGI_MEMORY_SEGMENT_GROUP     MemorySegmentGroup,
+          DXGI_QUERY_VIDEO_MEMORY_INFO* pVideoMemoryInfo) {
+    if (NodeIndex > 0 || !pVideoMemoryInfo)
+      return DXGI_ERROR_INVALID_CALL;
+    
+    if (MemorySegmentGroup != DXGI_MEMORY_SEGMENT_GROUP_LOCAL
+     && MemorySegmentGroup != DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL)
+      return DXGI_ERROR_INVALID_CALL;
+    
+    DxvkAdapterMemoryInfo memInfo = m_adapter->getMemoryHeapInfo();
+
+    VkMemoryHeapFlags heapFlagMask = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    VkMemoryHeapFlags heapFlags    = 0;
+
+    if (MemorySegmentGroup == DXGI_MEMORY_SEGMENT_GROUP_LOCAL)
+      heapFlags |= VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    
+    pVideoMemoryInfo->Budget       = 0;
+    pVideoMemoryInfo->CurrentUsage = 0;
+
+    for (uint32_t i = 0; i < memInfo.heapCount; i++) {
+      if ((memInfo.heaps[i].heapFlags & heapFlagMask) != heapFlags)
+        continue;
+      
+      pVideoMemoryInfo->Budget       += memInfo.heaps[i].memoryAvailable;
+      pVideoMemoryInfo->CurrentUsage += memInfo.heaps[i].memoryAllocated;
+    }
+
+    // We don't implement reservation, but the observable
+    // behaviour should match that of Windows drivers
+    uint32_t segmentId = uint32_t(MemorySegmentGroup);
+
+    pVideoMemoryInfo->AvailableForReservation = pVideoMemoryInfo->Budget / 2;
+    pVideoMemoryInfo->CurrentReservation      = m_memReservation[segmentId];
+    return S_OK;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE DxgiAdapter::SetVideoMemoryReservation(
+          UINT                          NodeIndex,
+          DXGI_MEMORY_SEGMENT_GROUP     MemorySegmentGroup,
+          UINT64                        Reservation) {
+    DXGI_QUERY_VIDEO_MEMORY_INFO info;
+
+    HRESULT hr = QueryVideoMemoryInfo(
+      NodeIndex, MemorySegmentGroup, &info);
+    
+    if (FAILED(hr))
+      return hr;
+    
+    if (Reservation > info.AvailableForReservation)
+      return DXGI_ERROR_INVALID_CALL;
+    
+    uint32_t segmentId = uint32_t(MemorySegmentGroup);
+    m_memReservation[segmentId] = Reservation;
+    return S_OK;
+  }
+
+  
+  HRESULT STDMETHODCALLTYPE DxgiAdapter::RegisterHardwareContentProtectionTeardownStatusEvent(
+          HANDLE                        hEvent,
+          DWORD*                        pdwCookie) {
+    Logger::err("DxgiAdapter::RegisterHardwareContentProtectionTeardownStatusEvent: Not implemented");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE DxgiAdapter::RegisterVideoMemoryBudgetChangeNotificationEvent(
+          HANDLE                        hEvent,
+          DWORD*                        pdwCookie) {
+    Logger::err("DxgiAdapter::RegisterVideoMemoryBudgetChangeNotificationEvent: Not implemented");
+    return E_NOTIMPL;
+  }
+  
+
+  void STDMETHODCALLTYPE DxgiAdapter::UnregisterHardwareContentProtectionTeardownStatus(
+          DWORD                         dwCookie) {
+    Logger::err("DxgiAdapter::UnregisterHardwareContentProtectionTeardownStatus: Not implemented");
+  }
+
+
+  void STDMETHODCALLTYPE DxgiAdapter::UnregisterVideoMemoryBudgetChangeNotification(
+          DWORD                         dwCookie) {
+    Logger::err("DxgiAdapter::UnregisterVideoMemoryBudgetChangeNotification: Not implemented");
+  }
+
+
   Rc<DxvkAdapter> STDMETHODCALLTYPE DxgiAdapter::GetDXVKAdapter() {
     return m_adapter;
   }

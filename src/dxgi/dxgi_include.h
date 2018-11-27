@@ -1,7 +1,7 @@
 #pragma once
 
 //for some reason we need to specify __declspec(dllexport) for MinGW
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__WINE__)
   #define DLLEXPORT
 #else
   #define DLLEXPORT __declspec(dllexport)
@@ -24,7 +24,7 @@
 #include "../util/util_math.h"
 #include "../util/util_string.h"
 
-#include <dxgi1_2.h>
+#include <dxgi1_4.h>
 
 // For some reason, these are not exposed
 #ifndef DXGI_RESOURCE_PRIORITY_NORMAL

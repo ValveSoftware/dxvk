@@ -1,8 +1,8 @@
 #include <iterator>
 #include <fstream>
 
-#include <dxbc_module.h>
-#include <dxvk_shader.h>
+#include "../../src/dxbc/dxbc_module.h"
+#include "../../src/dxvk/dxvk_shader.h"
 
 #include <shellapi.h>
 #include <windows.h>
@@ -42,8 +42,9 @@ int WINAPI WinMain(HINSTANCE hInstance,
     DxbcModule module(reader);
     
     DxbcModuleInfo moduleInfo;
-    moduleInfo.options = DxbcOptions();
-    moduleInfo.xfb     = nullptr;
+    moduleInfo.options.useSubgroupOpsForEarlyDiscard = true;
+    moduleInfo.options.useSubgroupOpsClustered       = true;
+    moduleInfo.xfb = nullptr;
 
     Rc<DxvkShader> shader = module.compile(moduleInfo, ifileName);
     std::ofstream ofile(str::fromws(argv[2]), std::ios::binary);

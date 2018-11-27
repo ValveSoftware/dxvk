@@ -1,10 +1,10 @@
 #pragma once
 
-#include <dxvk_device.h>
-
 #include "dxgi_adapter.h"
 #include "dxgi_interfaces.h"
 #include "dxgi_options.h"
+
+#include "../dxvk/dxvk_device.h"
 
 namespace dxvk {
   
@@ -87,9 +87,11 @@ namespace dxvk {
     HRESULT STDMETHODCALLTYPE EnqueueSetEvent( 
             HANDLE                hEvent) final;
     
+    void STDMETHODCALLTYPE Trim() final;
+    
     Rc<DxvkDevice> STDMETHODCALLTYPE GetDXVKDevice() final;
 
-    Rc<DxvkEvent> STDMETHODCALLTYPE GetFrameSyncEvent();
+    Rc<DxvkEvent> STDMETHODCALLTYPE GetFrameSyncEvent() final;
     
   private:
     

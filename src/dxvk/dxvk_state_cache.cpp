@@ -1,3 +1,4 @@
+#include "dxvk_device.h"
 #include "dxvk_pipemanager.h"
 #include "dxvk_state_cache.h"
 
@@ -29,27 +30,20 @@ namespace dxvk {
 
 
   DxvkStateCache::DxvkStateCache(
+    const DxvkDevice*           device,
           DxvkPipelineManager*  pipeManager,
           DxvkRenderPassPool*   passManager)
   : m_pipeManager(pipeManager),
     m_passManager(passManager) {
     bool newFile = !readCacheFile();
 
-    // Open cache file for writing
-    std::ios_base::openmode mode = std::ios_base::binary;
-
-    mode |= newFile
-      ? std::ios_base::trunc
-      : std::ios_base::app;
-    
-    m_writerFile = std::ofstream(getCacheFileName(), mode);
-
-    if (!m_writerFile) {
-      // We can't write to the file, but we might still
-      // use cache entries previously read from the file
-      Logger::warn("DXVK: Failed to open state cache file");
-    } else if (newFile) {
+    if (newFile) {
       Logger::warn("DXVK: Creating new state cache file");
+
+      // Start with an empty file
+      std::ofstream file(getCacheFileName(),
+        std::ios_base::binary |
+        std::ios_base::trunc);
 
       // Write header with the current version number
       DxvkStateCacheHeader header;
@@ -57,14 +51,12 @@ namespace dxvk {
       auto data = reinterpret_cast<const char*>(&header);
       auto size = sizeof(header);
 
-      m_writerFile.write(data, size);
+      file.write(data, size);
 
       // Write all valid entries to the cache file in
       // case we're recovering a corrupted cache file
       for (auto& e : m_entries)
-        writeCacheEntry(m_writerFile, e);
-
-      m_writerFile.flush();
+        writeCacheEntry(file, e);
     }
 
     // Use half the available CPU cores for pipeline compilation
@@ -75,12 +67,17 @@ namespace dxvk {
 
     if (numWorkers <  1) numWorkers =  1;
     if (numWorkers > 16) numWorkers = 16;
+
+    if (device->config().numCompilerThreads > 0)
+      numWorkers = device->config().numCompilerThreads;
     
     Logger::info(str::format("DXVK: Using ", numWorkers, " compiler threads"));
     
     // Start the worker threads and the file writer
-    for (uint32_t i = 0; i < numWorkers; i++)
+    for (uint32_t i = 0; i < numWorkers; i++) {
       m_workerThreads.emplace_back([this] () { workerFunc(); });
+      m_workerThreads[i].set_priority(ThreadPriority::Lowest);
+    }
     
     m_writerThread = dxvk::thread([this] () { writerFunc(); });
   }
@@ -390,6 +387,8 @@ namespace dxvk {
   void DxvkStateCache::writerFunc() {
     env::setThreadName(L"dxvk-writer");
 
+    std::ofstream file;
+
     while (!m_stopThreads.load()) {
       DxvkStateCacheEntry entry;
 
@@ -407,13 +406,19 @@ namespace dxvk {
         m_writerQueue.pop();
       }
 
-      writeCacheEntry(m_writerFile, entry);
+      if (!file) {
+        file = std::ofstream(getCacheFileName(),
+          std::ios_base::binary |
+          std::ios_base::app);
+      }
+
+      writeCacheEntry(file, entry);
     }
   }
 
 
   std::string DxvkStateCache::getCacheFileName() const {
-    std::string path = env::getEnvVar(L"DXVK_STATE_CACHE_PATH");
+    std::string path = env::getEnvVar("DXVK_STATE_CACHE_PATH");
 
     if (!path.empty() && *path.rbegin() != '/')
       path += '/';
