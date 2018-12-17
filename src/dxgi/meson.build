@@ -5,11 +5,11 @@ dxgi_shaders = files([
 
 dxgi_src = [
   'dxgi_adapter.cpp',
-  'dxgi_device.cpp',
   'dxgi_enums.cpp',
   'dxgi_factory.cpp',
   'dxgi_format.cpp',
   'dxgi_main.cpp',
+  'dxgi_monitor.cpp',
   'dxgi_options.cpp',
   'dxgi_output.cpp',
   'dxgi_swapchain.cpp',

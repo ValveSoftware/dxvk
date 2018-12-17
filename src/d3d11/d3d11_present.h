@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../dxgi/dxgi_device.h"
 #include "../dxgi/dxgi_interfaces.h"
 
 #include "d3d11_include.h"
@@ -9,6 +8,7 @@
 namespace dxvk {
   
   class D3D11Device;
+  class D3D11DXGIDevice;
   
   /**
    * \brief Present device
@@ -21,8 +21,9 @@ namespace dxvk {
   public:
     
     D3D11PresentDevice(
-            IDXGIObject*  pContainer,
-            ID3D11Device* pDevice);
+            D3D11DXGIDevice*  pContainer,
+            D3D11Device*      pDevice);
+    
     ~D3D11PresentDevice();
     
     ULONG STDMETHODCALLTYPE AddRef();
@@ -40,8 +41,8 @@ namespace dxvk {
     
   private:
     
-    IDXGIObject*  m_container;
-    ID3D11Device* m_device;
+    D3D11DXGIDevice*  m_container;
+    D3D11Device*      m_device;
     
   };
   

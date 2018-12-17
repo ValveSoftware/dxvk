@@ -8,10 +8,9 @@ namespace dxvk {
   D3D10Device::D3D10Device(
           D3D11Device*                      pDevice,
           D3D11ImmediateContext*            pContext)
-  : m_device(pDevice), m_context(pContext) {
-    // Respecting the single-threaded flag may improve performance
-    UINT flags = pDevice->GetCreationFlags();
-    m_threadSafe = !(flags & D3D10_CREATE_DEVICE_SINGLETHREADED);
+  : m_device(pDevice), m_context(pContext),
+    m_multithread(this, !(pDevice->GetCreationFlags() & D3D10_CREATE_DEVICE_SINGLETHREADED)) {
+    
   }
 
   
@@ -1507,7 +1506,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockDevice();
     
     ID3D11RenderTargetView* d3d11Rtv[D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT];
-    ID3D11DepthStencilView* d3d11Dsv;
+    ID3D11DepthStencilView* d3d11Dsv = nullptr;
 
     m_context->OMGetRenderTargets(NumViews,
       ppRenderTargetViews ? d3d11Rtv : nullptr,

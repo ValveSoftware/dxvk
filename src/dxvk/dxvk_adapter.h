@@ -8,7 +8,6 @@ namespace dxvk {
   
   class DxvkDevice;
   class DxvkInstance;
-  class DxvkSurface;
   
   /**
    * \brief GPU vendors
@@ -194,17 +193,6 @@ namespace dxvk {
             DxvkDeviceFeatures  enabledFeatures);
     
     /**
-     * \brief Creates a surface
-     * 
-     * \param [in] instance Module instance
-     * \param [in] window Application window
-     * \returns Surface handle
-     */
-    Rc<DxvkSurface> createSurface(
-      HINSTANCE instance,
-      HWND      window);
-    
-    /**
      * \brief Registers memory allocation
      * 
      * Updates memory alloc info accordingly.
@@ -225,6 +213,22 @@ namespace dxvk {
     void notifyHeapMemoryFree(
             uint32_t            heap,
             VkDeviceSize        bytes);
+    
+    /**
+     * \brief Tests if the driver matches certain criteria
+     *
+     * \param [in] vendor GPU vendor
+     * \param [in] driver Driver. Ignored when the
+     *    driver properties extension is not supported.
+     * \param [in] minVer Match versions starting with this one
+     * \param [in] maxVer Match versions lower than this one
+     * \returns \c True if the driver matches these criteria
+     */
+    bool matchesDriver(
+            DxvkGpuVendor       vendor,
+            VkDriverIdKHR       driver,
+            uint32_t            minVer,
+            uint32_t            maxVer) const;
     
     /**
      * \brief Logs DXVK adapter info

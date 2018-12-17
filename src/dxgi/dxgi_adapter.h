@@ -72,43 +72,12 @@ namespace dxvk {
 
     Rc<DxvkAdapter> STDMETHODCALLTYPE GetDXVKAdapter() final;
     
-    HRESULT STDMETHODCALLTYPE CreateDevice(
-            IDXGIObject*              pContainer,
-      const DxvkDeviceFeatures*       pFeatures,
-            IDXGIVkDevice**           ppDevice) final;
-    
-    DXGI_VK_FORMAT_INFO STDMETHODCALLTYPE LookupFormat(
-            DXGI_FORMAT               Format,
-            DXGI_VK_FORMAT_MODE       Mode) final;
-    
-    DXGI_VK_FORMAT_FAMILY STDMETHODCALLTYPE LookupFormatFamily(
-            DXGI_FORMAT               Format,
-            DXGI_VK_FORMAT_MODE       Mode) final;
-    
-    HRESULT GetOutputFromMonitor(
-            HMONITOR                  Monitor,
-            IDXGIOutput**             ppOutput);
-    
-    HRESULT GetOutputData(
-            HMONITOR                  Monitor,
-            DXGI_VK_OUTPUT_DATA*      pOutputData);
-    
-    HRESULT SetOutputData(
-            HMONITOR                  Monitor,
-      const DXGI_VK_OUTPUT_DATA*      pOutputData);
-    
   private:
-    
-    using OutputMap = std::unordered_map<HMONITOR, DXGI_VK_OUTPUT_DATA>;
     
     Com<DxgiFactory>  m_factory;
     Rc<DxvkAdapter>   m_adapter;
     
-    DXGIVkFormatTable m_formats;
     UINT64            m_memReservation[2] = { 0, 0 };
-    
-    std::mutex        m_outputMutex;
-    OutputMap         m_outputData;
     
   };
 

@@ -4,7 +4,6 @@
 #include <d3d10_1.h>
 
 #include "dxgi_adapter.h"
-#include "dxgi_device.h"
 #include "dxgi_enums.h"
 #include "dxgi_factory.h"
 #include "dxgi_format.h"
@@ -17,8 +16,7 @@ namespace dxvk {
           DxgiFactory*      factory,
     const Rc<DxvkAdapter>&  adapter)
   : m_factory (factory),
-    m_adapter (adapter),
-    m_formats (adapter) {
+    m_adapter (adapter) {
     
   }
   
@@ -150,6 +148,7 @@ namespace dxvk {
     
     auto deviceProp = m_adapter->deviceProperties();
     auto memoryProp = m_adapter->memoryProperties();
+    auto deviceId   = m_adapter->devicePropertiesExt().coreDeviceId;
     
     // Custom Vendor / Device ID
     if (options->customVendorId >= 0)
@@ -214,10 +213,13 @@ namespace dxvk {
     pDesc->DedicatedVideoMemory           = deviceMemory;
     pDesc->DedicatedSystemMemory          = 0;
     pDesc->SharedSystemMemory             = sharedMemory;
-    pDesc->AdapterLuid                    = LUID { 0, 0 };  // TODO implement
+    pDesc->AdapterLuid                    = LUID { 0, 0 };
     pDesc->Flags                          = 0;
     pDesc->GraphicsPreemptionGranularity  = DXGI_GRAPHICS_PREEMPTION_DMA_BUFFER_BOUNDARY;
     pDesc->ComputePreemptionGranularity   = DXGI_COMPUTE_PREEMPTION_DMA_BUFFER_BOUNDARY;
+
+    if (deviceId.deviceLUIDValid)
+      std::memcpy(&pDesc->AdapterLuid, deviceId.deviceLUID, VK_LUID_SIZE);
     return S_OK;
   }
   
@@ -313,86 +315,6 @@ namespace dxvk {
 
   Rc<DxvkAdapter> STDMETHODCALLTYPE DxgiAdapter::GetDXVKAdapter() {
     return m_adapter;
-  }
-  
-  
-  HRESULT STDMETHODCALLTYPE DxgiAdapter::CreateDevice(
-          IDXGIObject*              pContainer,
-    const DxvkDeviceFeatures*       pFeatures,
-          IDXGIVkDevice**           ppDevice) {
-    InitReturnPtr(ppDevice);
-    
-    try {
-      *ppDevice = new dxvk::DxgiDevice(pContainer,
-        this, m_factory->GetOptions(), pFeatures);
-      return S_OK;
-    } catch (const dxvk::DxvkError& e) {
-      dxvk::Logger::err(e.message());
-      return DXGI_ERROR_UNSUPPORTED;
-    }
-  }
-  
-  
-  DXGI_VK_FORMAT_INFO STDMETHODCALLTYPE DxgiAdapter::LookupFormat(
-          DXGI_FORMAT               Format,
-          DXGI_VK_FORMAT_MODE       Mode) {
-    return m_formats.GetFormatInfo(Format, Mode);
-  }
-  
-  
-  DXGI_VK_FORMAT_FAMILY STDMETHODCALLTYPE DxgiAdapter::LookupFormatFamily(
-          DXGI_FORMAT               Format,
-          DXGI_VK_FORMAT_MODE       Mode) {
-    return m_formats.GetFormatFamily(Format, Mode);
-  }
-  
-  
-  HRESULT DxgiAdapter::GetOutputFromMonitor(
-          HMONITOR                  Monitor,
-          IDXGIOutput**             ppOutput) {
-    if (ppOutput == nullptr)
-      return DXGI_ERROR_INVALID_CALL;
-    
-    for (uint32_t i = 0; SUCCEEDED(EnumOutputs(i, ppOutput)); i++) {
-      DXGI_OUTPUT_DESC outputDesc;
-      (*ppOutput)->GetDesc(&outputDesc);
-      
-      if (outputDesc.Monitor == Monitor)
-        return S_OK;
-      
-      (*ppOutput)->Release();
-      (*ppOutput) = nullptr;
-    }
-    
-    // No such output found
-    return DXGI_ERROR_NOT_FOUND;
-  }
-  
-  
-  HRESULT DxgiAdapter::GetOutputData(
-          HMONITOR                  Monitor,
-          DXGI_VK_OUTPUT_DATA*      pOutputData) {
-    std::lock_guard<std::mutex> lock(m_outputMutex);
-    
-    auto entry = m_outputData.find(Monitor);
-    if (entry == m_outputData.end())
-      return DXGI_ERROR_NOT_FOUND;
-    
-    if (pOutputData == nullptr)
-      return S_FALSE;
-    
-    *pOutputData = entry->second;
-    return S_OK;
-  }
-  
-  
-  HRESULT DxgiAdapter::SetOutputData(
-          HMONITOR                  Monitor,
-    const DXGI_VK_OUTPUT_DATA*      pOutputData) {
-    std::lock_guard<std::mutex> lock(m_outputMutex);
-    
-    m_outputData.insert_or_assign(Monitor, *pOutputData);
-    return S_OK;
   }
   
 }

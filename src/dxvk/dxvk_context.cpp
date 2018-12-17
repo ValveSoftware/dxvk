@@ -70,7 +70,8 @@ namespace dxvk {
   void DxvkContext::flushCommandList() {
     m_device->submitCommandList(
       this->endRecording(),
-      nullptr, nullptr);
+      VK_NULL_HANDLE,
+      VK_NULL_HANDLE);
     
     this->beginRecording(
       m_device->createCommandList());
@@ -162,7 +163,10 @@ namespace dxvk {
      || m_rc[slot].bufferView != bufferView) {
       m_rc[slot].imageView   = imageView;
       m_rc[slot].bufferView  = bufferView;
-      
+      m_rc[slot].bufferSlice = bufferView != nullptr
+        ? bufferView->slice()
+        : DxvkBufferSlice();
+
       m_flags.set(
         DxvkContextFlag::CpDirtyResources,
         DxvkContextFlag::GpDirtyResources);
@@ -296,8 +300,7 @@ namespace dxvk {
     // Create a descriptor set pointing to the view
     VkBufferView viewObject = bufferView->handle();
     
-    VkDescriptorSet descriptorSet =
-      m_cmd->allocateDescriptorSet(pipeInfo.dsetLayout);
+    VkDescriptorSet descriptorSet = allocateDescriptorSet(pipeInfo.dsetLayout);
     
     VkWriteDescriptorSet descriptorWrite;
     descriptorWrite.sType            = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -515,7 +518,8 @@ namespace dxvk {
     if (clearAspects & VK_IMAGE_ASPECT_STENCIL_BIT)
       depthOp.loadOpS = VK_ATTACHMENT_LOAD_OP_CLEAR;
     
-    if (clearAspects == imageView->info().aspect) {
+    if (clearAspects == imageView->info().aspect
+     && imageView->imageInfo().type != VK_IMAGE_TYPE_3D) {
       colorOp.loadLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
       depthOp.loadLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
     }
@@ -963,7 +967,7 @@ namespace dxvk {
     descriptors.srcDepth   = dView->getDescriptor(VK_IMAGE_VIEW_TYPE_2D_ARRAY, layout).image;
     descriptors.srcStencil = sView->getDescriptor(VK_IMAGE_VIEW_TYPE_2D_ARRAY, layout).image;
 
-    VkDescriptorSet dset = m_cmd->allocateDescriptorSet(pipeInfo.dsetLayout);
+    VkDescriptorSet dset = allocateDescriptorSet(pipeInfo.dsetLayout);
     m_cmd->updateDescriptorSetWithTemplate(dset, pipeInfo.dsetTemplate, &descriptors);
 
     // Since this is a meta operation, the image may be
@@ -1290,7 +1294,7 @@ namespace dxvk {
       
       // Create descriptor set with the current source view
       descriptorImage.imageView = pass.srcView;
-      descriptorWrite.dstSet = m_cmd->allocateDescriptorSet(pipeInfo.dsetLayout);
+      descriptorWrite.dstSet = allocateDescriptorSet(pipeInfo.dsetLayout);
       m_cmd->updateDescriptorSets(1, &descriptorWrite);
       
       // Set up viewport and scissor rect
@@ -1802,8 +1806,7 @@ namespace dxvk {
       imageView->type(), imageFormatInfo(imageView->info().format)->flags);
     
     // Create a descriptor set pointing to the view
-    VkDescriptorSet descriptorSet =
-      m_cmd->allocateDescriptorSet(pipeInfo.dsetLayout);
+    VkDescriptorSet descriptorSet = allocateDescriptorSet(pipeInfo.dsetLayout);
     
     VkDescriptorImageInfo viewInfo;
     viewInfo.sampler      = VK_NULL_HANDLE;
@@ -2077,7 +2080,7 @@ namespace dxvk {
     descriptorWrite.pBufferInfo      = nullptr;
     descriptorWrite.pTexelBufferView = nullptr;
     
-    descriptorWrite.dstSet = m_cmd->allocateDescriptorSet(pipeInfo.dsetLayout);
+    descriptorWrite.dstSet = allocateDescriptorSet(pipeInfo.dsetLayout);
     m_cmd->updateDescriptorSets(1, &descriptorWrite);
     
     VkViewport viewport;
@@ -2272,7 +2275,7 @@ namespace dxvk {
     descriptorWrite.pBufferInfo      = nullptr;
     descriptorWrite.pTexelBufferView = nullptr;
     
-    descriptorWrite.dstSet = m_cmd->allocateDescriptorSet(pipeInfo.dsetLayout);
+    descriptorWrite.dstSet = allocateDescriptorSet(pipeInfo.dsetLayout);
     m_cmd->updateDescriptorSets(1, &descriptorWrite);
 
     // Set up viewport and scissor rect
@@ -2814,7 +2817,7 @@ namespace dxvk {
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
 
     if (layout->bindingCount() != 0) {
-      descriptorSet = m_cmd->allocateDescriptorSet(
+      descriptorSet = allocateDescriptorSet(
         layout->descriptorSetLayout());
       
       m_cmd->updateDescriptorSetWithTemplate(
@@ -3123,7 +3126,8 @@ namespace dxvk {
         switch (binding.type) {
           case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
           case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-            access.set(DxvkAccess::Write);
+            if (binding.access & VK_ACCESS_SHADER_WRITE_BIT)
+              access.set(DxvkAccess::Write);
             /* fall through */
           
           case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
@@ -3133,7 +3137,8 @@ namespace dxvk {
             break;
         
           case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-            access.set(DxvkAccess::Write);
+            if (binding.access & VK_ACCESS_SHADER_WRITE_BIT)
+              access.set(DxvkAccess::Write);
             /* fall through */
 
           case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
@@ -3142,7 +3147,8 @@ namespace dxvk {
             break;
           
           case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-            access.set(DxvkAccess::Write);
+            if (binding.access & VK_ACCESS_SHADER_WRITE_BIT)
+              access.set(DxvkAccess::Write);
             /* fall through */
 
           case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
@@ -3177,7 +3183,8 @@ namespace dxvk {
         switch (binding.type) {
           case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
           case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-            access |= VK_ACCESS_SHADER_WRITE_BIT;
+            if (binding.access & VK_ACCESS_SHADER_WRITE_BIT)
+              access |= VK_ACCESS_SHADER_WRITE_BIT;
             /* fall through */
           
           case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
@@ -3190,7 +3197,8 @@ namespace dxvk {
             break;
         
           case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-            access |= VK_ACCESS_SHADER_WRITE_BIT;
+            if (binding.access & VK_ACCESS_SHADER_WRITE_BIT)
+              access |= VK_ACCESS_SHADER_WRITE_BIT;
             /* fall through */
 
           case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
@@ -3202,7 +3210,8 @@ namespace dxvk {
             break;
           
           case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-            access |= VK_ACCESS_SHADER_WRITE_BIT;
+            if (binding.access & VK_ACCESS_SHADER_WRITE_BIT)
+              access |= VK_ACCESS_SHADER_WRITE_BIT;
             /* fall through */
 
           case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
@@ -3256,6 +3265,24 @@ namespace dxvk {
 
     m_cmd->cmdPipelineBarrier(srcStages, dstStages,
       0, 1, &barrier, 0, nullptr, 0, nullptr);
+  }
+
+
+  VkDescriptorSet DxvkContext::allocateDescriptorSet(
+          VkDescriptorSetLayout     layout) {
+    if (m_descPool == nullptr)
+      m_descPool = m_device->createDescriptorPool();
+    
+    VkDescriptorSet set = m_descPool->alloc(layout);
+
+    if (set == VK_NULL_HANDLE) {
+      m_cmd->trackDescriptorPool(std::move(m_descPool));
+
+      m_descPool = m_device->createDescriptorPool();
+      set = m_descPool->alloc(layout);
+    }
+
+    return set;
   }
 
   

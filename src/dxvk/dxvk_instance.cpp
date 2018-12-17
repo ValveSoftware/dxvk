@@ -37,6 +37,31 @@ namespace dxvk {
       ? m_adapters[index]
       : nullptr;
   }
+
+
+  Rc<DxvkAdapter> DxvkInstance::findAdapterByLuid(const void* luid) const {
+    for (const auto& adapter : m_adapters) {
+      const auto& props = adapter->devicePropertiesExt().coreDeviceId;
+
+      if (props.deviceLUIDValid && !std::memcmp(luid, props.deviceLUID, VK_LUID_SIZE))
+        return adapter;
+    }
+
+    return nullptr;
+  }
+
+  
+  Rc<DxvkAdapter> DxvkInstance::findAdapterByDeviceId(uint16_t vendorId, uint16_t deviceId) const {
+    for (const auto& adapter : m_adapters) {
+      const auto& props = adapter->deviceProperties();
+
+      if (props.vendorID == vendorId
+       && props.deviceID == deviceId)
+        return adapter;
+    }
+
+    return nullptr;
+  }
   
   
   VkInstance DxvkInstance::createInstance() {
@@ -72,7 +97,7 @@ namespace dxvk {
     appInfo.pApplicationName      = appName.c_str();
     appInfo.applicationVersion    = 0;
     appInfo.pEngineName           = "DXVK";
-    appInfo.engineVersion         = VK_MAKE_VERSION(0, 9, 3);
+    appInfo.engineVersion         = VK_MAKE_VERSION(0, 9, 4);
     appInfo.apiVersion            = VK_MAKE_VERSION(1, 1, 0);
     
     VkInstanceCreateInfo info;

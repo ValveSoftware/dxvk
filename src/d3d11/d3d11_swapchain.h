@@ -2,14 +2,12 @@
 
 #include "d3d11_texture.h"
 
-#include "../dxvk/dxvk_surface.h"
-#include "../dxvk/dxvk_swapchain.h"
-
 #include "../dxvk/hud/dxvk_hud.h"
 
 namespace dxvk {
   
   class D3D11Device;
+  class D3D11DXGIDevice;
 
   /**
    * \brief Gamma control point
@@ -27,15 +25,16 @@ namespace dxvk {
   public:
 
     D3D11SwapChain(
-            D3D11Device*            pDevice,
-            HWND                    hWnd,
-      const DXGI_SWAP_CHAIN_DESC1*  pDesc);
+            D3D11DXGIDevice*          pContainer,
+            D3D11Device*              pDevice,
+            HWND                      hWnd,
+      const DXGI_SWAP_CHAIN_DESC1*    pDesc);
     
     ~D3D11SwapChain();
 
     HRESULT STDMETHODCALLTYPE QueryInterface(
-            REFIID                  riid,
-            void**                  ppvObject);
+            REFIID                    riid,
+            void**                    ppvObject);
 
     HRESULT STDMETHODCALLTYPE GetDesc(
             DXGI_SWAP_CHAIN_DESC1*    pDesc);
@@ -79,7 +78,7 @@ namespace dxvk {
       GammaTex  = 3,
     };
 
-    Com<IDXGIVkDevice>      m_dxgiDevice;
+    Com<D3D11DXGIDevice>    m_dxgiDevice;
     
     D3D11Device*            m_parent;
     HWND                    m_window;
@@ -89,8 +88,7 @@ namespace dxvk {
     Rc<DxvkDevice>          m_device;
     Rc<DxvkContext>         m_context;
 
-    Rc<DxvkSurface>         m_surface;
-    Rc<DxvkSwapchain>       m_swapchain;
+    Rc<vk::Presenter>       m_presenter;
 
     Rc<DxvkShader>          m_vertShader;
     Rc<DxvkShader>          m_fragShader;
@@ -117,12 +115,21 @@ namespace dxvk {
 
     D3D11Texture2D*         m_backBuffer = nullptr;
 
+    std::vector<Rc<DxvkImageView>> m_imageViews;
+
     bool                    m_dirty = true;
     bool                    m_vsync = true;
 
     void PresentImage(UINT SyncInterval);
 
     void FlushImmediateContext();
+    
+    void RecreateSwapChain(
+            BOOL                      Vsync);
+
+    void CreatePresenter();
+
+    void CreateRenderTargetViews();
 
     void CreateBackBuffer();
 
@@ -130,10 +137,6 @@ namespace dxvk {
             UINT                NumControlPoints,
       const D3D11_VK_GAMMA_CP*  pControlPoints);
     
-    void CreateSurface();
-
-    void CreateSwapChain();
-
     void CreateHud();
 
     void InitRenderState();
@@ -142,10 +145,17 @@ namespace dxvk {
 
     void InitShaders();
     
-    VkSurfaceFormatKHR PickSurfaceFormat() const;
+    uint32_t PickFormats(
+            DXGI_FORMAT               Format,
+            VkSurfaceFormatKHR*       pDstFormats);
     
-    VkPresentModeKHR PickPresentMode() const;
-
+    uint32_t PickPresentModes(
+            BOOL                      Vsync,
+            VkPresentModeKHR*         pDstModes);
+    
+    uint32_t PickImageCount(
+            UINT                      Preferred);
+    
   };
 
 }

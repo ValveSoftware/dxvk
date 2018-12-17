@@ -178,6 +178,7 @@ namespace dxvk {
     uint32_t builtinLayer         = 0;
     uint32_t builtinViewportId    = 0;
     
+    uint32_t invocationMask       = 0;
     uint32_t killState            = 0;
   };
   
@@ -919,6 +920,9 @@ namespace dxvk {
     
     //////////////////////////
     // Resource query methods
+    DxbcRegisterValue emitQueryBufferSize(
+      const DxbcRegister&           resource);
+    
     DxbcRegisterValue emitQueryTexelBufferSize(
       const DxbcRegister&           resource);
     

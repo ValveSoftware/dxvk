@@ -20,9 +20,9 @@
 #include "dxvk_sampler.h"
 #include "dxvk_shader.h"
 #include "dxvk_stats.h"
-#include "dxvk_swapchain.h"
-#include "dxvk_sync.h"
 #include "dxvk_unbound.h"
+
+#include "../vulkan/vulkan_presenter.h"
 
 namespace dxvk {
   
@@ -58,6 +58,7 @@ namespace dxvk {
   class DxvkDevice : public RcObject {
     friend class DxvkContext;
     friend class DxvkSubmissionQueue;
+    friend class DxvkDescriptorPoolTracker;
     
     constexpr static VkDeviceSize DefaultStagingBufferSize = 4 * 1024 * 1024;
   public:
@@ -179,6 +180,16 @@ namespace dxvk {
     Rc<DxvkCommandList> createCommandList();
     
     /**
+     * \brief Creates a descriptor pool
+     * 
+     * Returns a previously recycled pool, or creates
+     * a new one if necessary. The context should take
+     * ownership of the returned pool.
+     * \returns Descriptor pool
+     */
+    Rc<DxvkDescriptorPool> createDescriptorPool();
+    
+    /**
      * \brief Creates a context
      * 
      * Creates a context object that can
@@ -252,12 +263,6 @@ namespace dxvk {
       const DxvkSamplerCreateInfo&  createInfo);
     
     /**
-     * \brief Creates a semaphore object
-     * \returns Newly created semaphore
-     */
-    Rc<DxvkSemaphore> createSemaphore();
-    
-    /**
      * \brief Creates a shader module
      * 
      * \param [in] stage Shader stage
@@ -273,17 +278,6 @@ namespace dxvk {
       const DxvkResourceSlot*         slotInfos,
       const DxvkInterfaceSlots&       iface,
       const SpirvCodeBuffer&          code);
-    
-    /**
-     * \brief Creates a swap chain
-     * 
-     * \param [in] surface The target surface
-     * \param [in] properties Swapchain properties
-     * \returns The swapchain object
-     */
-    Rc<DxvkSwapchain> createSwapchain(
-      const Rc<DxvkSurface>&          surface,
-      const DxvkSwapchainProperties&  properties);
     
     /**
      * \brief Retrieves stat counters
@@ -319,13 +313,14 @@ namespace dxvk {
     /**
      * \brief Presents a swap chain image
      * 
-     * This is implicitly called by the swap chain class
-     * when presenting an image. Do not use this directly.
-     * \param [in] presentInfo Swap image present info
-     * \returns Present status
+     * Locks the device queues and invokes the
+     * presenter's \c presentImage method.
+     * \param [in] presenter The presenter
+     * \param [in] semaphore Sync semaphore
      */
-    VkResult presentSwapImage(
-      const VkPresentInfoKHR&         presentInfo);
+    VkResult presentImage(
+      const Rc<vk::Presenter>&        presenter,
+            VkSemaphore               semaphore);
     
     /**
      * \brief Submits a command list
@@ -338,8 +333,8 @@ namespace dxvk {
      */
     void submitCommandList(
       const Rc<DxvkCommandList>&      commandList,
-      const Rc<DxvkSemaphore>&        waitSync,
-      const Rc<DxvkSemaphore>&        wakeSync);
+            VkSemaphore               waitSync,
+            VkSemaphore               wakeSync);
     
     /**
      * \brief Locks submission queue
@@ -413,13 +408,17 @@ namespace dxvk {
     DxvkDeviceQueue             m_graphicsQueue;
     DxvkDeviceQueue             m_presentQueue;
     
-    DxvkRecycler<DxvkCommandList,  16> m_recycledCommandLists;
-    DxvkRecycler<DxvkStagingBuffer, 4> m_recycledStagingBuffers;
+    DxvkRecycler<DxvkCommandList,    16> m_recycledCommandLists;
+    DxvkRecycler<DxvkDescriptorPool, 16> m_recycledDescriptorPools;
+    DxvkRecycler<DxvkStagingBuffer,   4> m_recycledStagingBuffers;
     
     DxvkSubmissionQueue m_submissionQueue;
     
     void recycleCommandList(
       const Rc<DxvkCommandList>& cmdList);
+    
+    void recycleDescriptorPool(
+      const Rc<DxvkDescriptorPool>& pool);
     
     /**
      * \brief Dummy buffer handle

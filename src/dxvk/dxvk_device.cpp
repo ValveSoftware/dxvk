@@ -114,6 +114,16 @@ namespace dxvk {
     
     return cmdList;
   }
+
+
+  Rc<DxvkDescriptorPool> DxvkDevice::createDescriptorPool() {
+    Rc<DxvkDescriptorPool> pool = m_recycledDescriptorPools.retrieveObject();
+
+    if (pool == nullptr)
+      pool = new DxvkDescriptorPool(m_vkd);
+    
+    return pool;
+  }
   
   
   Rc<DxvkContext> DxvkDevice::createContext() {
@@ -176,11 +186,6 @@ namespace dxvk {
   }
   
   
-  Rc<DxvkSemaphore> DxvkDevice::createSemaphore() {
-    return new DxvkSemaphore(m_vkd);
-  }
-  
-  
   Rc<DxvkShader> DxvkDevice::createShader(
           VkShaderStageFlagBits     stage,
           uint32_t                  slotCount,
@@ -191,13 +196,6 @@ namespace dxvk {
       slotCount, slotInfos, iface, code,
       DxvkShaderOptions(),
       DxvkShaderConstData());
-  }
-  
-  
-  Rc<DxvkSwapchain> DxvkDevice::createSwapchain(
-    const Rc<DxvkSurface>&          surface,
-    const DxvkSwapchainProperties&  properties) {
-    return new DxvkSwapchain(this, surface, properties);
   }
   
   
@@ -232,35 +230,25 @@ namespace dxvk {
   }
   
   
-  VkResult DxvkDevice::presentSwapImage(
-    const VkPresentInfoKHR&         presentInfo) {
-    { // Queue submissions are not thread safe
-      std::lock_guard<std::mutex> queueLock(m_submissionLock);
-      std::lock_guard<sync::Spinlock> statLock(m_statLock);
-      
-      m_statCounters.addCtr(DxvkStatCounter::QueuePresentCount, 1);
-      return m_vkd->vkQueuePresentKHR(m_presentQueue.queueHandle, &presentInfo);
-    }
+  VkResult DxvkDevice::presentImage(
+    const Rc<vk::Presenter>&        presenter,
+          VkSemaphore               semaphore) {
+    std::lock_guard<std::mutex> queueLock(m_submissionLock);
+    VkResult status = presenter->presentImage(semaphore);
+
+    if (status != VK_SUCCESS)
+      return status;
+    
+    std::lock_guard<sync::Spinlock> statLock(m_statLock);
+    m_statCounters.addCtr(DxvkStatCounter::QueuePresentCount, 1);
+    return status;
   }
-  
-  
+
+
   void DxvkDevice::submitCommandList(
     const Rc<DxvkCommandList>&      commandList,
-    const Rc<DxvkSemaphore>&        waitSync,
-    const Rc<DxvkSemaphore>&        wakeSync) {
-    VkSemaphore waitSemaphore = VK_NULL_HANDLE;
-    VkSemaphore wakeSemaphore = VK_NULL_HANDLE;
-    
-    if (waitSync != nullptr) {
-      waitSemaphore = waitSync->handle();
-      commandList->trackResource(waitSync);
-    }
-    
-    if (wakeSync != nullptr) {
-      wakeSemaphore = wakeSync->handle();
-      commandList->trackResource(wakeSync);
-    }
-    
+          VkSemaphore               waitSync,
+          VkSemaphore               wakeSync) {
     VkResult status;
     
     { // Queue submissions are not thread safe
@@ -272,7 +260,7 @@ namespace dxvk {
       
       status = commandList->submit(
         m_graphicsQueue.queueHandle,
-        waitSemaphore, wakeSemaphore);
+        waitSync, wakeSync);
     }
     
     if (status == VK_SUCCESS) {
@@ -294,6 +282,11 @@ namespace dxvk {
   
   void DxvkDevice::recycleCommandList(const Rc<DxvkCommandList>& cmdList) {
     m_recycledCommandLists.returnObject(cmdList);
+  }
+  
+
+  void DxvkDevice::recycleDescriptorPool(const Rc<DxvkDescriptorPool>& pool) {
+    m_recycledDescriptorPools.returnObject(pool);
   }
   
 }

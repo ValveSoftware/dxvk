@@ -3,7 +3,6 @@
 #include "dxvk_adapter.h"
 #include "dxvk_device.h"
 #include "dxvk_instance.h"
-#include "dxvk_surface.h"
 
 namespace dxvk {
   
@@ -212,13 +211,14 @@ namespace dxvk {
   Rc<DxvkDevice> DxvkAdapter::createDevice(DxvkDeviceFeatures enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
-    std::array<DxvkExt*, 13> devExtensionList = {{
+    std::array<DxvkExt*, 14> devExtensionList = {{
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.extShaderViewportIndexLayer,
       &devExtensions.extTransformFeedback,
       &devExtensions.extVertexAttributeDivisor,
       &devExtensions.khrDedicatedAllocation,
       &devExtensions.khrDescriptorUpdateTemplate,
+      &devExtensions.khrDriverProperties,
       &devExtensions.khrGetMemoryRequirements2,
       &devExtensions.khrImageFormatList,
       &devExtensions.khrMaintenance1,
@@ -315,11 +315,6 @@ namespace dxvk {
   }
   
   
-  Rc<DxvkSurface> DxvkAdapter::createSurface(HINSTANCE instance, HWND window) {
-    return new DxvkSurface(this, instance, window);
-  }
-
-
   void DxvkAdapter::notifyHeapMemoryAlloc(
           uint32_t            heap,
           VkDeviceSize        bytes) {
@@ -331,6 +326,22 @@ namespace dxvk {
           uint32_t            heap,
           VkDeviceSize        bytes) {
     m_heapAlloc[heap] -= bytes;
+  }
+
+
+  bool DxvkAdapter::matchesDriver(
+          DxvkGpuVendor       vendor,
+          VkDriverIdKHR       driver,
+          uint32_t            minVer,
+          uint32_t            maxVer) const {
+    bool driverMatches = m_deviceInfo.khrDeviceDriverProperties.driverID
+      ? driver == m_deviceInfo.khrDeviceDriverProperties.driverID
+      : vendor == DxvkGpuVendor(m_deviceInfo.core.properties.vendorID);
+
+    if (minVer) driverMatches &= m_deviceInfo.core.properties.driverVersion >= minVer;
+    if (maxVer) driverMatches &= m_deviceInfo.core.properties.driverVersion <  maxVer;
+
+    return driverMatches;
   }
   
   
@@ -386,6 +397,9 @@ namespace dxvk {
     m_vki->vkGetPhysicalDeviceProperties2KHR(m_handle, &m_deviceInfo.core);
 
     if (m_deviceInfo.core.properties.apiVersion >= VK_MAKE_VERSION(1, 1, 0)) {
+      m_deviceInfo.coreDeviceId.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+      m_deviceInfo.coreDeviceId.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.coreDeviceId);
+
       m_deviceInfo.coreSubgroup.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
       m_deviceInfo.coreSubgroup.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.coreSubgroup);
     }
@@ -398,6 +412,11 @@ namespace dxvk {
     if (m_deviceExtensions.supports(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME)) {
       m_deviceInfo.extVertexAttributeDivisor.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT;
       m_deviceInfo.extVertexAttributeDivisor.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extVertexAttributeDivisor);
+    }
+
+    if (m_deviceExtensions.supports(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+      m_deviceInfo.khrDeviceDriverProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES_KHR;
+      m_deviceInfo.khrDeviceDriverProperties.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.khrDeviceDriverProperties);
     }
 
     // Query full device properties for all enabled extensions

@@ -1,4 +1,3 @@
-#include "dxgi_device.h"
 #include "dxgi_factory.h"
 #include "dxgi_output.h"
 #include "dxgi_swapchain.h"
@@ -6,7 +5,7 @@
 namespace dxvk {
   
   DxgiSwapChain::DxgiSwapChain(
-          DxgiFactory*                pFactory,
+          IDXGIFactory*               pFactory,
           IUnknown*                   pDevice,
           HWND                        hWnd,
     const DXGI_SWAP_CHAIN_DESC1*      pDesc,
@@ -44,10 +43,17 @@ namespace dxvk {
   
   
   DxgiSwapChain::~DxgiSwapChain() {
-    Com<IDXGIOutput> output;
+    RestoreDisplayMode(m_monitor);
+
+    // Decouple swap chain from monitor if necessary
+    DXGI_VK_MONITOR_DATA* monitorInfo = nullptr;
     
-    if (SUCCEEDED(m_adapter->GetOutputFromMonitor(m_monitor, &output)))
-      RestoreDisplayMode(output.ptr());
+    if (SUCCEEDED(AcquireMonitorData(m_monitor, &monitorInfo))) {
+      if (monitorInfo->pSwapChain == this)
+        monitorInfo->pSwapChain = nullptr;
+      
+      ReleaseMonitorData();
+    }
   }
   
   
@@ -105,7 +111,7 @@ namespace dxvk {
         (windowRect.top + windowRect.bottom) / 2 },
       MONITOR_DEFAULTTOPRIMARY);
     
-    return m_adapter->GetOutputFromMonitor(monitor, ppOutput);
+    return GetOutputFromMonitor(monitor, ppOutput);
   }
   
   
@@ -186,7 +192,7 @@ namespace dxvk {
       *ppTarget = nullptr;
       
       if (!m_descFs.Windowed)
-        hr = m_adapter->GetOutputFromMonitor(m_monitor, ppTarget);
+        hr = GetOutputFromMonitor(m_monitor, ppTarget);
     }
     
     return hr;
@@ -264,17 +270,6 @@ namespace dxvk {
     SyncInterval = std::min<UINT>(SyncInterval, 4);
 
     try {
-      // If in fullscreen mode, apply any updated gamma curve
-      // if it has been changed since the last present call.
-      DXGI_VK_OUTPUT_DATA outputData;
-      
-      if (SUCCEEDED(m_adapter->GetOutputData(m_monitor, &outputData)) && outputData.GammaDirty) {
-        SetGammaControl(&outputData.GammaCurve);
-        
-        outputData.GammaDirty = FALSE;
-        m_adapter->SetOutputData(m_monitor, &outputData);
-      }
-      
       return m_presenter->Present(SyncInterval, PresentFlags, nullptr);
     } catch (const DxvkError& err) {
       Logger::err(err.message());
@@ -359,7 +354,7 @@ namespace dxvk {
     } else {
       Com<IDXGIOutput> output;
       
-      if (FAILED(m_adapter->GetOutputFromMonitor(m_monitor, &output))) {
+      if (FAILED(GetOutputFromMonitor(m_monitor, &output))) {
         Logger::err("DXGI: ResizeTarget: Failed to query containing output");
         return E_FAIL;
       }
@@ -482,22 +477,20 @@ namespace dxvk {
   }
 
 
-  HRESULT DxgiSwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) {
+  HRESULT STDMETHODCALLTYPE DxgiSwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) {
     Logger::err("DxgiSwapChain::SetColorSpace1: Not implemented");
     return E_NOTIMPL;
   }
+  
+  
+  HRESULT STDMETHODCALLTYPE DxgiSwapChain::SetGammaControl(
+          UINT                      NumPoints,
+    const DXGI_RGB*                 pGammaCurve) {
+    std::lock_guard<std::mutex> lockBuf(m_lockBuffer);
+    return m_presenter->SetGammaControl(NumPoints, pGammaCurve);
+  }
 
 
-  HRESULT DxgiSwapChain::SetGammaControl(const DXGI_GAMMA_CONTROL* pGammaControl) {
-    return m_presenter->SetGammaControl(DXGI_VK_GAMMA_CP_COUNT, pGammaControl->GammaCurve);
-  }
-  
-  
-  HRESULT DxgiSwapChain::SetDefaultGammaControl() {
-    return m_presenter->SetGammaControl(0, nullptr);
-  }
-  
-  
   VkExtent2D DxgiSwapChain::GetWindowSize() const {
     RECT windowRect;
     
@@ -533,8 +526,10 @@ namespace dxvk {
       displayMode.Height           = m_desc.Height;
       displayMode.RefreshRate      = m_descFs.RefreshRate;
       displayMode.Format           = m_desc.Format;
-      displayMode.ScanlineOrdering = m_descFs.ScanlineOrdering;
-      displayMode.Scaling          = m_descFs.Scaling;
+      // Ignore these two, games usually use them wrong and we don't
+      // support any scaling modes except UNSPECIFIED anyway.
+      displayMode.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+      displayMode.Scaling          = DXGI_MODE_SCALING_UNSPECIFIED;
       
       if (FAILED(ChangeDisplayMode(output.ptr(), &displayMode))) {
         Logger::err("DXGI: EnterFullscreenMode: Failed to change display mode");
@@ -569,19 +564,39 @@ namespace dxvk {
       SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
     
     m_monitor = desc.Monitor;
+
+    // Apply current gamma curve of the output
+    DXGI_VK_MONITOR_DATA* monitorInfo = nullptr;
+
+    if (SUCCEEDED(AcquireMonitorData(m_monitor, &monitorInfo))) {
+      if (!monitorInfo->pSwapChain)
+        monitorInfo->pSwapChain = this;
+      
+      SetGammaControl(DXGI_VK_GAMMA_CP_COUNT, monitorInfo->GammaCurve.GammaCurve);
+      ReleaseMonitorData();
+    }
+
     return S_OK;
   }
   
   
   HRESULT DxgiSwapChain::LeaveFullscreenMode() {
-    Com<IDXGIOutput> output;
-
     if (!IsWindow(m_window))
       return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
     
-    if (FAILED(m_adapter->GetOutputFromMonitor(m_monitor, &output))
-     || FAILED(RestoreDisplayMode(output.ptr())))
+    if (FAILED(RestoreDisplayMode(m_monitor)))
       Logger::warn("DXGI: LeaveFullscreenMode: Failed to restore display mode");
+    
+    // Reset gamma control and decouple swap chain from monitor
+    DXGI_VK_MONITOR_DATA* monitorInfo = nullptr;
+
+    if (SUCCEEDED(AcquireMonitorData(m_monitor, &monitorInfo))) {
+      if (monitorInfo->pSwapChain == this)
+        monitorInfo->pSwapChain = nullptr;
+      
+      SetGammaControl(0, nullptr);
+      ReleaseMonitorData();
+    }
     
     // Restore internal state
     m_descFs.Windowed = TRUE;
@@ -605,26 +620,27 @@ namespace dxvk {
       rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
       SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
     
-    return SetDefaultGammaControl();
+    return S_OK;
   }
   
   
   HRESULT DxgiSwapChain::ChangeDisplayMode(
           IDXGIOutput*            pOutput,
     const DXGI_MODE_DESC*         pDisplayMode) {
-    auto output = static_cast<DxgiOutput*>(pOutput);
-
-    if (output == nullptr)
+    if (!pOutput)
       return DXGI_ERROR_INVALID_CALL;
     
     // Find a mode that the output supports
+    DXGI_OUTPUT_DESC outputDesc;
+    pOutput->GetDesc(&outputDesc);
+    
     DXGI_MODE_DESC preferredMode = *pDisplayMode;
     DXGI_MODE_DESC selectedMode;
 
     if (preferredMode.Format == DXGI_FORMAT_UNKNOWN)
       preferredMode.Format = m_desc.Format;
     
-    HRESULT hr = output->FindClosestMatchingMode(
+    HRESULT hr = pOutput->FindClosestMatchingMode(
       &preferredMode, &selectedMode, nullptr);
     
     if (FAILED(hr)) {
@@ -636,26 +652,24 @@ namespace dxvk {
       return hr;
     }
     
-    return output->SetDisplayMode(&selectedMode);
+    return SetMonitorDisplayMode(outputDesc.Monitor, &selectedMode);
   }
   
   
-  HRESULT DxgiSwapChain::RestoreDisplayMode(IDXGIOutput* pOutput) {
-    auto output = static_cast<DxgiOutput*>(pOutput);
-    
-    if (output == nullptr)
+  HRESULT DxgiSwapChain::RestoreDisplayMode(HMONITOR hMonitor) {
+    if (!hMonitor)
       return DXGI_ERROR_INVALID_CALL;
     
     // Restore registry settings
     DXGI_MODE_DESC mode;
     
-    HRESULT hr = output->GetDisplayMode(
-      &mode, ENUM_REGISTRY_SETTINGS);
+    HRESULT hr = GetMonitorDisplayMode(
+      hMonitor, ENUM_REGISTRY_SETTINGS, &mode);
     
     if (FAILED(hr))
       return hr;
     
-    return output->SetDisplayMode(&mode);
+    return SetMonitorDisplayMode(hMonitor, &mode);
   }
   
   
@@ -684,6 +698,27 @@ namespace dxvk {
       return presentDevice->CreateSwapChainForHwnd(m_window, &m_desc, ppSwapChain);
     
     return E_INVALIDARG;
+  }
+  
+  
+  HRESULT DxgiSwapChain::GetOutputFromMonitor(
+          HMONITOR                  Monitor,
+          IDXGIOutput**             ppOutput) {
+    if (!ppOutput)
+      return DXGI_ERROR_INVALID_CALL;
+    
+    for (uint32_t i = 0; SUCCEEDED(m_adapter->EnumOutputs(i, ppOutput)); i++) {
+      DXGI_OUTPUT_DESC outputDesc;
+      (*ppOutput)->GetDesc(&outputDesc);
+      
+      if (outputDesc.Monitor == Monitor)
+        return S_OK;
+      
+      (*ppOutput)->Release();
+      (*ppOutput) = nullptr;
+    }
+    
+    return DXGI_ERROR_NOT_FOUND;
   }
   
 }

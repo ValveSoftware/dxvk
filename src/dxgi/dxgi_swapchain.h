@@ -8,9 +8,6 @@
 
 #include "../d3d11/d3d11_interfaces.h"
 
-#include "../dxvk/dxvk_surface.h"
-#include "../dxvk/dxvk_swapchain.h"
-
 #include "../spirv/spirv_module.h"
 
 namespace dxvk {
@@ -24,7 +21,7 @@ namespace dxvk {
   public:
     
     DxgiSwapChain(
-            DxgiFactory*                pFactory,
+            IDXGIFactory*               pFactory,
             IUnknown*                   pDevice,
             HWND                        hWnd,
       const DXGI_SWAP_CHAIN_DESC1*      pDesc,
@@ -157,11 +154,10 @@ namespace dxvk {
 
     HRESULT STDMETHODCALLTYPE SetColorSpace1(
             DXGI_COLOR_SPACE_TYPE     ColorSpace) final;
-
-    HRESULT SetGammaControl(
-      const DXGI_GAMMA_CONTROL*       pGammaControl);
     
-    HRESULT SetDefaultGammaControl();
+    HRESULT STDMETHODCALLTYPE SetGammaControl(
+            UINT                      NumPoints,
+      const DXGI_RGB*                 pGammaCurve);
     
   private:
     
@@ -174,8 +170,8 @@ namespace dxvk {
     std::mutex                      m_lockWindow;
     std::mutex                      m_lockBuffer;
 
-    Com<DxgiFactory>                m_factory;
-    Com<DxgiAdapter>                m_adapter;
+    Com<IDXGIFactory>               m_factory;
+    Com<IDXGIAdapter>               m_adapter;
     
     HWND                            m_window;
     DXGI_SWAP_CHAIN_DESC1           m_desc;
@@ -199,7 +195,7 @@ namespace dxvk {
       const DXGI_MODE_DESC*         pDisplayMode);
     
     HRESULT RestoreDisplayMode(
-            IDXGIOutput*            pOutput);
+            HMONITOR                hMonitor);
     
     HRESULT GetSampleCount(
             UINT                    Count,
@@ -208,6 +204,10 @@ namespace dxvk {
     HRESULT CreatePresenter(
             IUnknown*               pDevice,
             IDXGIVkSwapChain**      ppSwapChain);
+    
+    HRESULT GetOutputFromMonitor(
+            HMONITOR                  Monitor,
+            IDXGIOutput**             ppOutput);
     
   };
   
