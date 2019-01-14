@@ -101,7 +101,8 @@ namespace dxvk {
     if (m_desc.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE)
       imageInfo.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     
-    if (Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D)
+    if (Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D &&
+        (m_desc.BindFlags & D3D11_BIND_RENDER_TARGET))
       imageInfo.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT_KHR;
     
     // Some image formats (i.e. the R32G32B32 ones) are
@@ -142,14 +143,15 @@ namespace dxvk {
     if (!CheckImageSupport(&imageInfo, imageInfo.tiling)) {
       throw DxvkError(str::format(
         "D3D11: Cannot create texture:",
-        "\n  Format:  ", imageInfo.format,
-        "\n  Extent:  ", imageInfo.extent.width,
-                    "x", imageInfo.extent.height,
-                    "x", imageInfo.extent.depth,
-        "\n  Samples: ", imageInfo.sampleCount,
-        "\n  Layers:  ", imageInfo.numLayers,
-        "\n  Levels:  ", imageInfo.mipLevels,
-        "\n  Usage:   ", std::hex, imageInfo.usage));
+        "\n  Format:  ", m_desc.Format,
+        "\n  Extent:  ", m_desc.Width,
+                    "x", m_desc.Height,
+                    "x", m_desc.Depth,
+        "\n  Samples: ", m_desc.SampleDesc.Count,
+        "\n  Layers:  ", m_desc.ArraySize,
+        "\n  Levels:  ", m_desc.MipLevels,
+        "\n  Usage:   ", std::hex, m_desc.BindFlags,
+        "\n  Flags:   ", std::hex, m_desc.MiscFlags));
     }
     
     // If necessary, create the mapped linear buffer
@@ -596,13 +598,15 @@ namespace dxvk {
   
   
   UINT STDMETHODCALLTYPE D3D11Texture1D::GetEvictionPriority() {
-    Logger::warn("D3D11Texture1D::GetEvictionPriority: Stub");
     return DXGI_RESOURCE_PRIORITY_NORMAL;
   }
   
   
   void STDMETHODCALLTYPE D3D11Texture1D::SetEvictionPriority(UINT EvictionPriority) {
-    Logger::warn("D3D11Texture1D::SetEvictionPriority: Stub");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11Texture1D::SetEvictionPriority: Stub");
   }
   
   
@@ -681,13 +685,15 @@ namespace dxvk {
   
   
   UINT STDMETHODCALLTYPE D3D11Texture2D::GetEvictionPriority() {
-    Logger::warn("D3D11Texture2D::GetEvictionPriority: Stub");
     return DXGI_RESOURCE_PRIORITY_NORMAL;
   }
   
   
   void STDMETHODCALLTYPE D3D11Texture2D::SetEvictionPriority(UINT EvictionPriority) {
-    Logger::warn("D3D11Texture2D::SetEvictionPriority: Stub");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11Texture2D::SetEvictionPriority: Stub");
   }
   
   
@@ -762,13 +768,15 @@ namespace dxvk {
   
   
   UINT STDMETHODCALLTYPE D3D11Texture3D::GetEvictionPriority() {
-    Logger::warn("D3D11Texture3D::GetEvictionPriority: Stub");
     return DXGI_RESOURCE_PRIORITY_NORMAL;
   }
   
   
   void STDMETHODCALLTYPE D3D11Texture3D::SetEvictionPriority(UINT EvictionPriority) {
-    Logger::warn("D3D11Texture3D::SetEvictionPriority: Stub");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11Texture3D::SetEvictionPriority: Stub");
   }
   
   

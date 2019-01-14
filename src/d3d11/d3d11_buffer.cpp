@@ -98,7 +98,7 @@ namespace dxvk {
     // Create the buffer and set the entire buffer slice as mapped,
     // so that we only have to update it when invalidating th buffer
     m_buffer = m_device->GetDXVKDevice()->createBuffer(info, memoryFlags);
-    m_mapped = m_buffer->slice();
+    m_mapped = m_buffer->getSliceHandle();
 
     // For Stream Output buffers we need a counter
     if (pDesc->BindFlags & D3D11_BIND_STREAM_OUTPUT)
@@ -142,13 +142,15 @@ namespace dxvk {
   
   
   UINT STDMETHODCALLTYPE D3D11Buffer::GetEvictionPriority() {
-    Logger::warn("D3D11Buffer::GetEvictionPriority: Stub");
     return DXGI_RESOURCE_PRIORITY_NORMAL;
   }
   
   
   void STDMETHODCALLTYPE D3D11Buffer::SetEvictionPriority(UINT EvictionPriority) {
-    Logger::warn("D3D11Buffer::SetEvictionPriority: Stub");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11Buffer::SetEvictionPriority: Stub");
   }
   
   

@@ -6,15 +6,16 @@ namespace dxvk {
   
   DxgiSwapChain::DxgiSwapChain(
           IDXGIFactory*               pFactory,
-          IUnknown*                   pDevice,
+          IDXGIVkSwapChain*           pPresenter,
           HWND                        hWnd,
     const DXGI_SWAP_CHAIN_DESC1*      pDesc,
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*  pFullscreenDesc)
-  : m_factory (pFactory),
-    m_window  (hWnd),
-    m_desc    (*pDesc),
-    m_descFs  (*pFullscreenDesc),
-    m_monitor (nullptr) {
+  : m_factory   (pFactory),
+    m_window    (hWnd),
+    m_desc      (*pDesc),
+    m_descFs    (*pFullscreenDesc),
+    m_presenter (pPresenter),
+    m_monitor   (nullptr) {
     // Initialize frame statistics
     m_stats.PresentCount         = 0;
     m_stats.PresentRefreshCount  = 0;
@@ -22,21 +23,10 @@ namespace dxvk {
     m_stats.SyncQPCTime.QuadPart = 0;
     m_stats.SyncGPUTime.QuadPart = 0;
     
-    // Adjust initial back buffer size. If zero, these
-    // shall be set to the current window size.
-    const VkExtent2D windowSize = GetWindowSize();
-    
-    if (m_desc.Width  == 0) m_desc.Width  = windowSize.width;
-    if (m_desc.Height == 0) m_desc.Height = windowSize.height;
-    
-    // Create presenter, which also serves as an interface to the device
-    if (FAILED(CreatePresenter(pDevice, &m_presenter)))
-      throw DxvkError("DXGI: Failed to create presenter");
-    
     if (FAILED(m_presenter->GetAdapter(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&m_adapter))))
       throw DxvkError("DXGI: Failed to get adapter for present device");
     
-    // Set initial window mode and fullscreen state
+    // Apply initial window mode and fullscreen state
     if (!m_descFs.Windowed && FAILED(EnterFullscreenMode(nullptr)))
       throw DxvkError("DXGI: Failed to set initial fullscreen state");
   }
@@ -287,11 +277,13 @@ namespace dxvk {
     if (!IsWindow(m_window))
       return DXGI_ERROR_INVALID_CALL;
     
-    const VkExtent2D windowSize = GetWindowSize();
-    
     std::lock_guard<std::mutex> lock(m_lockBuffer);
-    m_desc.Width  = Width  != 0 ? Width  : windowSize.width;
-    m_desc.Height = Height != 0 ? Height : windowSize.height;
+    m_desc.Width  = Width;
+    m_desc.Height = Height;
+    
+    GetWindowClientSize(m_window,
+      m_desc.Width  ? nullptr : &m_desc.Width,
+      m_desc.Height ? nullptr : &m_desc.Height);
     
     if (BufferCount != 0)
       m_desc.BufferCount = BufferCount;
@@ -491,19 +483,6 @@ namespace dxvk {
   }
 
 
-  VkExtent2D DxgiSwapChain::GetWindowSize() const {
-    RECT windowRect;
-    
-    if (!::GetClientRect(m_window, &windowRect))
-      windowRect = RECT();
-    
-    VkExtent2D result;
-    result.width  = windowRect.right;
-    result.height = windowRect.bottom;
-    return result;
-  }
-  
-  
   HRESULT DxgiSwapChain::EnterFullscreenMode(IDXGIOutput* pTarget) {
     Com<IDXGIOutput> output = static_cast<DxgiOutput*>(pTarget);
 
@@ -686,21 +665,6 @@ namespace dxvk {
   }
 
 
-  HRESULT DxgiSwapChain::CreatePresenter(
-            IUnknown*               pDevice,
-            IDXGIVkSwapChain**      ppSwapChain) {
-    Com<IDXGIVkPresentDevice> presentDevice;
-
-    // Retrieve a device pointer that allows us to
-    // communicate with the underlying D3D device
-    if (SUCCEEDED(pDevice->QueryInterface(__uuidof(IDXGIVkPresentDevice),
-        reinterpret_cast<void**>(&presentDevice))))
-      return presentDevice->CreateSwapChainForHwnd(m_window, &m_desc, ppSwapChain);
-    
-    return E_INVALIDARG;
-  }
-  
-  
   HRESULT DxgiSwapChain::GetOutputFromMonitor(
           HMONITOR                  Monitor,
           IDXGIOutput**             ppOutput) {
@@ -719,6 +683,55 @@ namespace dxvk {
     }
     
     return DXGI_ERROR_NOT_FOUND;
+  }
+  
+  
+  HRESULT CreateDxvkSwapChainForHwnd(
+          IDXGIFactory*             pFactory,
+          IDXGIVkPresentDevice*     pDevice,
+          HWND                      hWnd,
+    const DXGI_SWAP_CHAIN_DESC1*    pDesc,
+    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
+          IDXGIOutput*              pRestrictToOutput,
+          IDXGISwapChain1**         ppSwapChain) {
+    // Make sure the back buffer size is not zero
+    DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+    
+    GetWindowClientSize(hWnd,
+      desc.Width  ? nullptr : &desc.Width,
+      desc.Height ? nullptr : &desc.Height);
+    
+    // If necessary, set up a default set of
+    // fullscreen parameters for the swap chain
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fsDesc;
+    
+    if (pFullscreenDesc) {
+      fsDesc = *pFullscreenDesc;
+    } else {
+      fsDesc.RefreshRate      = { 0, 0 };
+      fsDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+      fsDesc.Scaling          = DXGI_MODE_SCALING_UNSPECIFIED;
+      fsDesc.Windowed         = TRUE;
+    }
+    
+    // Create presenter for the device
+    Com<IDXGIVkSwapChain> presenter;
+    
+    HRESULT hr = pDevice->CreateSwapChainForHwnd(
+      hWnd, &desc, &presenter);
+    
+    if (FAILED(hr))
+      return hr;
+    
+    try {
+      // Create actual swap chain object
+      *ppSwapChain = ref(new DxgiSwapChain(
+        pFactory, presenter.ptr(), hWnd, &desc, &fsDesc));
+      return S_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return DXGI_ERROR_UNSUPPORTED;
+    }
   }
   
 }

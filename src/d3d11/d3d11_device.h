@@ -6,6 +6,7 @@
 #include "../dxbc/dxbc_options.h"
 
 #include "../dxgi/dxgi_object.h"
+#include "../dxgi/dxgi_interfaces.h"
 
 #include "../dxvk/dxvk_cs.h"
 
@@ -317,10 +318,6 @@ namespace dxvk {
     D3D10Device* GetD3D10Interface() const {
       return m_d3d10Device;
     }
-
-    D3D10Multithread* GetD3D10Multithread() const {
-      return m_d3d10Device->GetMultithread();
-    }
     
     DxvkBufferSlice AllocUavCounterSlice() { return m_uavCounters->AllocSlice(); }
     DxvkBufferSlice AllocXfbCounterSlice() { return m_xfbCounters->AllocSlice(); }
@@ -387,6 +384,39 @@ namespace dxvk {
     
     static D3D_FEATURE_LEVEL GetMaxFeatureLevel(
       const Rc<DxvkAdapter>&        Adapter);
+    
+  };
+  
+  
+  /**
+   * \brief DXGI swap chain factory
+   */
+  class WineDXGISwapChainFactory : public IWineDXGISwapChainFactory {
+    
+  public:
+    
+    WineDXGISwapChainFactory(
+            IDXGIVkPresentDevice*   pDevice);
+    
+    ULONG STDMETHODCALLTYPE AddRef();
+    
+    ULONG STDMETHODCALLTYPE Release();
+    
+    HRESULT STDMETHODCALLTYPE QueryInterface(
+            REFIID                  riid,
+            void**                  ppvObject);
+    
+    HRESULT STDMETHODCALLTYPE CreateSwapChainForHwnd(
+            IDXGIFactory*           pFactory,
+            HWND                    hWnd,
+      const DXGI_SWAP_CHAIN_DESC1*  pDesc,
+      const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
+            IDXGIOutput*            pRestrictToOutput,
+            IDXGISwapChain1**       ppSwapChain);
+    
+  private:
+    
+    IDXGIVkPresentDevice* m_device;
     
   };
   
@@ -473,6 +503,8 @@ namespace dxvk {
     D3D11Device         m_d3d11Device;
     D3D11PresentDevice  m_d3d11Presenter;
     D3D11VkInterop      m_d3d11Interop;
+    
+    WineDXGISwapChainFactory m_wineFactory;
     
     uint32_t m_frameLatencyCap = 0;
     uint32_t m_frameLatency    = DefaultFrameLatency;

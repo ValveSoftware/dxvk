@@ -67,6 +67,22 @@ namespace dxvk {
     { "anno2205.exe", {{
       { "dxvk.enableStateCache",            "False" },
     }} },
+    /* Fifa '19                                   */
+    { "FIFA19.exe", {{
+      { "dxvk.useRawSsbo",                  "True" },
+    }} },
+    /* Fifa '19 Demo                              */
+    { "FIFA19_demo.exe", {{
+      { "dxvk.useRawSsbo",                  "True" },
+    }} },
+    /* Call of Duty WW2                           */
+    { "s2_sp64_ship.exe", {{
+      { "dxgi.nvapiHack",                   "False" },
+    }} },
+    /* Need for Speed 2015                        */
+    { "NFS16.exe", {{
+      { "dxgi.nvapiHack",                   "False" },
+    }} },
   }};
 
 
@@ -192,6 +208,24 @@ namespace dxvk {
     // Apply sign and return
     result = sign * intval;
     return true;
+  }
+  
+  
+  bool Config::parseOptionValue(
+    const std::string&  value,
+          Tristate&     result) {
+    if (value == "True") {
+      result = Tristate::True;
+      return true;
+    } else if (value == "False") {
+      result = Tristate::False;
+      return true;
+    } else if (value == "Auto") {
+      result = Tristate::Auto;
+      return true;
+    } else {
+      return false;
+    }
   }
 
 

@@ -18,7 +18,8 @@ namespace dxvk {
     m_multithread(this, false),
     m_device    (Device),
     m_csFlags   (CsFlags),
-    m_csChunk   (AllocCsChunk()) {
+    m_csChunk   (AllocCsChunk()),
+    m_cmdData   (nullptr) {
     // Create default state objects. We won't ever return them
     // to the application, but we'll use them to apply state.
     Com<ID3D11BlendState>         defaultBlendState;
@@ -1401,10 +1402,28 @@ namespace dxvk {
     
     SetDrawBuffer(pBufferForArgs);
     
-    EmitCs([cOffset = AlignedByteOffsetForArgs]
-    (DxvkContext* ctx) {
-      ctx->drawIndexedIndirect(cOffset, 1, 0);
-    });
+    // If possible, batch up multiple indirect draw calls of
+    // the same type into one single multiDrawIndirect call
+    constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
+    auto cmdData = static_cast<D3D11CmdDrawIndirectData*>(m_cmdData);
+
+    bool useMultiDraw = cmdData && cmdData->type == D3D11CmdType::DrawIndirectIndexed
+      && cmdData->offset + cmdData->count * stride == AlignedByteOffsetForArgs
+      && m_device->features().core.features.multiDrawIndirect;
+    
+    if (useMultiDraw) {
+      cmdData->count += 1;
+    } else {
+      cmdData = EmitCsCmd<D3D11CmdDrawIndirectData>(
+        [] (DxvkContext* ctx, const D3D11CmdDrawIndirectData* data) {
+          ctx->drawIndexedIndirect(data->offset, data->count,
+            sizeof(VkDrawIndexedIndirectCommand));
+        });
+      
+      cmdData->type   = D3D11CmdType::DrawIndirectIndexed;
+      cmdData->offset = AlignedByteOffsetForArgs;
+      cmdData->count  = 1;
+    }
   }
   
   
@@ -1414,11 +1433,29 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     SetDrawBuffer(pBufferForArgs);
+
+    // If possible, batch up multiple indirect draw calls of
+    // the same type into one single multiDrawIndirect call
+    constexpr VkDeviceSize stride = sizeof(VkDrawIndirectCommand);
+    auto cmdData = static_cast<D3D11CmdDrawIndirectData*>(m_cmdData);
+
+    bool useMultiDraw = cmdData && cmdData->type == D3D11CmdType::DrawIndirectIndexed
+      && cmdData->offset + cmdData->count * stride == AlignedByteOffsetForArgs
+      && m_device->features().core.features.multiDrawIndirect;
     
-    EmitCs([cOffset = AlignedByteOffsetForArgs]
-    (DxvkContext* ctx) {
-      ctx->drawIndirect(cOffset, 1, 0);
-    });
+    if (useMultiDraw) {
+      cmdData->count += 1;
+    } else {
+      cmdData = EmitCsCmd<D3D11CmdDrawIndirectData>(
+        [] (DxvkContext* ctx, const D3D11CmdDrawIndirectData* data) {
+          ctx->drawIndirect(data->offset, data->count,
+            sizeof(VkDrawIndirectCommand));
+        });
+      
+      cmdData->type   = D3D11CmdType::DrawIndirect;
+      cmdData->offset = AlignedByteOffsetForArgs;
+      cmdData->count  = 1;
+    }
   }
   
   
@@ -2668,12 +2705,24 @@ namespace dxvk {
     const D3D11_VIEWPORT*                   pViewports) {
     D3D10DeviceLock lock = LockContext();
     
+    bool dirty = m_state.rs.numViewports != NumViewports;
     m_state.rs.numViewports = NumViewports;
     
-    for (uint32_t i = 0; i < NumViewports; i++)
-      m_state.rs.viewports.at(i) = pViewports[i];
+    for (uint32_t i = 0; i < NumViewports; i++) {
+      const D3D11_VIEWPORT& vp = m_state.rs.viewports[i];
+
+      dirty |= vp.TopLeftX != pViewports[i].TopLeftX
+            || vp.TopLeftY != pViewports[i].TopLeftY
+            || vp.Width    != pViewports[i].Width
+            || vp.Height   != pViewports[i].Height
+            || vp.MinDepth != pViewports[i].MinDepth
+            || vp.MaxDepth != pViewports[i].MaxDepth;
+      
+      m_state.rs.viewports[i] = pViewports[i];
+    }
     
-    ApplyViewportState();
+    if (dirty)
+      ApplyViewportState();
   }
   
   
@@ -2682,15 +2731,24 @@ namespace dxvk {
     const D3D11_RECT*                       pRects) {
     D3D10DeviceLock lock = LockContext();
     
+    bool dirty = m_state.rs.numScissors != NumRects;
     m_state.rs.numScissors = NumRects;
     
     for (uint32_t i = 0; i < NumRects; i++) {
       if (pRects[i].bottom >= pRects[i].top
-       && pRects[i].right  >= pRects[i].left)
-        m_state.rs.scissors.at(i) = pRects[i];
+       && pRects[i].right  >= pRects[i].left) {
+        const D3D11_RECT& sr = m_state.rs.scissors[i];
+
+        dirty |= sr.top    != pRects[i].top
+              || sr.left   != pRects[i].left
+              || sr.bottom != pRects[i].bottom
+              || sr.right  != pRects[i].right;
+
+        m_state.rs.scissors[i] = pRects[i];
+      }
     }
     
-    if (m_state.rs.state != nullptr) {
+    if (m_state.rs.state != nullptr && dirty) {
       D3D11_RASTERIZER_DESC rsDesc;
       m_state.rs.state->GetDesc(&rsDesc);
       
