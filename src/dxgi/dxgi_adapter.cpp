@@ -153,11 +153,6 @@ namespace dxvk {
     // Custom Vendor / Device ID
     if (options->customVendorId >= 0)
       deviceProp.vendorID = options->customVendorId;
-    else if(dxvk::DxvkGpuVendor(deviceProp.vendorID) == DxvkGpuVendor::Nvidia){
-        Logger::warn("DxgiAdapter::GetDesc2: Nvidia card detected, faking AMD RX 480");
-        deviceProp.vendorID = (uint32_t)DxvkGpuVendor::Amd;
-        deviceProp.deviceID = 0x67df; /* CARD_AMD_RADEON_RX_480 */
-    }
     
     if (options->customDeviceId >= 0)
       deviceProp.deviceID = options->customDeviceId;
