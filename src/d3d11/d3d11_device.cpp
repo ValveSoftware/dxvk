@@ -613,8 +613,8 @@ namespace dxvk {
     if (!m_dxvkDevice->features().extTransformFeedback.transformFeedback) {
       Logger::err(
         "D3D11: CreateGeometryShaderWithStreamOutput:"
-        "\n  Transform feedback not supoorted by device");
-      return m_d3d11Options.fakeStreamOutSupport ? S_OK : E_NOTIMPL;
+        "\n  Transform feedback not supported by device");
+      return S_OK;
     }
 
     // Zero-init some counterss so that we can increment
@@ -1736,7 +1736,8 @@ namespace dxvk {
     m_d3d11Device   (this, FeatureLevel, FeatureFlags),
     m_d3d11Presenter(this, &m_d3d11Device),
     m_d3d11Interop  (this, &m_d3d11Device),
-    m_wineFactory   (&m_d3d11Presenter) {
+    m_wineFactory   (&m_d3d11Presenter),
+    m_frameLatencyCap(m_d3d11Device.GetOptions()->maxFrameLatency) {
     for (uint32_t i = 0; i < m_frameEvents.size(); i++)
       m_frameEvents[i] = new DxvkEvent();
   }

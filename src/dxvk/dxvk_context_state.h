@@ -35,16 +35,19 @@ namespace dxvk {
     GpDirtyXfbBuffers,          ///< Transform feedback buffer bindings are out of date
     GpDirtyXfbCounters,         ///< Counter buffer values are dirty
     GpDirtyBlendConstants,      ///< Blend constants have changed
+    GpDirtyDepthBias,           ///< Depth bias has changed
     GpDirtyStencilRef,          ///< Stencil reference has changed
     GpDirtyViewport,            ///< Viewport state has changed
-    GpDirtyDepthBias,           ///< Depth bias has changed
+    GpDynamicBlendConstants,    ///< Blend constants are dynamic
+    GpDynamicDepthBias,         ///< Depth bias is dynamic
+    GpDynamicStencilRef,        ///< Stencil reference is dynamic
     
     CpDirtyPipeline,            ///< Compute pipeline binding are out of date
     CpDirtyPipelineState,       ///< Compute pipeline needs to be recompiled
     CpDirtyResources,           ///< Compute pipeline resource bindings are out of date
     CpDirtyDescriptorOffsets,   ///< Compute descriptor set needs to be rebound
     CpDirtyDescriptorSet,       ///< Compute descriptor set needs to be updated
-
+    
     DirtyDrawBuffer,            ///< Indirect argument buffer is dirty
   };
   
@@ -72,22 +75,12 @@ namespace dxvk {
   };
 
 
-  struct DxvkDynamicDepthState {
-    float depthBiasConstant = 0.0f;
-    float depthBiasClamp    = 0.0f;
-    float depthBiasSlope    = 0.0f;
-  };
-  
-  
   struct DxvkOutputMergerState {
     std::array<VkClearValue, MaxNumRenderTargets + 1> clearValues = { };
     
     DxvkRenderTargets   renderTargets;
     DxvkRenderPassOps   renderPassOps;
     Rc<DxvkFramebuffer> framebuffer       = nullptr;
-    
-    DxvkBlendConstants  blendConstants    = { 0.0f, 0.0f, 0.0f, 0.0f };
-    uint32_t            stencilReference  = 0;
   };
 
 
@@ -121,6 +114,13 @@ namespace dxvk {
     DxvkComputePipelineStateInfo  state;
     Rc<DxvkComputePipeline>       pipeline;
   };
+
+
+  struct DxvkDynamicState {
+    DxvkBlendConstants  blendConstants    = { 0.0f, 0.0f, 0.0f, 0.0f };
+    DxvkDepthBias       depthBias         = { 0.0f, 0.0f, 0.0f };
+    uint32_t            stencilReference  = 0;
+  };
   
   
   /**
@@ -133,9 +133,9 @@ namespace dxvk {
     DxvkIndirectDrawState     id;
     DxvkVertexInputState      vi;
     DxvkViewportState         vp;
-    DxvkDynamicDepthState     ds;
     DxvkOutputMergerState     om;
     DxvkXfbState              xfb;
+    DxvkDynamicState          dyn;
     
     DxvkGraphicsPipelineState gp;
     DxvkComputePipelineState  cp;

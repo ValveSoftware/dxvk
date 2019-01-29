@@ -674,7 +674,17 @@ namespace dxvk {
      * \param [in] blendConstants Blend constants
      */
     void setBlendConstants(
-      const DxvkBlendConstants& blendConstants);
+            DxvkBlendConstants  blendConstants);
+    
+    /**
+     * \brief Sets depth bias
+     * 
+     * Depth bias has to be enabled explicitly in
+     * the rasterizer state to have any effect.
+     * \param [in] depthBias Depth bias values
+     */
+    void setDepthBias(
+            DxvkDepthBias       depthBias);
     
     /**
      * \brief Sets stencil reference
@@ -683,7 +693,7 @@ namespace dxvk {
      * \param [in] reference Reference value
      */
     void setStencilReference(
-      const uint32_t            reference);
+            uint32_t            reference);
     
     /**
      * \brief Sets input assembly state
@@ -834,6 +844,7 @@ namespace dxvk {
     
     void startRenderPass();
     void spillRenderPass();
+    void clearRenderPass();
     
     void renderPassBindFramebuffer(
       const Rc<DxvkFramebuffer>&  framebuffer,
@@ -892,7 +903,7 @@ namespace dxvk {
     bool validateGraphicsState();
     
     void commitComputeState();
-    void commitGraphicsState();
+    void commitGraphicsState(bool indexed);
     
     void commitComputeInitBarriers();
     void commitComputePostBarriers();

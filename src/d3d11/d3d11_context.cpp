@@ -1439,7 +1439,7 @@ namespace dxvk {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndirectCommand);
     auto cmdData = static_cast<D3D11CmdDrawIndirectData*>(m_cmdData);
 
-    bool useMultiDraw = cmdData && cmdData->type == D3D11CmdType::DrawIndirectIndexed
+    bool useMultiDraw = cmdData && cmdData->type == D3D11CmdType::DrawIndirect
       && cmdData->offset + cmdData->count * stride == AlignedByteOffsetForArgs
       && m_device->features().core.features.multiDrawIndirect;
     
@@ -2688,14 +2688,24 @@ namespace dxvk {
     
     auto rasterizerState = static_cast<D3D11RasterizerState*>(pRasterizerState);
     
+    bool currScissorEnable = m_state.rs.state != nullptr
+      ? m_state.rs.state->Desc()->ScissorEnable
+      : false;
+    
+    bool nextScissorEnable = rasterizerState != nullptr
+      ? rasterizerState->Desc()->ScissorEnable
+      : false;
+
     if (m_state.rs.state != rasterizerState) {
       m_state.rs.state = rasterizerState;
-      
+
       // In D3D11, the rasterizer state defines whether the
       // scissor test is enabled, so we have to update the
       // scissor rectangles as well.
       ApplyRasterizerState();
-      ApplyViewportState();
+
+      if (currScissorEnable != nextScissorEnable)
+        ApplyViewportState();
     }
   }
   

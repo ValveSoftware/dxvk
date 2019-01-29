@@ -572,11 +572,9 @@ namespace dxvk {
     m_rsState.polygonMode        = VK_POLYGON_MODE_FILL;
     m_rsState.cullMode           = VK_CULL_MODE_BACK_BIT;
     m_rsState.frontFace          = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    m_rsState.depthClampEnable   = VK_FALSE;
+    m_rsState.depthClipEnable    = VK_FALSE;
     m_rsState.depthBiasEnable    = VK_FALSE;
-    m_rsState.depthBiasConstant  = 0.0f;
-    m_rsState.depthBiasClamp     = 0.0f;
-    m_rsState.depthBiasSlope     = 0.0f;
+    m_rsState.sampleCount        = VK_SAMPLE_COUNT_1_BIT;
     
     m_msState.sampleMask            = 0xffffffff;
     m_msState.enableAlphaToCoverage = VK_FALSE;
@@ -675,6 +673,9 @@ namespace dxvk {
     uint32_t n = 0;
 
     switch (Format) {
+      default:
+        Logger::warn(str::format("D3D11SwapChain: Unexpected format: ", m_desc.Format));
+        
       case DXGI_FORMAT_R8G8B8A8_UNORM:
       case DXGI_FORMAT_B8G8R8A8_UNORM: {
         pDstFormats[n++] = { VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
@@ -695,9 +696,6 @@ namespace dxvk {
       case DXGI_FORMAT_R16G16B16A16_FLOAT: {
         pDstFormats[n++] = { VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
       } break;
-      
-      default:
-        Logger::warn(str::format("VkD3DPresenter: Unknown format: ", m_desc.Format));
     }
 
     return n;
