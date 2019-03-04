@@ -904,13 +904,27 @@ namespace dxvk {
     
     // Declare additional capabilities if necessary
     switch (resourceType) {
-      case DxbcResourceDim::Buffer:         m_module.enableCapability(spv::CapabilityImageBuffer);    break;
-      case DxbcResourceDim::Texture1D:      m_module.enableCapability(spv::CapabilityImage1D);        break;
-      case DxbcResourceDim::Texture1DArr:   m_module.enableCapability(spv::CapabilityImage1D);        break;
-      case DxbcResourceDim::TextureCubeArr: m_module.enableCapability(spv::CapabilityImageCubeArray); break;
-      case DxbcResourceDim::Texture2DMs:    m_module.enableCapability(spv::CapabilityImageMSArray);   break;
-      case DxbcResourceDim::Texture2DMsArr: m_module.enableCapability(spv::CapabilityImageMSArray);   break;
-      default: break; // No additional capabilities required
+      case DxbcResourceDim::Buffer:
+        m_module.enableCapability(isUav
+          ? spv::CapabilityImageBuffer
+          : spv::CapabilitySampledBuffer);
+        break;
+      
+      case DxbcResourceDim::Texture1D:
+      case DxbcResourceDim::Texture1DArr:
+        m_module.enableCapability(isUav
+          ? spv::CapabilityImage1D
+          : spv::CapabilitySampled1D);
+        break;
+      
+      case DxbcResourceDim::TextureCubeArr:
+        m_module.enableCapability(
+          spv::CapabilitySampledCubeArray);
+        break;
+      
+      default:
+        // No additional capabilities required
+        break;
     }
     
     // If the read-without-format capability is not set and this
@@ -1090,7 +1104,9 @@ namespace dxvk {
     } else {
       // Structured and raw buffers are represented as
       // texel buffers consisting of 32-bit integers.
-      m_module.enableCapability(spv::CapabilityImageBuffer);
+      m_module.enableCapability(isUav
+        ? spv::CapabilityImageBuffer
+        : spv::CapabilitySampledBuffer);
       
       resTypeId = m_module.defImageType(sampledTypeId,
         typeInfo.dim, 0, typeInfo.array, typeInfo.ms, typeInfo.sampled,
@@ -1519,6 +1535,21 @@ namespace dxvk {
         break;
         
       case DxbcOpcode::Div:
+        dst.id = m_module.opFDiv(typeId,
+          src.at(0).id, src.at(1).id);
+        
+        if (m_moduleInfo.options.strictDivision) {
+          uint32_t boolType = dst.type.ccount > 1
+            ? m_module.defVectorType(m_module.defBoolType(), dst.type.ccount)
+            : m_module.defBoolType();
+          
+          dst.id = m_module.opSelect(typeId,
+            m_module.opFOrdNotEqual(boolType, src.at(1).id,
+              emitBuildConstVecf32(0.0f, 0.0f, 0.0f, 0.0f, ins.dst[0].mask).id),
+            dst.id, src.at(0).id);
+        }
+        break;
+
       case DxbcOpcode::DDiv:
         dst.id = m_module.opFDiv(typeId,
           src.at(0).id, src.at(1).id);
@@ -2576,13 +2607,19 @@ namespace dxvk {
     
     // The 'Hi' variants are counted from the MSB in DXBC
     // rather than the LSB, so we have to invert the number
-    if (ins.op == DxbcOpcode::FirstBitHi
-     || ins.op == DxbcOpcode::FirstBitShi) {
+    if (ins.op == DxbcOpcode::FirstBitHi || ins.op == DxbcOpcode::FirstBitShi) {
+      uint32_t boolTypeId = m_module.defBoolType();
+
+      if (dst.type.ccount > 1)
+        boolTypeId = m_module.defVectorType(boolTypeId, dst.type.ccount);
+
+      DxbcRegisterValue const31 = emitBuildConstVecu32(31u, 31u, 31u, 31u, ins.dst[0].mask);
+      DxbcRegisterValue constff = emitBuildConstVecu32(~0u, ~0u, ~0u, ~0u, ins.dst[0].mask);
+
       dst.id = m_module.opSelect(typeId,
-        m_module.opINotEqual(m_module.defBoolType(),
-          dst.id, m_module.constu32(0xFFFFFFFF)),
-        m_module.opISub(typeId, m_module.constu32(31), dst.id),
-        m_module.constu32(0xFFFFFFFF));
+        m_module.opINotEqual(boolTypeId, dst.id, constff.id),
+        m_module.opISub(typeId, const31.id, dst.id),
+        constff.id);
     }
     
     // No modifiers are supported
@@ -5087,7 +5124,7 @@ namespace dxvk {
     
     result.id = m_module.opIAdd(typeId,
       m_module.opIMul(typeId, structId.id, m_module.consti32(structStride / 4)),
-      m_module.opSDiv(typeId, structOffset.id, m_module.consti32(4)));
+      m_module.opShiftRightLogical(typeId, structOffset.id, m_module.consti32(2)));
     return result;
   }
   
@@ -5097,10 +5134,10 @@ namespace dxvk {
     DxbcRegisterValue result;
     result.type.ctype  = DxbcScalarType::Sint32;
     result.type.ccount = 1;
-    result.id = m_module.opSDiv(
+    result.id = m_module.opShiftRightLogical(
       getVectorTypeId(result.type),
       byteOffset.id,
-      m_module.consti32(4));
+      m_module.consti32(2));
     return result;
   }
   
@@ -5187,11 +5224,62 @@ namespace dxvk {
       m_module.opStore(ptr.id, tmp.id);
     }
   }
-  
-  
+
+
   DxbcRegisterValue DxbcCompiler::emitRegisterLoadRaw(
     const DxbcRegister&           reg) {
     return emitValueLoad(emitGetOperandPtr(reg));
+  }
+  
+  
+  DxbcRegisterValue DxbcCompiler::emitConstantBufferLoad(
+    const DxbcRegister&           reg,
+          DxbcRegMask             writeMask) {
+    DxbcRegisterPointer ptr = emitGetOperandPtr(reg);
+
+    std::array<uint32_t, 4> ccomps = { 0, 0, 0, 0 };
+    std::array<uint32_t, 4> scomps = { 0, 0, 0, 0 };
+    uint32_t                scount = 0;
+
+    for (uint32_t i = 0; i < 4; i++) {
+      uint32_t sindex = reg.swizzle[i];
+
+      if (!writeMask[i] || ccomps[sindex])
+        continue;
+      
+      uint32_t componentId = m_module.constu32(sindex);
+      uint32_t componentPtr = m_module.opAccessChain(
+        m_module.defPointerType(
+          getScalarTypeId(DxbcScalarType::Float32),
+          spv::StorageClassUniform),
+        ptr.id, 1, &componentId);
+      
+      ccomps[sindex] = m_module.opLoad(
+        getScalarTypeId(DxbcScalarType::Float32),
+        componentPtr);
+    }
+
+    for (uint32_t i = 0; i < 4; i++) {
+      uint32_t sindex = reg.swizzle[i];
+      
+      if (writeMask[i])
+        scomps[scount++] = ccomps[sindex];
+    }
+    
+    DxbcRegisterValue result;
+    result.type.ctype  = DxbcScalarType::Float32;
+    result.type.ccount = scount;
+    result.id = scomps[0];
+    
+    if (scount > 1) {
+      result.id = m_module.opCompositeConstruct(
+        getVectorTypeId(result.type),
+        scount, scomps.data());
+    }
+
+    result = emitRegisterBitcast(result, reg.dataType);
+    result = emitSrcOperandModifiers(result, reg.modifiers);
+    return result;
   }
   
   
@@ -5236,6 +5324,8 @@ namespace dxvk {
       
       // Cast constants to the requested type
       return emitRegisterBitcast(result, reg.dataType);
+    } else if (reg.type == DxbcOperandType::ConstantBuffer) {
+      return emitConstantBufferLoad(reg, writeMask);
     } else {
       // Load operand from the operand pointer
       DxbcRegisterValue result = emitRegisterLoadRaw(reg);
@@ -6517,7 +6607,10 @@ namespace dxvk {
     
     this->emitOutputSetup();
     this->emitOutputMapping();
-    this->emitOutputDepthClamp();
+
+    if (m_moduleInfo.options.useDepthClipWorkaround)
+      this->emitOutputDepthClamp();
+    
     this->emitFunctionEnd();
   }
   
@@ -6643,7 +6736,10 @@ namespace dxvk {
     DxbcArrayType info;
     info.ctype   = DxbcScalarType::Float32;
     info.ccount  = 4;
-    info.alength = DxbcMaxInterfaceRegs;
+    info.alength = m_isgn != nullptr ? m_isgn->maxRegisterCount() : 0;
+
+    if (info.alength == 0)
+      return;
     
     // Define the array type. This will be two-dimensional
     // in some shaders, with the outer index representing
@@ -7008,8 +7104,14 @@ namespace dxvk {
     const char*             name) {
     const uint32_t varId = emitNewVariable(info);
     
-    m_module.decorateBuiltIn(varId, builtIn);
     m_module.setDebugName(varId, name);
+    m_module.decorateBuiltIn(varId, builtIn);
+
+    if (m_programInfo.type() == DxbcProgramType::PixelShader
+     && info.type.ctype != DxbcScalarType::Float32
+     && info.type.ctype != DxbcScalarType::Bool
+     && info.sclass == spv::StorageClassInput)
+      m_module.decorate(varId, spv::DecorationFlat);
     
     m_entryPointInterfaces.push_back(varId);
     return varId;

@@ -15,6 +15,8 @@ namespace dxvk {
     const DxvkDeviceFeatures& devFeatures = device->features();
     const DxvkDeviceInfo& devInfo = adapter->devicePropertiesExt();
     
+    useDepthClipWorkaround
+      = !devFeatures.extDepthClipEnable.depthClipEnable;
     useStorageImageReadWithoutFormat
       = devFeatures.core.features.shaderStorageImageReadWithoutFormat;
     useSubgroupOpsForEarlyDiscard
@@ -24,6 +26,7 @@ namespace dxvk {
     useRawSsbo
       = (devInfo.core.properties.limits.minStorageBufferOffsetAlignment <= sizeof(uint32_t));
     
+    strictDivision          = options.strictDivision;
     zeroInitWorkgroupMemory = options.zeroInitWorkgroupMemory;
     
     // Disable early discard on RADV due to GPU hangs

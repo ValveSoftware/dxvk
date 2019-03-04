@@ -10,6 +10,10 @@ namespace dxvk {
     DxbcOptions();
     DxbcOptions(const Rc<DxvkDevice>& device, const D3D11Options& options);
 
+    // Clamp oDepth in fragment shaders if the depth
+    // clip device feature is not supported
+    bool useDepthClipWorkaround = false;
+
     /// Use the ShaderImageReadWithoutFormat capability.
     bool useStorageImageReadWithoutFormat = false;
 
@@ -20,6 +24,9 @@ namespace dxvk {
     /// Use SSBOs instead of texel buffers
     /// for raw and structured buffers.
     bool useRawSsbo = false;
+
+    /// Enables sm4-compliant division-by-zero behaviour
+    bool strictDivision = false;
 
     /// Clear thread-group shared memory to zero
     bool zeroInitWorkgroupMemory = false;

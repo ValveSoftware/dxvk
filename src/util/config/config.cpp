@@ -37,10 +37,28 @@ namespace dxvk {
     { "EvilWithinDemo.exe", {{
       { "d3d11.dcSingleUseMode",            "False" },
     }} },
-    /* Far Cry 5                                  */
+    /* Far Cry 3: Assumes clear(0.5) on an UNORM  *
+     * format to result in 128 on AMD and 127 on  *
+     * Nvidia. Most Vulkan drivers clear to 127,  *
+     * assuming higher values causes artifacts.   */
+    { "farcry3_d3d11.exe", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
+    { "fc3_blooddragon_d3d11.exe", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
+    /* Far Cry 4: Same as Far Cry 3               */
+    { "FarCry4.exe", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
+    /* Far Cry 5: Avoid CPU <-> GPU sync          */
     { "FarCry5.exe", {{
       { "d3d11.allowMapFlagNoWait",         "True" }
     }} },
+    /* Far Cry Primal: Nvidia performance         */
+    { "FCPrimal.exe", {{
+      { "dxgi.nvapiHack",                   "False" },
+    } }},
     /* Frostpunk: Renders one frame with D3D9     *
      * after creating the DXGI swap chain         */
     { "Frostpunk.exe", {{
@@ -60,9 +78,21 @@ namespace dxvk {
     { "FIFA19.exe", {{
       { "dxvk.useRawSsbo",                  "True" },
     }} },
+    /* Final Fantasy XIV: Fix random black blocks */
+    { "ffxiv_dx11.exe", {{
+      { "d3d11.strictDivision",             "True" },
+    }} },
     /* Fifa '19 Demo                              */
     { "FIFA19_demo.exe", {{
       { "dxvk.useRawSsbo",                  "True" },
+    }} },
+    /* Resident Evil 2: Improve GPU performance   */
+    { "re2.exe", {{
+      { "d3d11.relaxedBarriers",            "True" },
+    }} },
+    /* Resident Evil 7                            */
+    { "re7.exe", {{
+      { "d3d11.relaxedBarriers",            "True" },
     }} },
     /* Call of Duty WW2                           */
     { "s2_sp64_ship.exe", {{

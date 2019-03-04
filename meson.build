@@ -1,4 +1,4 @@
-project('dxvk', ['c', 'cpp'], version : 'v0.96', meson_version : '>= 0.43')
+project('dxvk', ['c', 'cpp'], version : 'v1.0', meson_version : '>= 0.43')
 
 cpu_family = target_machine.cpu_family()
 
@@ -74,8 +74,4 @@ enable_tests = get_option('enable_tests')
 
 if enable_tests
   subdir('tests')
-endif
-
-if dxvk_compiler.get_id() != 'msvc'
-  subdir('utils')
 endif

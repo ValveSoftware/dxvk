@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "../dxgi/dxgi_monitor.h"
 #include "../dxgi/dxgi_swapchain.h"
 
 #include "../dxvk/dxvk_adapter.h"
@@ -13,11 +14,11 @@
 #include "d3d11_device.h"
 #include "d3d11_input_layout.h"
 #include "d3d11_interop.h"
-#include "d3d11_present.h"
 #include "d3d11_query.h"
 #include "d3d11_resource.h"
 #include "d3d11_sampler.h"
 #include "d3d11_shader.h"
+#include "d3d11_swapchain.h"
 #include "d3d11_texture.h"
 
 namespace dxvk {
@@ -1350,14 +1351,14 @@ namespace dxvk {
     DxvkDeviceFeatures supported = adapter->features();
     DxvkDeviceFeatures enabled   = {};
 
-    enabled.core.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
-    enabled.core.pNext = nullptr;
+    // Geometry shaders are used for some meta ops
+    enabled.core.features.geometryShader                          = VK_TRUE;
+    enabled.core.features.robustBufferAccess                      = VK_TRUE;
 
-    enabled.extTransformFeedback.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
-    enabled.extTransformFeedback.pNext = nullptr;
+    enabled.extMemoryPriority.memoryPriority                      = supported.extMemoryPriority.memoryPriority;
 
-    enabled.extVertexAttributeDivisor.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT;
-    enabled.extVertexAttributeDivisor.pNext = nullptr;
+    enabled.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor      = supported.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor;
+    enabled.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor  = supported.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor;
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_1) {
       enabled.core.features.depthClamp                            = VK_TRUE;
@@ -1368,7 +1369,8 @@ namespace dxvk {
       enabled.core.features.samplerAnisotropy                     = VK_TRUE;
       enabled.core.features.shaderClipDistance                    = VK_TRUE;
       enabled.core.features.shaderCullDistance                    = VK_TRUE;
-      enabled.core.features.robustBufferAccess                    = VK_TRUE;
+      enabled.core.features.textureCompressionBC                  = VK_TRUE;
+      enabled.extDepthClipEnable.depthClipEnable                  = supported.extDepthClipEnable.depthClipEnable;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_2) {
@@ -1376,17 +1378,14 @@ namespace dxvk {
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_9_3) {
-      enabled.core.features.multiViewport                         = VK_TRUE;
       enabled.core.features.independentBlend                      = VK_TRUE;
+      enabled.core.features.multiViewport                         = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_10_0) {
       enabled.core.features.fullDrawIndexUint32                   = VK_TRUE;
-      enabled.core.features.fragmentStoresAndAtomics              = VK_TRUE;
-      enabled.core.features.geometryShader                        = VK_TRUE;
       enabled.core.features.logicOp                               = supported.core.features.logicOp;
       enabled.core.features.shaderImageGatherExtended             = VK_TRUE;
-      enabled.core.features.textureCompressionBC                  = VK_TRUE;
       enabled.core.features.variableMultisampleRate               = supported.core.features.variableMultisampleRate;
       enabled.extTransformFeedback.transformFeedback              = supported.extTransformFeedback.transformFeedback;
       enabled.extTransformFeedback.geometryStreams                = supported.extTransformFeedback.geometryStreams;
@@ -1398,14 +1397,13 @@ namespace dxvk {
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_11_0) {
-      enabled.core.features.multiDrawIndirect                     = supported.core.features.multiDrawIndirect;
       enabled.core.features.drawIndirectFirstInstance             = VK_TRUE;
+      enabled.core.features.fragmentStoresAndAtomics              = VK_TRUE;
+      enabled.core.features.multiDrawIndirect                     = supported.core.features.multiDrawIndirect;
       enabled.core.features.shaderFloat64                         = supported.core.features.shaderFloat64;
       enabled.core.features.shaderInt64                           = supported.core.features.shaderInt64;
-      enabled.core.features.tessellationShader                    = VK_TRUE;
-      // TODO enable unconditionally once RADV gains support
-      enabled.core.features.shaderStorageImageMultisample         = supported.core.features.shaderStorageImageMultisample;
       enabled.core.features.shaderStorageImageWriteWithoutFormat  = VK_TRUE;
+      enabled.core.features.tessellationShader                    = VK_TRUE;
     }
     
     if (featureLevel >= D3D_FEATURE_LEVEL_11_1) {
@@ -1414,12 +1412,6 @@ namespace dxvk {
       enabled.core.features.vertexPipelineStoresAndAtomics        = VK_TRUE;
     }
     
-    if (supported.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor
-     && supported.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor) {
-      enabled.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor      = VK_TRUE;
-      enabled.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor  = VK_TRUE;
-    }
-
     return enabled;
   }
   
@@ -1681,8 +1673,9 @@ namespace dxvk {
 
 
   WineDXGISwapChainFactory::WineDXGISwapChainFactory(
-          IDXGIVkPresentDevice*   pDevice)
-  : m_device(pDevice) {
+          D3D11DXGIDevice*        pContainer,
+          D3D11Device*            pDevice)
+  : m_container(pContainer), m_device(pDevice) {
     
   }
   
@@ -1716,10 +1709,39 @@ namespace dxvk {
     if (!ppSwapChain || !pDesc || !hWnd)
       return DXGI_ERROR_INVALID_CALL;
     
-    return CreateDxvkSwapChainForHwnd(
-      pFactory, m_device, hWnd, pDesc,
-      pFullscreenDesc, pRestrictToOutput,
-      ppSwapChain);
+    // Make sure the back buffer size is not zero
+    DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+    
+    GetWindowClientSize(hWnd,
+      desc.Width  ? nullptr : &desc.Width,
+      desc.Height ? nullptr : &desc.Height);
+    
+    // If necessary, set up a default set of
+    // fullscreen parameters for the swap chain
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fsDesc;
+    
+    if (pFullscreenDesc) {
+      fsDesc = *pFullscreenDesc;
+    } else {
+      fsDesc.RefreshRate      = { 0, 0 };
+      fsDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+      fsDesc.Scaling          = DXGI_MODE_SCALING_UNSPECIFIED;
+      fsDesc.Windowed         = TRUE;
+    }
+    
+    try {
+      // Create presenter for the device
+      Com<D3D11SwapChain> presenter = new D3D11SwapChain(
+        m_container, m_device, hWnd, &desc);
+      
+      // Create the actual swap chain
+      *ppSwapChain = ref(new DxgiSwapChain(
+        pFactory, presenter.ptr(), hWnd, &desc, &fsDesc));
+      return S_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return DXGI_ERROR_UNSUPPORTED;
+    }
   }
   
   
@@ -1734,9 +1756,8 @@ namespace dxvk {
     m_dxvkAdapter   (pDxvkAdapter),
     m_dxvkDevice    (CreateDevice(FeatureLevel)),
     m_d3d11Device   (this, FeatureLevel, FeatureFlags),
-    m_d3d11Presenter(this, &m_d3d11Device),
     m_d3d11Interop  (this, &m_d3d11Device),
-    m_wineFactory   (&m_d3d11Presenter),
+    m_wineFactory   (this, &m_d3d11Device),
     m_frameLatencyCap(m_d3d11Device.GetOptions()->maxFrameLatency) {
     for (uint32_t i = 0; i < m_frameEvents.size(); i++)
       m_frameEvents[i] = new DxvkEvent();
@@ -1749,6 +1770,9 @@ namespace dxvk {
   
   
   HRESULT STDMETHODCALLTYPE D3D11DXGIDevice::QueryInterface(REFIID riid, void** ppvObject) {
+    if (ppvObject == nullptr)
+      return E_POINTER;
+
     *ppvObject = nullptr;
     
     if (riid == __uuidof(IUnknown)
@@ -1775,11 +1799,6 @@ namespace dxvk {
     if (riid == __uuidof(ID3D11Device)
      || riid == __uuidof(ID3D11Device1)) {
       *ppvObject = ref(&m_d3d11Device);
-      return S_OK;
-    }
-    
-    if (riid == __uuidof(IDXGIVkPresentDevice)) {
-      *ppvObject = ref(&m_d3d11Presenter);
       return S_OK;
     }
     
@@ -1945,7 +1964,12 @@ namespace dxvk {
 
   Rc<DxvkDevice> D3D11DXGIDevice::CreateDevice(D3D_FEATURE_LEVEL FeatureLevel) {
     DxvkDeviceFeatures deviceFeatures = D3D11Device::GetDeviceFeatures(m_dxvkAdapter, FeatureLevel);
-    return m_dxvkAdapter->createDevice(deviceFeatures);
+
+    uint32_t flHi = (uint32_t(FeatureLevel) >> 12);
+    uint32_t flLo = (uint32_t(FeatureLevel) >> 8) & 0x7;
+
+    std::string apiName = str::format("D3D11 FL ", flHi, "_", flLo);
+    return m_dxvkAdapter->createDevice(apiName, deviceFeatures);
   }
 
 }
