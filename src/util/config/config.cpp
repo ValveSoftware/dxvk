@@ -19,6 +19,10 @@ namespace dxvk {
     { "Dishonored2.exe", {{
       { "d3d11.allowMapFlagNoWait",         "True" }
     }} },
+    /* Dissidia Final Fantasy NT Free Edition */
+    { "dffnt.exe", {{
+      { "dxgi.deferSurfaceCreation",        "True" },
+    }} },
     /* Elite Dangerous: Compiles weird shaders    *
      * when running on AMD hardware               */
     { "EliteDangerous64.exe", {{
@@ -62,6 +66,10 @@ namespace dxvk {
     /* Frostpunk: Renders one frame with D3D9     *
      * after creating the DXGI swap chain         */
     { "Frostpunk.exe", {{
+      { "dxgi.deferSurfaceCreation",        "True" },
+    }} },
+    /* Nioh: See Frostpunk, apparently?           */
+    { "nioh.exe", {{
       { "dxgi.deferSurfaceCreation",        "True" },
     }} },
     /* Quantum Break: Mever initializes shared    *
