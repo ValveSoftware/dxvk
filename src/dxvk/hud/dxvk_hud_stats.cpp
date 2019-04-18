@@ -3,7 +3,8 @@
 namespace dxvk::hud {
   
   HudStats::HudStats(HudElements elements)
-  : m_elements(filterElements(elements)) { }
+  : m_elements(filterElements(elements)),
+    m_compilerShowTime(std::chrono::high_resolution_clock::now()) { }
   
   
   HudStats::~HudStats() {
@@ -38,6 +39,11 @@ namespace dxvk::hud {
     
     if (m_elements.test(HudElement::StatMemory))
       position = this->printMemoryStats(context, renderer, position);
+    
+    if (m_elements.test(HudElement::CompilerActivity)) {
+      this->printCompilerActivity(context, renderer,
+        { position.x, float(renderer.surfaceSize().height) - 20.0f });
+    }
     
     return position;
   }
@@ -142,6 +148,33 @@ namespace dxvk::hud {
     
     return { position.x, position.y + 44.0f };
   }
+
+
+  HudPos HudStats::printCompilerActivity(
+    const Rc<DxvkContext>&  context,
+          HudRenderer&      renderer,
+          HudPos            position) {
+    auto now    = std::chrono::high_resolution_clock::now();
+    bool doShow = m_prevCounters.getCtr(DxvkStatCounter::PipeCompilerBusy);
+
+    if (m_prevCounters.getCtr(DxvkStatCounter::PipeCompilerBusy)
+     && m_diffCounters.getCtr(DxvkStatCounter::PipeCompilerBusy))
+      m_compilerShowTime = now;
+    
+    if (!doShow) {
+      doShow |= std::chrono::duration_cast<std::chrono::milliseconds>(now - m_compilerShowTime)
+              < std::chrono::milliseconds(1000);
+    }
+    
+    if (doShow) {
+      renderer.drawText(context, 16.0f,
+        { position.x, position.y },
+        { 1.0f, 1.0f, 1.0f, 1.0f },
+        "Compiling shaders...");
+    }
+    
+    return { position.x, position.y + 24.0f };
+  }
   
   
   HudElements HudStats::filterElements(HudElements elements) {
@@ -149,7 +182,8 @@ namespace dxvk::hud {
       HudElement::StatDrawCalls,
       HudElement::StatSubmissions,
       HudElement::StatPipelines,
-      HudElement::StatMemory);
+      HudElement::StatMemory,
+      HudElement::CompilerActivity);
   }
   
 }

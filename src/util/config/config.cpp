@@ -11,6 +11,10 @@
 namespace dxvk {
 
   const static std::unordered_map<std::string, Config> g_appDefaults = {{
+    /* Anno 1800                                  */
+    { "Anno1800.exe", {{
+      { "d3d11.allowMapFlagNoWait",         "True" }
+    }} },
     /* Assassin's Creed Syndicate: amdags issues  */
     { "ACS.exe", {{
       { "dxgi.customVendorId",              "10de" },
@@ -125,6 +129,14 @@ namespace dxvk {
     /* Star Wars Battlefront (2015) Trial         */
     { "starwarsbattlefronttrial.exe", {{
       { "dxgi.nvapiHack",                   "False" },
+    }} },
+    /* Dark Souls Remastered                      */
+    { "DarkSoulsRemastered.exe", {{
+      { "d3d11.constantBufferRangeCheck",   "True" },
+    }} },
+    /* Grim Dawn                                  */
+    { "Grim Dawn.exe", {{
+      { "d3d11.constantBufferRangeCheck",   "True" },
     }} },
   }};
 

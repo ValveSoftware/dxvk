@@ -1,3 +1,5 @@
+dxgi_res = wrc_generator.process('version.rc')
+
 dxgi_shaders = files([
   'shaders/dxgi_presenter_frag.frag',
   'shaders/dxgi_presenter_vert.vert',
@@ -15,7 +17,7 @@ dxgi_src = [
   'dxgi_swapchain.cpp',
 ]
 
-dxgi_dll = shared_library('dxgi'+dll_ext, dxgi_src,
+dxgi_dll = shared_library('dxgi'+dll_ext, dxgi_src, dxgi_res,
   name_prefix         : '',
   dependencies        : [ dxvk_dep ],
   include_directories : dxvk_include_path,

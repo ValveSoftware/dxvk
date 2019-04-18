@@ -1,4 +1,4 @@
-project('dxvk', ['c', 'cpp'], version : 'v1.0.2', meson_version : '>= 0.43')
+project('dxvk', ['c', 'cpp'], version : 'v1.0.3', meson_version : '>= 0.43')
 
 cpu_family = target_machine.cpu_family()
 
@@ -33,6 +33,7 @@ dxvk_winelib = dxvk_compiler.compiles(code, name: 'winelib check')
 dxvk_extradep = [ ]
 
 if dxvk_winelib
+  wrc = find_program('wrc')
   lib_vulkan  = declare_dependency(link_args: [ '-lwinevulkan' ])
   lib_d3d11   = declare_dependency(link_args: [ '-ld3d11' ])
   lib_dxgi    = declare_dependency(link_args: [ '-ldxgi' ])
@@ -41,20 +42,35 @@ if dxvk_winelib
   dxvk_extradep += [ declare_dependency(link_args: [ '-ldl' ]) ]
   exe_ext = '.exe.so'
   dll_ext = '.dll'
+  res_ext = '.res'
   def_spec_ext = '.spec'
 else
+  if dxvk_compiler.get_id() == 'msvc'
+    wrc = find_program('rc')
+  else
+    wrc = cpu_family == 'x86_64' ? find_program('x86_64-w64-mingw32-windres') : find_program('i686-w64-mingw32-windres')
+  endif
+
   lib_vulkan  = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)
   lib_d3d11   = dxvk_compiler.find_library('d3d11')
   lib_dxgi    = dxvk_compiler.find_library('dxgi')
   lib_d3dcompiler_43 = dxvk_compiler.find_library('d3dcompiler_43', dirs : dxvk_library_path)
-  
+
   if dxvk_compiler.get_id() == 'msvc'
     lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler')
   else
     lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler_47')
   endif
+
   exe_ext = ''
   dll_ext = ''
+
+  if dxvk_compiler.get_id() == 'msvc'
+    res_ext = '.res'
+  else
+    res_ext = '.o'
+  endif
+
   def_spec_ext = '.def'
 endif
 
@@ -62,6 +78,16 @@ glsl_compiler = find_program('glslangValidator')
 glsl_generator = generator(glsl_compiler,
   output    : [ '@BASENAME@.h' ],
   arguments : [ '-V', '--vn', '@BASENAME@', '@INPUT@', '-o', '@OUTPUT@' ])
+
+if dxvk_compiler.get_id() == 'msvc'
+  wrc_generator = generator(wrc,
+  output    : [ '@BASENAME@' + res_ext ],
+  arguments : [ '/fo', '@OUTPUT@', '@INPUT@' ])
+else
+  wrc_generator = generator(wrc,
+  output    : [ '@BASENAME@' + res_ext ],
+  arguments : [ '-i', '@INPUT@', '-o', '@OUTPUT@' ])
+endif
 
 dxvk_version = vcs_tag(
   command: ['git', 'describe', '--dirty=+'],

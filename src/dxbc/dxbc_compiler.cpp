@@ -2196,7 +2196,8 @@ namespace dxvk {
     bool doCut = ins.op != DxbcOpcode::Emit && ins.op != DxbcOpcode::EmitStream;
 
     if (doEmit) {
-      emitOutputSetup();
+      if (m_perVertexOut)
+        emitOutputSetup();
       emitClipCullStore(DxbcSystemValue::ClipDistance, m_clipDistances);
       emitClipCullStore(DxbcSystemValue::CullDistance, m_cullDistances);
       emitXfbOutputSetup(streamId, false);
@@ -4587,35 +4588,6 @@ namespace dxvk {
   }
   
   
-  DxbcRegisterPointer DxbcCompiler::emitGetConstBufPtr(
-    const DxbcRegister&           operand) {
-    // Constant buffers take a two-dimensional index:
-    //    (0) register index (immediate)
-    //    (1) constant offset (relative)
-    DxbcRegisterInfo info;
-    info.type.ctype   = DxbcScalarType::Float32;
-    info.type.ccount  = 4;
-    info.type.alength = 0;
-    info.sclass = spv::StorageClassUniform;
-    
-    const uint32_t regId = operand.idx[0].offset;
-    const DxbcRegisterValue constId = emitIndexLoad(operand.idx[1]);
-    
-    const uint32_t ptrTypeId = getPointerTypeId(info);
-    
-    const std::array<uint32_t, 2> indices =
-      {{ m_module.consti32(0), constId.id }};
-    
-    DxbcRegisterPointer result;
-    result.type.ctype  = info.type.ctype;
-    result.type.ccount = info.type.ccount;
-    result.id = m_module.opAccessChain(ptrTypeId,
-      m_constantBuffers.at(regId).varId,
-      indices.size(), indices.data());
-    return result;
-  }
-  
-  
   DxbcRegisterPointer DxbcCompiler::emitGetImmConstBufPtr(
     const DxbcRegister&           operand) {
     const DxbcRegisterValue constId
@@ -4676,9 +4648,6 @@ namespace dxvk {
       
       case DxbcOperandType::Output:
         return emitGetOutputPtr(operand);
-      
-      case DxbcOperandType::ConstantBuffer:
-        return emitGetConstBufPtr(operand);
       
       case DxbcOperandType::ImmediateConstantBuffer:
         return emitGetImmConstBufPtr(operand);
@@ -5241,8 +5210,31 @@ namespace dxvk {
   DxbcRegisterValue DxbcCompiler::emitConstantBufferLoad(
     const DxbcRegister&           reg,
           DxbcRegMask             writeMask) {
-    DxbcRegisterPointer ptr = emitGetOperandPtr(reg);
+    // Constant buffers take a two-dimensional index:
+    //    (0) register index (immediate)
+    //    (1) constant offset (relative)
+    DxbcRegisterInfo info;
+    info.type.ctype   = DxbcScalarType::Float32;
+    info.type.ccount  = 4;
+    info.type.alength = 0;
+    info.sclass = spv::StorageClassUniform;
+    
+    uint32_t regId = reg.idx[0].offset;
+    DxbcRegisterValue constId = emitIndexLoad(reg.idx[1]);
+    
+    uint32_t ptrTypeId = getPointerTypeId(info);
+    
+    const std::array<uint32_t, 2> indices =
+      {{ m_module.consti32(0), constId.id }};
+    
+    DxbcRegisterPointer ptr;
+    ptr.type.ctype  = info.type.ctype;
+    ptr.type.ccount = info.type.ccount;
+    ptr.id = m_module.opAccessChain(ptrTypeId,
+      m_constantBuffers.at(regId).varId,
+      indices.size(), indices.data());
 
+    // Load individual components from buffer
     std::array<uint32_t, 4> ccomps = { 0, 0, 0, 0 };
     std::array<uint32_t, 4> scomps = { 0, 0, 0, 0 };
     uint32_t                scount = 0;
@@ -5283,6 +5275,33 @@ namespace dxvk {
         scount, scomps.data());
     }
 
+    // HACK: If requested, use the constant buffer size to perform a range
+    // check. This does NOT match the API behaviour, but is needed for some
+    // games since out-of-bounds access is undefined behaviour.
+    if (m_moduleInfo.options.constantBufferRangeCheck && reg.idx[1].relReg) {
+      uint32_t zero = m_module.constf32(0.0f);
+      uint32_t cond = m_module.opULessThan(
+        m_module.defBoolType(), constId.id,
+        m_module.consti32(m_constantBuffers[regId].size));
+
+      if (scount > 1) {
+        std::array<uint32_t, 4> zeroes = {{ zero, zero, zero, zero }};
+        std::array<uint32_t, 4> conds  = {{ cond, cond, cond, cond }};
+
+        zero = m_module.opCompositeConstruct(
+          getVectorTypeId(result.type),
+          scount, zeroes.data());
+        cond = m_module.opCompositeConstruct(
+          m_module.defVectorType(m_module.defBoolType(), scount),
+          scount, conds.data());
+      }
+
+      result.id = m_module.opSelect(
+        getVectorTypeId(result.type), cond,
+        result.id, zero);
+    }
+
+    // Apply any post-processing that might be necessary
     result = emitRegisterBitcast(result, reg.dataType);
     result = emitSrcOperandModifiers(result, reg.modifiers);
     return result;
@@ -6409,14 +6428,16 @@ namespace dxvk {
     // Declare the per-vertex output block. Outputs are not
     // declared as arrays, instead they will be flushed when
     // calling EmitVertex.
-    const uint32_t perVertexStruct = this->getPerVertexBlockId();
-    const uint32_t perVertexPointer = m_module.defPointerType(
-      perVertexStruct, spv::StorageClassOutput);
-    
-    m_perVertexOut = m_module.newVar(
-      perVertexPointer, spv::StorageClassOutput);
-    m_entryPointInterfaces.push_back(m_perVertexOut);
-    m_module.setDebugName(m_perVertexOut, "gs_vertex_out");
+    if (!m_moduleInfo.xfb || m_moduleInfo.xfb->rasterizedStream >= 0) {
+      const uint32_t perVertexStruct = this->getPerVertexBlockId();
+      const uint32_t perVertexPointer = m_module.defPointerType(
+        perVertexStruct, spv::StorageClassOutput);
+      
+      m_perVertexOut = m_module.newVar(
+        perVertexPointer, spv::StorageClassOutput);
+      m_entryPointInterfaces.push_back(m_perVertexOut);
+      m_module.setDebugName(m_perVertexOut, "gs_vertex_out");
+    }
     
     // Cull/clip distances as outputs
     m_clipDistances = emitDclClipCullDistanceArray(
