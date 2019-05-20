@@ -55,6 +55,10 @@ namespace dxvk {
       return rsDepthBiasEnable;
     }
 
+    bool useDynamicDepthBounds() const {
+      return dsEnableDepthBoundsTest;
+    }
+
     bool useDynamicBlendConstants() const {
       bool result = false;
       
@@ -93,10 +97,9 @@ namespace dxvk {
     uint32_t                            msSampleMask;
     VkBool32                            msEnableAlphaToCoverage;
     
-    VkCompareOp                         xsAlphaCompareOp;
-    
     VkBool32                            dsEnableDepthTest;
     VkBool32                            dsEnableDepthWrite;
+    VkBool32                            dsEnableDepthBoundsTest;
     VkBool32                            dsEnableStencilTest;
     VkCompareOp                         dsDepthCompareOp;
     VkStencilOpState                    dsStencilOpFront;
@@ -106,6 +109,8 @@ namespace dxvk {
     VkLogicOp                           omLogicOp;
     VkPipelineColorBlendAttachmentState omBlendAttachments[MaxNumRenderTargets];
     VkComponentMapping                  omComponentMapping[MaxNumRenderTargets];
+
+    uint32_t                            scSpecConstants[MaxNumSpecConstants];
   };
   
   

@@ -122,6 +122,14 @@ namespace dxvk {
     { "MassEffectAndromeda.exe", {{
       { "dxgi.nvapiHack",                   "False" },
     }} },
+    /* Mirror`s Edge Catalyst: Crashes on AMD     */
+    { "MirrorsEdgeCatalyst.exe", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
+    /* Mirror`s Edge Catalyst Trial               */
+    { "MirrorsEdgeCatalystTrial.exe", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
     /* Star Wars Battlefront (2015)               */
     { "starwarsbattlefront.exe", {{
       { "dxgi.nvapiHack",                   "False" },
@@ -142,6 +150,10 @@ namespace dxvk {
     { "NieRAutomata.exe", {{
       { "d3d11.constantBufferRangeCheck",   "True" },
     }} },
+    /* The Surge                                  */
+    { "TheSurge.exe", {{
+      { "d3d11.allowMapFlagNoWait",         "True" },
+    }} }
   }};
 
 

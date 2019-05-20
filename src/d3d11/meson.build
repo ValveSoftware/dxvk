@@ -1,5 +1,10 @@
 d3d11_res = wrc_generator.process('version.rc')
 
+dxgi_shaders = files([
+  '../dxgi/shaders/dxgi_presenter_frag.frag',
+  '../dxgi/shaders/dxgi_presenter_vert.vert',
+])
+
 dxgi_common_src = [
   '../dxgi/dxgi_format.cpp',
   '../dxgi/dxgi_monitor.cpp',
@@ -31,6 +36,7 @@ d3d11_src = [
   'd3d11_cmdlist.cpp',
   'd3d11_context.cpp',
   'd3d11_context_def.cpp',
+  'd3d11_context_ext.cpp',
   'd3d11_context_imm.cpp',
   'd3d11_counter_buffer.cpp',
   'd3d11_depth_stencil.cpp',

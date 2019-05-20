@@ -14,6 +14,7 @@ namespace dxvk {
     const Rc<DxvkDevice>&         Device,
           DxvkCsChunkFlags        CsFlags)
   : m_parent    (pParent),
+    m_contextExt(this),
     m_annotation(this),
     m_multithread(this, false),
     m_device    (Device),
@@ -55,6 +56,11 @@ namespace dxvk {
      || riid == __uuidof(ID3D11DeviceContext)
      || riid == __uuidof(ID3D11DeviceContext1)) {
       *ppvObject = ref(this);
+      return S_OK;
+    }
+    
+    if (riid == __uuidof(ID3D11VkExtContext)) {
+      *ppvObject = ref(&m_contextExt);
       return S_OK;
     }
     
@@ -548,6 +554,9 @@ namespace dxvk {
             cExtent);
         }
       });
+
+      if (dstTextureInfo->CanUpdateMappedBufferEarly())
+        UpdateMappedBuffer(dstTextureInfo, dstSubresource);
     }
   }
   
@@ -598,8 +607,11 @@ namespace dxvk {
           cSrcBuffer.length());
       });
     } else {
-      const Rc<DxvkImage> dstImage = GetCommonTexture(pDstResource)->GetImage();
-      const Rc<DxvkImage> srcImage = GetCommonTexture(pSrcResource)->GetImage();
+      auto dstTexture = GetCommonTexture(pDstResource);
+      auto srcTexture = GetCommonTexture(pSrcResource);
+
+      const Rc<DxvkImage> dstImage = dstTexture->GetImage();
+      const Rc<DxvkImage> srcImage = srcTexture->GetImage();
 
       const DxvkFormatInfo* dstFormatInfo = imageFormatInfo(dstImage->info().format);
       const DxvkFormatInfo* srcFormatInfo = imageFormatInfo(srcImage->info().format);
@@ -646,6 +658,11 @@ namespace dxvk {
             cSrcImage, cSrcLayers, VkOffset3D { 0, 0, 0 },
             cExtent);
         });
+
+        if (dstTexture->CanUpdateMappedBufferEarly()) {
+          for (uint32_t j = 0; j < dstImage->info().numLayers; j++)
+            UpdateMappedBuffer(dstTexture, { dstLayers.aspectMask, i, j });
+        }
       }
     }
   }
@@ -806,6 +823,7 @@ namespace dxvk {
         ctx->clearImageView(cDstView,
           VkOffset3D { 0, 0, 0 },
           cDstView->mipLevelExtent(0),
+          VK_IMAGE_ASPECT_COLOR_BIT,
           cClearValue);
       });
     }
@@ -846,6 +864,7 @@ namespace dxvk {
         ctx->clearImageView(cDstView,
           VkOffset3D { 0, 0, 0 },
           cDstView->mipLevelExtent(0),
+          VK_IMAGE_ASPECT_COLOR_BIT,
           cClearValue);
       });
     }
@@ -948,9 +967,12 @@ namespace dxvk {
     // Convert the clear color format. ClearView takes
     // the clear value for integer formats as a set of
     // integral floats, so we'll have to convert.
-    VkClearValue clearValue;
+    VkClearValue        clearValue;
+    VkImageAspectFlags  clearAspect;
 
     if (imgView == nullptr || imgView->info().aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
+      clearAspect = VK_IMAGE_ASPECT_COLOR_BIT;
+
       for (uint32_t i = 0; i < 4; i++) {
         if (formatInfo->flags.test(DxvkFormatFlag::SampledUInt))
           clearValue.color.uint32[i] = uint32_t(Color[i]);
@@ -960,6 +982,7 @@ namespace dxvk {
           clearValue.color.float32[i] = Color[i];
       }
     } else {
+      clearAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
       clearValue.depthStencil.depth   = Color[0];
       clearValue.depthStencil.stencil = 0;
     }
@@ -998,12 +1021,14 @@ namespace dxvk {
           cImageView    = imgView,
           cAreaOffset   = offset,
           cAreaExtent   = extent,
+          cClearAspect  = clearAspect,
           cClearValue   = clearValue
         ] (DxvkContext* ctx) {
           ctx->clearImageView(
             cImageView,
             cAreaOffset,
             cAreaExtent,
+            cClearAspect,
             cClearValue);
         });
       }
@@ -1028,13 +1053,17 @@ namespace dxvk {
       if (imgView != nullptr) {
         EmitCs([
           cImageView    = imgView,
+          cClearAspect  = clearAspect,
           cClearValue   = clearValue
         ] (DxvkContext* ctx) {
           VkOffset3D offset = { 0, 0, 0 };
           VkExtent3D extent = cImageView->mipLevelExtent(0);
 
-          ctx->clearImageView(cImageView,
-            offset, extent, cClearValue);
+          ctx->clearImageView(
+            cImageView,
+            offset, extent,
+            cClearAspect,
+            cClearValue);
         });
       }
     }
@@ -1211,6 +1240,9 @@ namespace dxvk {
             cPackedFormat);
         }
       });
+
+      if (textureInfo->CanUpdateMappedBufferEarly())
+        UpdateMappedBuffer(textureInfo, subresource);
     }
   }
   
@@ -1427,8 +1459,7 @@ namespace dxvk {
           ID3D11Buffer*   pBufferForArgs,
           UINT            AlignedByteOffsetForArgs) {
     D3D10DeviceLock lock = LockContext();
-    
-    SetDrawBuffer(pBufferForArgs);
+    SetDrawBuffers(pBufferForArgs, nullptr);
     
     // If possible, batch up multiple indirect draw calls of
     // the same type into one single multiDrawIndirect call
@@ -1459,8 +1490,7 @@ namespace dxvk {
           ID3D11Buffer*   pBufferForArgs,
           UINT            AlignedByteOffsetForArgs) {
     D3D10DeviceLock lock = LockContext();
-    
-    SetDrawBuffer(pBufferForArgs);
+    SetDrawBuffers(pBufferForArgs, nullptr);
 
     // If possible, batch up multiple indirect draw calls of
     // the same type into one single multiDrawIndirect call
@@ -1506,8 +1536,7 @@ namespace dxvk {
           ID3D11Buffer*   pBufferForArgs,
           UINT            AlignedByteOffsetForArgs) {
     D3D10DeviceLock lock = LockContext();
-    
-    SetDrawBuffer(pBufferForArgs);
+    SetDrawBuffers(pBufferForArgs, nullptr);
     
     EmitCs([cOffset = AlignedByteOffsetForArgs]
     (DxvkContext* ctx) {
@@ -3118,17 +3147,6 @@ namespace dxvk {
     });
   }
 
-
-  void D3D11DeviceContext::ApplyUnusedState() {
-    // Initialize state that isn't exposed in D3D11
-    EmitCs([] (DxvkContext* ctx) {
-      DxvkExtraState xs;
-      xs.alphaCompareOp = VK_COMPARE_OP_ALWAYS;
-
-      ctx->setExtraState(xs);
-    });
-  }
-
   
   void D3D11DeviceContext::BindShader(
           DxbcProgramType       ShaderStage,
@@ -3188,14 +3206,14 @@ namespace dxvk {
   }
   
   
-  void D3D11DeviceContext::BindDrawBuffer(
-          D3D11Buffer*                      pBuffer) {
+  void D3D11DeviceContext::BindDrawBuffers(
+          D3D11Buffer*                     pBufferForArgs,
+          D3D11Buffer*                     pBufferForCount) {
     EmitCs([
-      cBufferSlice = pBuffer != nullptr
-        ? pBuffer->GetBufferSlice()
-        : DxvkBufferSlice()
+      cArgBuffer = pBufferForArgs  ? pBufferForArgs->GetBufferSlice()  : DxvkBufferSlice(),
+      cCntBuffer = pBufferForCount ? pBufferForCount->GetBufferSlice() : DxvkBufferSlice()
     ] (DxvkContext* ctx) {
-      ctx->bindDrawBuffer(cBufferSlice);
+      ctx->bindDrawBuffers(cArgBuffer, cCntBuffer);
     });
   }
 
@@ -3208,7 +3226,7 @@ namespace dxvk {
     EmitCs([
       cSlotId       = Slot,
       cBufferSlice  = pBuffer != nullptr ? pBuffer->GetBufferSlice(Offset) : DxvkBufferSlice(),
-      cStride       = pBuffer != nullptr ? Stride                          : 0
+      cStride       = Stride
     ] (DxvkContext* ctx) {
       ctx->bindVertexBuffer(cSlotId, cBufferSlice, cStride);
     });
@@ -3359,13 +3377,18 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::SetDrawBuffer(
-          ID3D11Buffer*                     pBuffer) {
-    auto buffer = static_cast<D3D11Buffer*>(pBuffer);
+  void D3D11DeviceContext::SetDrawBuffers(
+          ID3D11Buffer*                     pBufferForArgs,
+          ID3D11Buffer*                     pBufferForCount) {
+    auto argBuffer = static_cast<D3D11Buffer*>(pBufferForArgs);
+    auto cntBuffer = static_cast<D3D11Buffer*>(pBufferForCount);
 
-    if (m_state.id.argBuffer != buffer) {
-      m_state.id.argBuffer = buffer;
-      BindDrawBuffer(buffer);
+    if (m_state.id.argBuffer != argBuffer
+     || m_state.id.cntBuffer != cntBuffer) {
+      m_state.id.argBuffer = argBuffer;
+      m_state.id.cntBuffer = cntBuffer;
+
+      BindDrawBuffers(argBuffer, cntBuffer);
     }
   }
 
@@ -3569,10 +3592,10 @@ namespace dxvk {
     ApplyStencilRef();
     ApplyRasterizerState();
     ApplyViewportState();
-    ApplyUnusedState();
 
-    BindDrawBuffer(
-      m_state.id.argBuffer.ptr());
+    BindDrawBuffers(
+      m_state.id.argBuffer.ptr(),
+      m_state.id.cntBuffer.ptr());
     
     BindIndexBuffer(
       m_state.ia.indexBuffer.buffer.ptr(),
@@ -3657,6 +3680,40 @@ namespace dxvk {
         Bindings[i].ptr(),
         ctrSlotId + i, ~0u);
     }
+  }
+
+
+  void D3D11DeviceContext::UpdateMappedBuffer(
+    const D3D11CommonTexture*               pTexture,
+          VkImageSubresource                Subresource) {
+    Rc<DxvkImage>  mappedImage  = pTexture->GetImage();
+    Rc<DxvkBuffer> mappedBuffer = pTexture->GetMappedBuffer();
+
+    VkFormat packedFormat = m_parent->LookupPackedFormat(
+      pTexture->Desc()->Format, pTexture->GetFormatMode()).Format;
+    
+    VkExtent3D levelExtent = mappedImage->mipLevelExtent(Subresource.mipLevel);
+    
+    EmitCs([
+      cImageBuffer  = std::move(mappedBuffer),
+      cImage        = std::move(mappedImage),
+      cSubresources = vk::makeSubresourceLayers(Subresource),
+      cLevelExtent  = levelExtent,
+      cPackedFormat = packedFormat
+    ] (DxvkContext* ctx) {
+      if (cSubresources.aspectMask != (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+        ctx->copyImageToBuffer(
+          cImageBuffer, 0, VkExtent2D { 0u, 0u },
+          cImage, cSubresources, VkOffset3D { 0, 0, 0 },
+          cLevelExtent);
+      } else {
+        ctx->copyDepthStencilImageToPackedBuffer(
+          cImageBuffer, 0, cImage, cSubresources,
+          VkOffset2D { 0, 0 },
+          VkExtent2D { cLevelExtent.width, cLevelExtent.height },
+          cPackedFormat);
+      }
+    });
   }
   
   

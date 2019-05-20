@@ -60,6 +60,7 @@ namespace dxvk {
       DxvkContextFlag::GpDirtyStencilRef,
       DxvkContextFlag::GpDirtyViewport,
       DxvkContextFlag::GpDirtyDepthBias,
+      DxvkContextFlag::GpDirtyDepthBounds,
       DxvkContextFlag::CpDirtyPipeline,
       DxvkContextFlag::CpDirtyPipelineState,
       DxvkContextFlag::CpDirtyResources,
@@ -128,10 +129,13 @@ namespace dxvk {
   }
   
   
-  void DxvkContext::bindDrawBuffer(
-    const DxvkBufferSlice&      buffer) {
-    if (!m_state.id.argBuffer.matches(buffer)) {
-      m_state.id.argBuffer = buffer;
+  void DxvkContext::bindDrawBuffers(
+    const DxvkBufferSlice&      argBuffer,
+    const DxvkBufferSlice&      cntBuffer) {
+    if (!m_state.id.argBuffer.matches(argBuffer)
+     || !m_state.id.argBuffer.matches(cntBuffer)) {
+      m_state.id.argBuffer = argBuffer;
+      m_state.id.cntBuffer = cntBuffer;
 
       m_flags.set(DxvkContextFlag::DirtyDrawBuffer);
     }
@@ -237,6 +241,9 @@ namespace dxvk {
       m_state.vi.vertexBuffers[binding] = buffer;
       m_flags.set(DxvkContextFlag::GpDirtyVertexBuffers);
     }
+    
+    if (unlikely(!buffer.defined()))
+      stride = 0;
     
     if (m_state.vi.vertexStrides[binding] != stride) {
       m_state.vi.vertexStrides[binding] = stride;
@@ -582,7 +589,7 @@ namespace dxvk {
   void DxvkContext::clearRenderTarget(
     const Rc<DxvkImageView>&    imageView,
           VkImageAspectFlags    clearAspects,
-    const VkClearValue&         clearValue) {
+          VkClearValue          clearValue) {
     this->updateFramebuffer();
 
     // Prepare attachment ops
@@ -613,6 +620,12 @@ namespace dxvk {
      && imageView->imageInfo().type != VK_IMAGE_TYPE_3D) {
       colorOp.loadLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
       depthOp.loadLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+    
+    // Make sure the color components are ordered correctly
+    if (clearAspects & VK_IMAGE_ASPECT_COLOR_BIT) {
+      clearValue.color = util::swizzleClearColor(clearValue.color,
+        util::invertComponentMapping(imageView->info().swizzle));
     }
     
     // Check whether the render target view is an attachment
@@ -727,11 +740,17 @@ namespace dxvk {
     const Rc<DxvkImageView>&    imageView,
           VkOffset3D            offset,
           VkExtent3D            extent,
+          VkImageAspectFlags    aspect,
           VkClearValue          value) {
     const VkImageUsageFlags viewUsage = imageView->info().usage;
 
+    if (aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
+      value.color = util::swizzleClearColor(value.color,
+        util::invertComponentMapping(imageView->info().swizzle));
+    }
+    
     if (viewUsage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))
-      this->clearImageViewFb(imageView, offset, extent, value);
+      this->clearImageViewFb(imageView, offset, extent, aspect, value);
     else if (viewUsage & VK_IMAGE_USAGE_STORAGE_BIT)
       this->clearImageViewCs(imageView, offset, extent, value);
   }
@@ -1458,6 +1477,32 @@ namespace dxvk {
   }
   
   
+  void DxvkContext::drawIndirectCount(
+          VkDeviceSize      offset,
+          VkDeviceSize      countOffset,
+          uint32_t          maxCount,
+          uint32_t          stride) {
+    this->commitGraphicsState(false);
+    
+    if (this->validateGraphicsState()) {
+      auto argDescriptor = m_state.id.argBuffer.getDescriptor();
+      auto cntDescriptor = m_state.id.cntBuffer.getDescriptor();
+      
+      m_cmd->cmdDrawIndirectCount(
+        argDescriptor.buffer.buffer,
+        argDescriptor.buffer.offset + offset,
+        cntDescriptor.buffer.buffer,
+        cntDescriptor.buffer.offset + countOffset,
+        maxCount, stride);
+      
+      this->commitGraphicsPostBarriers();
+      this->trackDrawBuffer();
+    }
+    
+    m_cmd->addStatCtr(DxvkStatCounter::CmdDrawCalls, 1);
+  }
+  
+  
   void DxvkContext::drawIndexed(
           uint32_t indexCount,
           uint32_t instanceCount,
@@ -1492,6 +1537,32 @@ namespace dxvk {
         descriptor.buffer.buffer,
         descriptor.buffer.offset + offset,
         count, stride);
+      
+      this->commitGraphicsPostBarriers();
+      this->trackDrawBuffer();
+    }
+    
+    m_cmd->addStatCtr(DxvkStatCounter::CmdDrawCalls, 1);
+  }
+  
+  
+  void DxvkContext::drawIndexedIndirectCount(
+          VkDeviceSize      offset,
+          VkDeviceSize      countOffset,
+          uint32_t          maxCount,
+          uint32_t          stride) {
+    this->commitGraphicsState(true);
+    
+    if (this->validateGraphicsState()) {
+      auto argDescriptor = m_state.id.argBuffer.getDescriptor();
+      auto cntDescriptor = m_state.id.cntBuffer.getDescriptor();
+      
+      m_cmd->cmdDrawIndexedIndirectCount(
+        argDescriptor.buffer.buffer,
+        argDescriptor.buffer.offset + offset,
+        cntDescriptor.buffer.buffer,
+        cntDescriptor.buffer.offset + countOffset,
+        maxCount, stride);
       
       this->commitGraphicsPostBarriers();
       this->trackDrawBuffer();
@@ -1676,6 +1747,16 @@ namespace dxvk {
                     DxvkContextFlag::CpDirtyDescriptorOffsets);
       }
     }
+  }
+
+
+  void DxvkContext::pushConstants(
+          uint32_t                  offset,
+          uint32_t                  size,
+    const void*                     data) {
+    std::memcpy(&m_state.pc.data[offset], data, size);
+
+    m_flags.set(DxvkContextFlag::DirtyPushConstants);
   }
   
   
@@ -1963,6 +2044,20 @@ namespace dxvk {
       m_flags.set(DxvkContextFlag::GpDirtyDepthBias);
     }
   }
+
+
+  void DxvkContext::setDepthBounds(
+          DxvkDepthBounds     depthBounds) {
+    if (m_state.dyn.depthBounds != depthBounds) {
+      m_state.dyn.depthBounds = depthBounds;
+      m_flags.set(DxvkContextFlag::GpDirtyDepthBounds);
+    }
+
+    if (m_state.gp.state.dsEnableDepthBoundsTest != depthBounds.enableDepthBounds) {
+      m_state.gp.state.dsEnableDepthBoundsTest = depthBounds.enableDepthBounds;
+      m_flags.set(DxvkContextFlag::GpDirtyPipelineState);
+    }
+  }
   
   
   void DxvkContext::setStencilReference(
@@ -2008,8 +2103,10 @@ namespace dxvk {
       m_state.gp.state.ilDivisors[i]            = bindings[i].fetchRate;
     }
     
-    for (uint32_t i = bindingCount; i < m_state.gp.state.ilBindingCount; i++)
+    for (uint32_t i = bindingCount; i < m_state.gp.state.ilBindingCount; i++) {
       m_state.gp.state.ilBindings[i] = VkVertexInputBindingDescription();
+      m_state.gp.state.ilDivisors[i] = 0;
+    }
     
     m_state.gp.state.ilAttributeCount = attributeCount;
     m_state.gp.state.ilBindingCount   = bindingCount;
@@ -2072,11 +2169,13 @@ namespace dxvk {
   }
 
 
-  void DxvkContext::setExtraState(
-    const DxvkExtraState&     xs) {
-    m_state.gp.state.xsAlphaCompareOp = xs.alphaCompareOp;
-    
-    m_flags.set(DxvkContextFlag::GpDirtyPipelineState);
+  void DxvkContext::setSpecConstant(
+          uint32_t            index,
+          uint32_t            value) {
+    if (m_state.gp.state.scSpecConstants[index] != value) {
+      m_state.gp.state.scSpecConstants[index] = value;
+      m_flags.set(DxvkContextFlag::GpDirtyPipelineState);
+    }
   }
   
   
@@ -2118,7 +2217,7 @@ namespace dxvk {
     DxvkGpuEventHandle handle = m_gpuEvents->allocEvent();
 
     m_cmd->cmdSetEvent(handle.event,
-      VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
     m_cmd->trackGpuEvent(event->reset(handle));
     m_cmd->trackResource(event);
@@ -2149,6 +2248,7 @@ namespace dxvk {
     const Rc<DxvkImageView>&    imageView,
           VkOffset3D            offset,
           VkExtent3D            extent,
+          VkImageAspectFlags    aspect,
           VkClearValue          value) {
     this->updateFramebuffer();
 
@@ -2216,11 +2316,15 @@ namespace dxvk {
         imageView->imageInfo().layout,
         imageView->imageInfo().stages,
         imageView->imageInfo().access);
+    } else {
+      // Make sure the render pass is active so
+      // that we can actually perform the clear
+      this->startRenderPass();
     }
 
     // Perform the actual clear operation
     VkClearAttachment clearInfo;
-    clearInfo.aspectMask          = imageView->info().aspect;
+    clearInfo.aspectMask          = aspect;
     clearInfo.colorAttachment     = attachmentIndex;
     clearInfo.clearValue          = value;
 
@@ -3158,8 +3262,12 @@ namespace dxvk {
       m_state.cp.state.bsBindingMask.clear();
       m_state.cp.pipeline = m_pipeMgr->createComputePipeline(m_state.cp.cs.shader);
       
-      if (m_state.cp.pipeline != nullptr)
+      if (m_state.cp.pipeline != nullptr) {
         m_cmd->trackResource(m_state.cp.pipeline);
+
+        if (m_state.cp.pipeline->layout()->pushConstRange().size)
+          m_flags.set(DxvkContextFlag::DirtyPushConstants);
+      }
     }
   }
   
@@ -3193,6 +3301,7 @@ namespace dxvk {
       DxvkContextFlag::GpDirtyStencilRef,
       DxvkContextFlag::GpDirtyViewport,
       DxvkContextFlag::GpDirtyDepthBias,
+      DxvkContextFlag::GpDirtyDepthBounds,
       DxvkContextFlag::GpDirtyPredicate);
     
     m_gpActivePipeline = VK_NULL_HANDLE;
@@ -3213,6 +3322,9 @@ namespace dxvk {
       if (m_state.gp.pipeline != nullptr) {
         m_state.gp.flags = m_state.gp.pipeline->flags();
         m_cmd->trackResource(m_state.gp.pipeline);
+
+        if (m_state.gp.pipeline->layout()->pushConstRange().size)
+          m_flags.set(DxvkContextFlag::DirtyPushConstants);
       }
     }
   }
@@ -3224,14 +3336,10 @@ namespace dxvk {
       
       this->pauseTransformFeedback();
 
-      // Fix up vertex binding strides for unbound buffers
+      // Set up vertex buffer strides for active bindings
       for (uint32_t i = 0; i < m_state.gp.state.ilBindingCount; i++) {
         const uint32_t binding = m_state.gp.state.ilBindings[i].binding;
-        
-        m_state.gp.state.ilBindings[i].stride
-          = (m_state.vi.bindingMask & (1u << binding)) != 0
-            ? m_state.vi.vertexStrides[binding]
-            : 0;
+        m_state.gp.state.ilBindings[i].stride = m_state.vi.vertexStrides[binding];
       }
       
       for (uint32_t i = m_state.gp.state.ilBindingCount; i < MaxNumVertexBindings; i++)
@@ -3241,6 +3349,7 @@ namespace dxvk {
       // are not dynamic will be invalidated in the command buffer.
       m_flags.clr(DxvkContextFlag::GpDynamicBlendConstants,
                   DxvkContextFlag::GpDynamicDepthBias,
+                  DxvkContextFlag::GpDynamicDepthBounds,
                   DxvkContextFlag::GpDynamicStencilRef);
       
       m_flags.set(m_state.gp.state.useDynamicBlendConstants()
@@ -3250,6 +3359,10 @@ namespace dxvk {
       m_flags.set(m_state.gp.state.useDynamicDepthBias()
         ? DxvkContextFlag::GpDynamicDepthBias
         : DxvkContextFlag::GpDirtyDepthBias);
+      
+      m_flags.set(m_state.gp.state.useDynamicDepthBounds()
+        ? DxvkContextFlag::GpDynamicDepthBounds
+        : DxvkContextFlag::GpDirtyDepthBounds);
       
       m_flags.set(m_state.gp.state.useDynamicStencilRef()
         ? DxvkContextFlag::GpDynamicStencilRef
@@ -3576,56 +3689,35 @@ namespace dxvk {
   void DxvkContext::updateVertexBufferBindings() {
     if (m_flags.test(DxvkContextFlag::GpDirtyVertexBuffers)) {
       m_flags.clr(DxvkContextFlag::GpDirtyVertexBuffers);
+
+      if (unlikely(!m_state.gp.state.ilBindingCount))
+        return;
       
       std::array<VkBuffer,     MaxNumVertexBindings> buffers;
       std::array<VkDeviceSize, MaxNumVertexBindings> offsets;
       
       // Set buffer handles and offsets for active bindings
-      uint32_t bindingCount = 0;
-      uint32_t bindingMask  = 0;
-      
       for (uint32_t i = 0; i < m_state.gp.state.ilBindingCount; i++) {
-        const uint32_t binding = m_state.gp.state.ilBindings[i].binding;
-        bindingCount = std::max(bindingCount, binding + 1);
+        uint32_t binding = m_state.gp.state.ilBindings[i].binding;
         
-        if (m_state.vi.vertexBuffers[binding].defined()) {
+        if (likely(m_state.vi.vertexBuffers[binding].defined())) {
           auto vbo = m_state.vi.vertexBuffers[binding].getDescriptor();
           
-          buffers[binding] = vbo.buffer.buffer;
-          offsets[binding] = vbo.buffer.offset;
-          
-          bindingMask |= 1u << binding;
+          buffers[i] = vbo.buffer.buffer;
+          offsets[i] = vbo.buffer.offset;
           
           m_cmd->trackResource(m_state.vi.vertexBuffers[binding].buffer());
+        } else {
+          buffers[i] = m_device->dummyBufferHandle();
+          offsets[i] = 0;
         }
       }
       
-      // Bind a dummy buffer to the remaining bindings
-      uint32_t bindingsUsed = (1u << bindingCount) - 1u;
-      uint32_t bindingsSet  = bindingMask;
-      
-      while (bindingsSet != bindingsUsed) {
-        uint32_t binding = bit::tzcnt(~bindingsSet);
-        
-        buffers[binding] = m_device->dummyBufferHandle();
-        offsets[binding] = 0;
-        
-        bindingsSet |= 1u << binding;
-      }
-      
-      // Bind all vertex buffers at once
-      if (bindingCount != 0) {
-        m_cmd->cmdBindVertexBuffers(0, bindingCount,
-          buffers.data(), offsets.data());
-      }
-      
-      // If the set of active bindings has changed, we'll
-      // need to adjust the strides of the inactive ones
-      // and compile a new pipeline
-      if (m_state.vi.bindingMask != bindingMask) {
-        m_flags.set(DxvkContextFlag::GpDirtyPipelineState);
-        m_state.vi.bindingMask = bindingMask;
-      }
+      // Vertex bindigs get remapped when compiling the
+      // pipeline, so this actually does the right thing
+      m_cmd->cmdBindVertexBuffers(
+        0, m_state.gp.state.ilBindingCount,
+        buffers.data(), offsets.data());
     }
   }
   
@@ -3723,6 +3815,40 @@ namespace dxvk {
         m_state.dyn.depthBias.depthBiasClamp,
         m_state.dyn.depthBias.depthBiasSlope);
     }
+    
+    if (m_flags.all(DxvkContextFlag::GpDirtyDepthBounds,
+                    DxvkContextFlag::GpDynamicDepthBounds)) {
+      m_flags.clr(DxvkContextFlag::GpDirtyDepthBounds);
+
+      m_cmd->cmdSetDepthBounds(
+        m_state.dyn.depthBounds.minDepthBounds,
+        m_state.dyn.depthBounds.maxDepthBounds);
+    }
+  }
+
+
+  void DxvkContext::updatePushConstants(VkPipelineBindPoint bindPoint) {
+    if (m_flags.test(DxvkContextFlag::DirtyPushConstants)) {
+      m_flags.clr(DxvkContextFlag::DirtyPushConstants);
+
+      auto layout = bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS
+        ? (m_state.gp.pipeline != nullptr ? m_state.gp.pipeline->layout() : nullptr)
+        : (m_state.cp.pipeline != nullptr ? m_state.cp.pipeline->layout() : nullptr);
+      
+      if (!layout)
+        return;
+      
+      VkPushConstantRange pushConstRange = layout->pushConstRange();
+      if (!pushConstRange.size)
+        return;
+      
+      m_cmd->cmdPushConstants(
+        layout->pipelineLayout(),
+        pushConstRange.stageFlags,
+        pushConstRange.offset,
+        pushConstRange.size,
+        &m_state.pc.data[pushConstRange.offset]);
+    }
   }
   
   
@@ -3759,6 +3885,9 @@ namespace dxvk {
           DxvkContextFlag::CpDirtyDescriptorSet,
           DxvkContextFlag::CpDirtyDescriptorOffsets))
       this->updateComputeShaderDescriptors();
+    
+    if (m_flags.test(DxvkContextFlag::DirtyPushConstants))
+      this->updatePushConstants(VK_PIPELINE_BIND_POINT_COMPUTE);
   }
   
   
@@ -3801,8 +3930,12 @@ namespace dxvk {
           DxvkContextFlag::GpDirtyViewport,
           DxvkContextFlag::GpDirtyBlendConstants,
           DxvkContextFlag::GpDirtyStencilRef,
-          DxvkContextFlag::GpDirtyDepthBias))
+          DxvkContextFlag::GpDirtyDepthBias,
+          DxvkContextFlag::GpDirtyDepthBounds))
       this->updateDynamicState();
+    
+    if (m_flags.test(DxvkContextFlag::DirtyPushConstants))
+      this->updatePushConstants(VK_PIPELINE_BIND_POINT_GRAPHICS);
   }
   
   
@@ -4002,6 +4135,9 @@ namespace dxvk {
 
       if (m_state.id.argBuffer.defined())
         m_cmd->trackResource(m_state.id.argBuffer.buffer());
+
+      if (m_state.id.cntBuffer.defined())
+        m_cmd->trackResource(m_state.id.cntBuffer.buffer());
     }
   }
   

@@ -8,6 +8,7 @@
 
 #include "d3d11_annotation.h"
 #include "d3d11_cmd.h"
+#include "d3d11_context_ext.h"
 #include "d3d11_context_state.h"
 #include "d3d11_device_child.h"
 #include "d3d11_texture.h"
@@ -17,7 +18,7 @@ namespace dxvk {
   class D3D11Device;
   
   class D3D11DeviceContext : public D3D11DeviceChild<ID3D11DeviceContext1> {
-    
+    friend class D3D11DeviceContextExt;
   public:
     
     D3D11DeviceContext(
@@ -392,7 +393,7 @@ namespace dxvk {
             UINT                              NumBuffers,
             ID3D11Buffer* const*              ppConstantBuffers);
     
-    virtual void STDMETHODCALLTYPE GSSetConstantBuffers1(
+    void STDMETHODCALLTYPE GSSetConstantBuffers1(
             UINT                              StartSlot,
             UINT                              NumBuffers,
             ID3D11Buffer* const*              ppConstantBuffers,
@@ -645,6 +646,7 @@ namespace dxvk {
   protected:
     
     D3D11Device* const          m_parent;
+    D3D11DeviceContextExt       m_contextExt;
     D3D11UserDefinedAnnotation  m_annotation;
     D3D10Multithread            m_multithread;
     
@@ -677,8 +679,6 @@ namespace dxvk {
     
     void ApplyViewportState();
 
-    void ApplyUnusedState();
-    
     void BindShader(
             DxbcProgramType                   ShaderStage,
       const D3D11CommonShader*                pShaderModule);
@@ -686,8 +686,9 @@ namespace dxvk {
     void BindFramebuffer(
             BOOL                              Spill);
     
-    void BindDrawBuffer(
-            D3D11Buffer*                      pBuffer);
+    void BindDrawBuffers(
+            D3D11Buffer*                      pBufferForArgs,
+            D3D11Buffer*                      pBufferForCount);
     
     void BindVertexBuffer(
             UINT                              Slot,
@@ -729,8 +730,9 @@ namespace dxvk {
     void DiscardTexture(
             D3D11CommonTexture*               pTexture);
     
-    void SetDrawBuffer(
-            ID3D11Buffer*                     pBuffer);
+    void SetDrawBuffers(
+            ID3D11Buffer*                     pBufferForArgs,
+            ID3D11Buffer*                     pBufferForCount);
     
     void SetConstantBuffers(
             DxbcProgramType                   ShaderStage,
@@ -800,6 +802,10 @@ namespace dxvk {
     void RestoreUnorderedAccessViews(
             DxbcProgramType                   Stage,
             D3D11UnorderedAccessBindings&     Bindings);
+    
+    void UpdateMappedBuffer(
+      const D3D11CommonTexture*               pTexture,
+            VkImageSubresource                Subresource);
     
     bool ValidateRenderTargets(
             UINT                              NumViews,

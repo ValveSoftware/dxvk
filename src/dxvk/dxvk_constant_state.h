@@ -51,6 +51,30 @@ namespace dxvk {
           || depthBiasClamp    != other.depthBiasClamp;
     }
   };
+
+
+  /**
+   * \brief Depth bounds
+   * 
+   * Stores depth bounds values.
+   */
+  struct DxvkDepthBounds {
+    VkBool32            enableDepthBounds;
+    float               minDepthBounds;
+    float               maxDepthBounds;
+
+    bool operator == (const DxvkDepthBounds& other) const {
+      return enableDepthBounds == other.enableDepthBounds
+          && minDepthBounds == other.minDepthBounds
+          && maxDepthBounds == other.maxDepthBounds;
+    }
+
+    bool operator != (const DxvkDepthBounds& other) const {
+      return enableDepthBounds != other.enableDepthBounds
+          || minDepthBounds != other.minDepthBounds
+          || maxDepthBounds != other.maxDepthBounds;
+    }
+  };
   
   
   /**
@@ -178,18 +202,6 @@ namespace dxvk {
     
     std::array<DxvkVertexAttribute, DxvkLimits::MaxNumVertexAttributes> attributes;
     std::array<DxvkVertexBinding,   DxvkLimits::MaxNumVertexBindings>   bindings;
-  };
-  
-  
-  /**
-   * \brief Extra state
-   * 
-   * Additional state that will be passed to
-   * the graphics pipeline as specialization
-   * constants.
-   */
-  struct DxvkExtraState {
-    VkCompareOp           alphaCompareOp;
   };
   
 }

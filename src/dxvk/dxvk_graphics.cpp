@@ -57,9 +57,7 @@ namespace dxvk {
       pipeMgr->m_device->options().maxNumDynamicStorageBuffers);
     
     m_layout = new DxvkPipelineLayout(m_vkd,
-      m_slotMapping.bindingCount(),
-      m_slotMapping.bindingInfos(),
-      VK_PIPELINE_BIND_POINT_GRAPHICS);
+      m_slotMapping, VK_PIPELINE_BIND_POINT_GRAPHICS);
     
     m_vsIn  = vs != nullptr ? vs->interfaceSlots().inputSlots  : 0;
     m_fsOut = fs != nullptr ? fs->interfaceSlots().outputSlots : 0;
@@ -163,7 +161,7 @@ namespace dxvk {
     DxvkRenderPassFormat passFormat = renderPass.format();
     
     // Set up dynamic states as needed
-    std::array<VkDynamicState, 5> dynamicStates;
+    std::array<VkDynamicState, 6> dynamicStates;
     uint32_t                      dynamicStateCount = 0;
     
     dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_VIEWPORT;
@@ -171,6 +169,9 @@ namespace dxvk {
 
     if (state.useDynamicDepthBias())
       dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_DEPTH_BIAS;
+    
+    if (state.useDynamicDepthBounds())
+      dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;
     
     if (state.useDynamicBlendConstants())
       dynamicStates[dynamicStateCount++] = VK_DYNAMIC_STATE_BLEND_CONSTANTS;
@@ -189,8 +190,6 @@ namespace dxvk {
     // Set up some specialization constants
     DxvkSpecConstants specData;
     specData.set(uint32_t(DxvkSpecConstantId::RasterizerSampleCount), sampleCount, VK_SAMPLE_COUNT_1_BIT);
-    specData.set(uint32_t(DxvkSpecConstantId::AlphaTestEnable), state.xsAlphaCompareOp != VK_COMPARE_OP_ALWAYS, false);
-    specData.set(uint32_t(DxvkSpecConstantId::AlphaCompareOp),  state.xsAlphaCompareOp, VK_COMPARE_OP_ALWAYS);
     
     for (uint32_t i = 0; i < m_layout->bindingCount(); i++)
       specData.set(i, state.bsBindingMask.isBound(i), true);
@@ -204,6 +203,9 @@ namespace dxvk {
         specData.set(specId + 3, util::getComponentIndex(state.omComponentMapping[i].a, 3), 3u);
       }
     }
+
+    for (uint32_t i = 0; i < MaxNumSpecConstants; i++)
+      specData.set(getSpecId(i), state.scSpecConstants[i], 0u);
     
     VkSpecializationInfo specInfo = specData.getSpecInfo();
     
@@ -256,6 +258,22 @@ namespace dxvk {
     int32_t rasterizedStream = m_gs != nullptr
       ? m_gs->shaderOptions().rasterizedStream
       : 0;
+    
+    // Compact vertex bindings so that we can more easily update vertex buffers
+    std::array<VkVertexInputAttributeDescription, MaxNumVertexAttributes> viAttribs;
+    std::array<VkVertexInputBindingDescription,   MaxNumVertexBindings>   viBindings;
+    std::array<uint32_t,                          MaxNumVertexBindings>   viBindingMap = { };
+
+    for (uint32_t i = 0; i < state.ilBindingCount; i++) {
+      viBindings[i] = state.ilBindings[i];
+      viBindings[i].binding = i;
+      viBindingMap[state.ilBindings[i].binding] = i;
+    }
+
+    for (uint32_t i = 0; i < state.ilAttributeCount; i++) {
+      viAttribs[i] = state.ilAttributes[i];
+      viAttribs[i].binding = viBindingMap[state.ilAttributes[i].binding];
+    }
 
     VkPipelineVertexInputDivisorStateCreateInfoEXT viDivisorInfo;
     viDivisorInfo.sType                     = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT;
@@ -268,9 +286,9 @@ namespace dxvk {
     viInfo.pNext                            = &viDivisorInfo;
     viInfo.flags                            = 0;
     viInfo.vertexBindingDescriptionCount    = state.ilBindingCount;
-    viInfo.pVertexBindingDescriptions       = state.ilBindings;
+    viInfo.pVertexBindingDescriptions       = viBindings.data();
     viInfo.vertexAttributeDescriptionCount  = state.ilAttributeCount;
-    viInfo.pVertexAttributeDescriptions     = state.ilAttributes;
+    viInfo.pVertexAttributeDescriptions     = viAttribs.data();
     
     if (viDivisorCount == 0)
       viInfo.pNext = viDivisorInfo.pNext;
@@ -354,7 +372,7 @@ namespace dxvk {
     dsInfo.depthTestEnable        = state.dsEnableDepthTest;
     dsInfo.depthWriteEnable       = state.dsEnableDepthWrite && !util::isDepthReadOnlyLayout(passFormat.depth.layout);
     dsInfo.depthCompareOp         = state.dsDepthCompareOp;
-    dsInfo.depthBoundsTestEnable  = VK_FALSE;
+    dsInfo.depthBoundsTestEnable  = state.dsEnableDepthBoundsTest;
     dsInfo.stencilTestEnable      = state.dsEnableStencilTest;
     dsInfo.front                  = state.dsStencilOpFront;
     dsInfo.back                   = state.dsStencilOpBack;

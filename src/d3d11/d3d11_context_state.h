@@ -104,6 +104,7 @@ namespace dxvk {
 
   struct D3D11ContextStateID {
     Com<D3D11Buffer> argBuffer = nullptr;
+    Com<D3D11Buffer> cntBuffer = nullptr;
   };
   
   
@@ -117,8 +118,8 @@ namespace dxvk {
   
   
   struct D3D11ContextStateOM {
-    std::array<Com<D3D11RenderTargetView>, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> renderTargetViews;
-    Com<D3D11DepthStencilView>                                                     depthStencilView;
+    std::array<Com<D3D11RenderTargetView, false>, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> renderTargetViews;
+    Com<D3D11DepthStencilView, false>                                                     depthStencilView;
     
     Com<D3D11BlendState>        cbState = nullptr;
     Com<D3D11DepthStencilState> dsState = nullptr;

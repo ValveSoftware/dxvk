@@ -31,12 +31,7 @@ namespace dxvk {
     // Specialization constants for pipeline state
     SpecConstantRangeStart      = ColorComponentMappings + MaxNumRenderTargets * 4,
     RasterizerSampleCount       = SpecConstantRangeStart + 0,
-    AlphaTestEnable,
-    AlphaCompareOp,
-
-    /// Lowest and highest known spec constant IDs
-    SpecConstantIdMin           = RasterizerSampleCount,
-    SpecConstantIdMax           = AlphaCompareOp,
+    FirstPipelineConstant
   };
   
   
@@ -48,8 +43,10 @@ namespace dxvk {
    * purely for validation purposes.
    */
   struct DxvkInterfaceSlots {
-    uint32_t inputSlots  = 0;
-    uint32_t outputSlots = 0;
+    uint32_t inputSlots      = 0;
+    uint32_t outputSlots     = 0;
+    uint32_t pushConstOffset = 0;
+    uint32_t pushConstSize   = 0;
   };
 
 

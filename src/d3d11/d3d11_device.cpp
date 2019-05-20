@@ -1411,6 +1411,7 @@ namespace dxvk {
     enabled.core.features.robustBufferAccess                      = VK_TRUE;
     enabled.core.features.shaderStorageImageExtendedFormats       = VK_TRUE;
     enabled.core.features.shaderStorageImageWriteWithoutFormat    = VK_TRUE;
+    enabled.core.features.depthBounds                             = supported.core.features.depthBounds;
 
     enabled.extMemoryPriority.memoryPriority                      = supported.extMemoryPriority.memoryPriority;
 
@@ -1745,6 +1746,58 @@ namespace dxvk {
 
 
 
+  D3D11DeviceExt::D3D11DeviceExt(
+          D3D11DXGIDevice*        pContainer,
+          D3D11Device*            pDevice)
+  : m_container(pContainer), m_device(pDevice) {
+    
+  }
+  
+  
+  ULONG STDMETHODCALLTYPE D3D11DeviceExt::AddRef() {
+    return m_container->AddRef();
+  }
+  
+  
+  ULONG STDMETHODCALLTYPE D3D11DeviceExt::Release() {
+    return m_container->Release();
+  }
+  
+  
+  HRESULT STDMETHODCALLTYPE D3D11DeviceExt::QueryInterface(
+          REFIID                  riid,
+          void**                  ppvObject) {
+    return m_container->QueryInterface(riid, ppvObject);
+  }
+  
+  
+  BOOL STDMETHODCALLTYPE D3D11DeviceExt::GetExtensionSupport(
+          D3D11_VK_EXTENSION      Extension) {
+    const auto& deviceFeatures = m_device->GetDXVKDevice()->features();
+    const auto& deviceExtensions = m_device->GetDXVKDevice()->extensions();
+    
+    switch (Extension) {
+      case D3D11_VK_EXT_BARRIER_CONTROL:
+        return true;
+      
+      case D3D11_VK_EXT_MULTI_DRAW_INDIRECT:
+        return deviceFeatures.core.features.multiDrawIndirect;
+        
+      case D3D11_VK_EXT_MULTI_DRAW_INDIRECT_COUNT:
+        return deviceFeatures.core.features.multiDrawIndirect
+            && deviceExtensions.khrDrawIndirectCount;
+      
+      case D3D11_VK_EXT_DEPTH_BOUNDS:
+        return deviceFeatures.core.features.depthBounds;
+
+      default:
+        return false;
+    }
+  }
+  
+  
+  
+  
   WineDXGISwapChainFactory::WineDXGISwapChainFactory(
           D3D11DXGIDevice*        pContainer,
           D3D11Device*            pDevice)
@@ -1829,6 +1882,7 @@ namespace dxvk {
     m_dxvkAdapter   (pDxvkAdapter),
     m_dxvkDevice    (CreateDevice(FeatureLevel)),
     m_d3d11Device   (this, FeatureLevel, FeatureFlags),
+    m_d3d11DeviceExt(this, &m_d3d11Device),
     m_d3d11Interop  (this, &m_d3d11Device),
     m_wineFactory   (this, &m_d3d11Device),
     m_frameLatencyCap(m_d3d11Device.GetOptions()->maxFrameLatency) {
@@ -1872,6 +1926,11 @@ namespace dxvk {
     if (riid == __uuidof(ID3D11Device)
      || riid == __uuidof(ID3D11Device1)) {
       *ppvObject = ref(&m_d3d11Device);
+      return S_OK;
+    }
+    
+    if (riid == __uuidof(ID3D11VkExtDevice)) {
+      *ppvObject = ref(&m_d3d11DeviceExt);
       return S_OK;
     }
     

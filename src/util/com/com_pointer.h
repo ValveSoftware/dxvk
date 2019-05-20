@@ -5,14 +5,49 @@
 namespace dxvk {
   
   /**
+   * \brief Increment public ref count
+   * 
+   * If the pointer is not \c nullptr, this 
+   * calls \c AddRef for the given object.
+   * \returns Pointer to the object
+   */
+  template<typename T>
+  T* ref(T* object) {
+    if (object != nullptr)
+      object->AddRef();
+    return object;
+  }
+
+
+  /**
+   * \brief Ref count methods for public references
+   */
+  template<typename T, bool Public>
+  struct ComRef_ {
+    static void incRef(T* ptr) { ptr->AddRef(); }
+    static void decRef(T* ptr) { ptr->Release(); }
+  };
+
+
+  /**
+   * \brief Ref count methods for private references
+   */
+  template<typename T>
+  struct ComRef_<T, false> {
+    static void incRef(T* ptr) { ptr->AddRefPrivate(); }
+    static void decRef(T* ptr) { ptr->ReleasePrivate(); }
+  };
+
+  
+  /**
    * \brief COM pointer
    * 
    * Implements automatic reference
    * counting for COM objects.
    */
-  template<typename T>
+  template<typename T, bool Public = true>
   class Com {
-    
+    using ComRef = ComRef_<T, Public>;
   public:
     
     Com() { }
@@ -80,8 +115,7 @@ namespace dxvk {
     bool operator != (std::nullptr_t) const { return m_ptr != nullptr; }
     
     T* ref() const {
-      this->incRef();
-      return m_ptr;
+      return dxvk::ref(m_ptr);
     }
     
     T* ptr() const {
@@ -94,21 +128,14 @@ namespace dxvk {
     
     void incRef() const {
       if (m_ptr != nullptr)
-        m_ptr->AddRef();
+        ComRef::incRef(m_ptr);
     }
     
     void decRef() const {
       if (m_ptr != nullptr)
-        m_ptr->Release();
+        ComRef::decRef(m_ptr);
     }
     
   };
-  
-  template<typename T>
-  T* ref(T* object) {
-    if (object != nullptr)
-      object->AddRef();
-    return object;
-  }
   
 }

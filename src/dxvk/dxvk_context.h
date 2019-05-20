@@ -105,12 +105,14 @@ namespace dxvk {
     /**
      * \brief Binds indirect argument buffer
      * 
-     * Sets the buffer that is going to be used
+     * Sets the buffers that are going to be used
      * for indirect draw and dispatch operations.
-     * \param [in] buffer New argument buffer
+     * \param [in] argBuffer New argument buffer
+     * \param [in] cntBuffer New count buffer
      */
-    void bindDrawBuffer(
-      const DxvkBufferSlice&      buffer);
+    void bindDrawBuffers(
+      const DxvkBufferSlice&      argBuffer,
+      const DxvkBufferSlice&      cntBuffer);
     
     /**
      * \brief Binds index buffer
@@ -287,7 +289,7 @@ namespace dxvk {
     void clearRenderTarget(
       const Rc<DxvkImageView>&    imageView,
             VkImageAspectFlags    clearAspects,
-      const VkClearValue&         clearValue);
+            VkClearValue          clearValue);
     
     /**
      * \brief Clears an image view
@@ -298,12 +300,14 @@ namespace dxvk {
      * \param [in] imageView The image view
      * \param [in] offset Offset of the rect to clear
      * \param [in] extent Extent of the rect to clear
+     * \param [in] aspect Aspect mask to clear
      * \param [in] value The clear value
      */
     void clearImageView(
       const Rc<DxvkImageView>&    imageView,
             VkOffset3D            offset,
             VkExtent3D            extent,
+            VkImageAspectFlags    aspect,
             VkClearValue          value);
     
     /**
@@ -525,17 +529,33 @@ namespace dxvk {
             uint32_t          firstInstance);
     
     /**
-     * \brief Indirect indexed draw call
+     * \brief Indirect draw call
      * 
      * Takes arguments from a buffer. The structure stored
      * in the buffer must be of type \c VkDrawIndirectCommand.
      * \param [in] offset Draw buffer offset
-     * \param [in] count Number of dispatch calls
+     * \param [in] count Number of draws
      * \param [in] stride Stride between dispatch calls
      */
     void drawIndirect(
             VkDeviceSize      offset,
             uint32_t          count,
+            uint32_t          stride);
+    
+    /**
+     * \brief Indirect draw call
+     * 
+     * Takes arguments from a buffer. The structure stored
+     * in the buffer must be of type \c VkDrawIndirectCommand.
+     * \param [in] offset Draw buffer offset
+     * \param [in] countOffset Draw count offset
+     * \param [in] maxCount Maximum number of draws
+     * \param [in] stride Stride between dispatch calls
+     */
+    void drawIndirectCount(
+            VkDeviceSize      offset,
+            VkDeviceSize      countOffset,
+            uint32_t          maxCount,
             uint32_t          stride);
     
     /**
@@ -560,12 +580,28 @@ namespace dxvk {
      * Takes arguments from a buffer. The structure type for
      * the draw buffer is \c VkDrawIndexedIndirectCommand.
      * \param [in] offset Draw buffer offset
-     * \param [in] count Number of dispatch calls
+     * \param [in] count Number of draws
      * \param [in] stride Stride between dispatch calls
      */
     void drawIndexedIndirect(
             VkDeviceSize      offset,
             uint32_t          count,
+            uint32_t          stride);
+    
+    /**
+     * \brief Indirect indexed draw call
+     * 
+     * Takes arguments from a buffer. The structure type for
+     * the draw buffer is \c VkDrawIndexedIndirectCommand.
+     * \param [in] offset Draw buffer offset
+     * \param [in] countOffset Draw count offset
+     * \param [in] maxCount Maximum number of draws
+     * \param [in] stride Stride between dispatch calls
+     */
+    void drawIndexedIndirectCount(
+            VkDeviceSize      offset,
+            VkDeviceSize      countOffset,
+            uint32_t          maxCount,
             uint32_t          stride);
     
     /**
@@ -618,6 +654,19 @@ namespace dxvk {
     void invalidateBuffer(
       const Rc<DxvkBuffer>&           buffer,
       const DxvkBufferSliceHandle&    slice);
+    
+    /**
+     * \brief Updates push constants
+     * 
+     * Updates the given push constant range.
+     * \param [in] offset Byte offset of data to update
+     * \param [in] size Number of bytes to update
+     * \param [in] data Pointer to raw data
+     */
+    void pushConstants(
+            uint32_t                  offset,
+            uint32_t                  size,
+      const void*                     data);
     
     /**
      * \brief Resolves a multisampled image resource
@@ -745,6 +794,16 @@ namespace dxvk {
             DxvkDepthBias       depthBias);
     
     /**
+     * \brief Sets depth bounds
+     *
+     * Enables or disables the depth bounds test,
+     * and updates the values if necessary.
+     * \param [in] depthBounds Depth bounds
+     */
+    void setDepthBounds(
+            DxvkDepthBounds     depthBounds);
+    
+    /**
      * \brief Sets stencil reference
      * 
      * Sets the reference value for stencil compare operations.
@@ -813,11 +872,17 @@ namespace dxvk {
       const DxvkBlendMode&      blendMode);
     
     /**
-     * \brief Sets extra pipeline state
-     * \param [in] xs New state object
+     * \brief Sets specialization constants
+     * 
+     * Replaces current specialization constants with
+     * the given list of constant entries. The specId
+     * in the shader can be computed with \c getSpecId.
+     * \param [in] index Constant index
+     * \param [in] value Constant value
      */
-    void setExtraState(
-      const DxvkExtraState&     xs);
+    void setSpecConstant(
+            uint32_t            index,
+            uint32_t            value);
     
     /**
      * \brief Sets predicate
@@ -920,6 +985,7 @@ namespace dxvk {
       const Rc<DxvkImageView>&    imageView,
             VkOffset3D            offset,
             VkExtent3D            extent,
+            VkImageAspectFlags    aspect,
             VkClearValue          value);
     
     void clearImageViewCs(
@@ -1024,6 +1090,9 @@ namespace dxvk {
     void updateConditionalRendering();
     
     void updateDynamicState();
+
+    void updatePushConstants(
+            VkPipelineBindPoint     bindPoint);
     
     bool validateComputeState();
     bool validateGraphicsState();
