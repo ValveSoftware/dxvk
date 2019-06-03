@@ -48,7 +48,23 @@ else
   if dxvk_compiler.get_id() == 'msvc'
     wrc = find_program('rc')
   else
-    wrc = cpu_family == 'x86_64' ? find_program('x86_64-w64-mingw32-windres') : find_program('i686-w64-mingw32-windres')
+    crosscc_prefix = meson.get_cross_property('crosscc_prefix')
+    if crosscc_prefix.length() > 0
+      wrc = find_program(crosscc_prefix[0])
+      wrc_opts = []
+      skip = true
+      foreach o : crosscc_prefix
+        if skip
+          skip = false
+          continue
+        endif
+        wrc_opts += o
+      endforeach
+      wrc_opts += cpu_family == 'x86_64' ? 'x86_64-w64-mingw32-windres' : 'i686-w64-mingw32-windres'
+    else
+      wrc = cpu_family == 'x86_64' ? find_program('x86_64-w64-mingw32-windres') : find_program('i686-w64-mingw32-windres')
+      wrc_opts = []
+    endif
   endif
 
   lib_vulkan  = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)
@@ -86,7 +102,7 @@ if dxvk_compiler.get_id() == 'msvc'
 else
   wrc_generator = generator(wrc,
   output    : [ '@BASENAME@' + res_ext ],
-  arguments : [ '-i', '@INPUT@', '-o', '@OUTPUT@' ])
+  arguments : wrc_opts + [ '-i', '@INPUT@', '-o', '@OUTPUT@' ])
 endif
 
 dxvk_version = vcs_tag(

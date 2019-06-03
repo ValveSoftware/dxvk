@@ -1,8 +1,8 @@
 [binaries]
-c = 'i686-w64-mingw32-gcc'
-cpp = 'i686-w64-mingw32-g++'
-ar = 'i686-w64-mingw32-ar'
-strip = 'i686-w64-mingw32-strip'
+c = [@PROTON_DXVK_CROSSCC_PREFIX@'i686-w64-mingw32-gcc']
+cpp = [@PROTON_DXVK_CROSSCC_PREFIX@'i686-w64-mingw32-g++']
+ar = [@PROTON_DXVK_CROSSCC_PREFIX@'i686-w64-mingw32-ar']
+strip = [@PROTON_DXVK_CROSSCC_PREFIX@'i686-w64-mingw32-strip']
 
 [properties]
 c_args=['-msse', '-msse2']
@@ -10,6 +10,7 @@ cpp_args=['-msse', '-msse2']
 c_link_args = ['-static', '-static-libgcc']
 cpp_link_args = ['-static', '-static-libgcc', '-static-libstdc++', '-Wl,--add-stdcall-alias,--enable-stdcall-fixup']
 needs_exe_wrapper = true
+crosscc_prefix = [@PROTON_DXVK_CROSSCC_PREFIX@]
 
 [host_machine]
 system = 'windows'
