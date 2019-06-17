@@ -209,6 +209,7 @@ namespace dxvk {
         pDesc->Format        = resourceDesc.Format;
         pDesc->ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D;
         pDesc->Texture3D.MipSlice = 0;
+        pDesc->Texture3D.WSize    = resourceDesc.Depth;
       } return S_OK;
       
       default:
@@ -275,7 +276,7 @@ namespace dxvk {
         }
         
         format    = resourceDesc.Format;
-        numLayers = resourceDesc.Depth >> pDesc->Texture3D.MipSlice;
+        numLayers = std::max(resourceDesc.Depth >> pDesc->Texture3D.MipSlice, 1u);
       } break;
       
       default:
@@ -286,6 +287,11 @@ namespace dxvk {
       pDesc->Format = format;
     
     switch (pDesc->ViewDimension) {
+      case D3D11_UAV_DIMENSION_BUFFER:
+        if (pDesc->Buffer.NumElements == 0)
+          return E_INVALIDARG;
+        break;
+
       case D3D11_UAV_DIMENSION_TEXTURE1DARRAY:
         if (pDesc->Texture1DArray.ArraySize > numLayers - pDesc->Texture1DArray.FirstArraySlice)
           pDesc->Texture1DArray.ArraySize = numLayers - pDesc->Texture1DArray.FirstArraySlice;

@@ -28,10 +28,14 @@ namespace dxvk {
       = (devInfo.coreSubgroup.subgroupSize >= 4)
      && (devInfo.coreSubgroup.supportedStages     & VK_SHADER_STAGE_FRAGMENT_BIT)
      && (devInfo.coreSubgroup.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT);
-    useRawSsbo
-      = (devInfo.core.properties.limits.minStorageBufferOffsetAlignment <= sizeof(uint32_t));
     useSdivForBufferIndex
       = adapter->matchesDriver(DxvkGpuVendor::Nvidia, VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR, 0, 0);
+    
+    switch (device->config().useRawSsbo) {
+      case Tristate::Auto:  minSsboAlignment = devInfo.core.properties.limits.minStorageBufferOffsetAlignment; break;
+      case Tristate::True:  minSsboAlignment =  4u; break;
+      case Tristate::False: minSsboAlignment = ~0u; break;
+    }
     
     strictDivision           = options.strictDivision;
     zeroInitWorkgroupMemory  = options.zeroInitWorkgroupMemory;
@@ -45,9 +49,12 @@ namespace dxvk {
      || adapter->matchesDriver(DxvkGpuVendor::Nvidia, VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR, 0, 0))
       useSubgroupOpsForEarlyDiscard = false;
     
+    // Disable atomic counters on older RADV versions
+    if (adapter->matchesDriver(DxvkGpuVendor::Amd, VK_DRIVER_ID_MESA_RADV_KHR, 0, VK_MAKE_VERSION(19, 1, 0)))
+      useSubgroupOpsForAtomicCounters = false;
+    
     // Apply shader-related options
     applyTristate(useSubgroupOpsForEarlyDiscard, device->config().useEarlyDiscard);
-    applyTristate(useRawSsbo,                    device->config().useRawSsbo);
   }
   
 }

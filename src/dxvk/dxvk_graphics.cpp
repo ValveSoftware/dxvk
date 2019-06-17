@@ -232,11 +232,21 @@ namespace dxvk {
     // Fix up color write masks using the component mappings
     std::array<VkPipelineColorBlendAttachmentState, MaxNumRenderTargets> omBlendAttachments;
 
+    const VkColorComponentFlags fullMask
+      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+      | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
     for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
       omBlendAttachments[i] = state.omBlendAttachments[i];
-      omBlendAttachments[i].colorWriteMask = util::remapComponentMask(
-        state.omBlendAttachments[i].colorWriteMask,
-        state.omComponentMapping[i]);
+
+      if (state.omBlendAttachments[i].colorWriteMask == fullMask) {
+        // Avoid unnecessary partial color write masks
+        omBlendAttachments[i].colorWriteMask = fullMask;
+      } else {
+        omBlendAttachments[i].colorWriteMask = util::remapComponentMask(
+          state.omBlendAttachments[i].colorWriteMask,
+          state.omComponentMapping[i]);
+      }
       
       if ((m_fsOut & (1 << i)) == 0)
         omBlendAttachments[i].colorWriteMask = 0;
@@ -247,10 +257,11 @@ namespace dxvk {
     uint32_t                                                                    viDivisorCount = 0;
     
     for (uint32_t i = 0; i < state.ilBindingCount; i++) {
-      if (state.ilBindings[i].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE) {
+      if (state.ilBindings[i].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE
+       && state.ilDivisors[i]           != 1) {
         const uint32_t id = viDivisorCount++;
         
-        viDivisorDesc[id].binding = state.ilBindings[i].binding;
+        viDivisorDesc[id].binding = i;
         viDivisorDesc[id].divisor = state.ilDivisors[i];
       }
     }

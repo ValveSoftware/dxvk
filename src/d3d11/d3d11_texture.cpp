@@ -164,8 +164,14 @@ namespace dxvk {
     }
     
     // If necessary, create the mapped linear buffer
-    if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER)
-      m_buffer = CreateMappedBuffer();
+    for (uint32_t i = 0; i < m_desc.ArraySize; i++) {
+      for (uint32_t j = 0; j < m_desc.MipLevels; j++) {
+        if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER)
+          m_buffers.push_back(CreateMappedBuffer(j));
+        if (m_mapMode != D3D11_COMMON_TEXTURE_MAP_MODE_NONE)
+          m_mapTypes.push_back(D3D11_MAP(~0u));
+      }
+    }
     
     // Create the image on a host-visible memory type
     // in case it is going to be mapped directly.
@@ -271,6 +277,11 @@ namespace dxvk {
     if (FAILED(DecodeSampleCount(pDesc->SampleDesc.Count, nullptr)))
       return E_INVALIDARG;
     
+    if ((pDesc->MiscFlags & D3D11_RESOURCE_MISC_GENERATE_MIPS)
+     && (pDesc->BindFlags & (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
+                         != (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
+      return E_INVALIDARG;
+
     // Use the maximum possible mip level count if the supplied
     // mip level count is either unspecified (0) or invalid
     const uint32_t maxMipLevelCount = pDesc->SampleDesc.Count <= 1
@@ -404,13 +415,16 @@ namespace dxvk {
   }
   
   
-  Rc<DxvkBuffer> D3D11CommonTexture::CreateMappedBuffer() const {
+  Rc<DxvkBuffer> D3D11CommonTexture::CreateMappedBuffer(UINT MipLevel) const {
     const DxvkFormatInfo* formatInfo = imageFormatInfo(
       m_device->LookupPackedFormat(m_desc.Format, GetFormatMode()).Format);
     
-    const VkExtent3D blockCount = util::computeBlockCount(
+    const VkExtent3D mipExtent = util::computeMipLevelExtent(
       VkExtent3D { m_desc.Width, m_desc.Height, m_desc.Depth },
-      formatInfo->blockSize);
+      MipLevel);
+    
+    const VkExtent3D blockCount = util::computeBlockCount(
+      mipExtent, formatInfo->blockSize);
     
     DxvkBufferCreateInfo info;
     info.size   = formatInfo->elementSize
@@ -744,6 +758,7 @@ namespace dxvk {
     const D3D11_COMMON_TEXTURE_DESC*  pDesc)
   : m_texture (pDevice, pDesc, D3D11_RESOURCE_DIMENSION_TEXTURE1D),
     m_interop (this, &m_texture),
+    m_surface (this, &m_texture),
     m_resource(this),
     m_d3d10   (this, pDevice->GetD3D10Interface()) {
     
@@ -776,6 +791,14 @@ namespace dxvk {
       return S_OK;
     }
     
+    if (m_surface.isSurfaceCompatible()
+     && (riid == __uuidof(IDXGISurface)
+      || riid == __uuidof(IDXGISurface1)
+      || riid == __uuidof(IDXGISurface2))) {
+      *ppvObject = ref(&m_surface);
+      return S_OK;
+    }
+
     if (riid == __uuidof(IDXGIObject)
      || riid == __uuidof(IDXGIDeviceSubObject)
      || riid == __uuidof(IDXGIResource)

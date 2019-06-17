@@ -333,6 +333,23 @@ namespace dxvk {
     explicit DxvkBufferSlice(const Rc<DxvkBuffer>& buffer)
     : DxvkBufferSlice(buffer, 0, buffer->info().size) { }
 
+    DxvkBufferSlice(const DxvkBufferSlice& ) = default;
+    DxvkBufferSlice(      DxvkBufferSlice&&) = default;
+
+    DxvkBufferSlice& operator = (const DxvkBufferSlice& other) {
+      if (m_buffer != other.m_buffer)
+        m_buffer = other.m_buffer;
+      m_offset = other.m_offset;
+      m_length = other.m_length;
+      return *this;
+    }
+
+    DxvkBufferSlice& operator = (DxvkBufferSlice&&) = default;
+
+    /**
+     * \brief Buffer slice offset and length
+     * \returns Buffer slice offset and length
+     */
     size_t offset() const { return m_offset; }
     size_t length() const { return m_length; }
 
@@ -434,7 +451,7 @@ namespace dxvk {
         ? m_buffer->mapPtr(m_offset + offset)
         : nullptr;
     }
-    
+
     /**
      * \brief Checks whether two slices are equal
      * 
@@ -446,6 +463,32 @@ namespace dxvk {
     bool matches(const DxvkBufferSlice& other) const {
       return this->m_buffer == other.m_buffer
           && this->m_offset == other.m_offset
+          && this->m_length == other.m_length;
+    }
+
+    /**
+     * \brief Checks whether two slices are from the same buffer
+     *
+     * This returns \c true if the two slices are taken
+     * from the same buffer, but may have different ranges.
+     * \param [in] other The slice to compare to
+     * \returns \c true if the buffer objects are the same
+     */
+    bool matchesBuffer(const DxvkBufferSlice& other) const {
+      return this->m_buffer == other.m_buffer;
+    }
+
+    /**
+     * \brief Checks whether two slices have the same range
+     * 
+     * This returns \c true if the two slices have the same
+     * offset and size, even if the buffers are different.
+     * May be useful if the buffers are know to be the same.
+     * \param [in] other The slice to compare to
+     * \returns \c true if the buffer objects are the same
+     */
+    bool matchesRange(const DxvkBufferSlice& other) const {
+      return this->m_offset == other.m_offset
           && this->m_length == other.m_length;
     }
     

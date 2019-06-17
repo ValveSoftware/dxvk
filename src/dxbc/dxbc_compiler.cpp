@@ -985,6 +985,7 @@ namespace dxvk {
       uav.sampledTypeId = sampledTypeId;
       uav.imageTypeId   = imageTypeId;
       uav.structStride  = 0;
+      uav.structAlign   = 0;
       m_uavs.at(registerId) = uav;
     } else {
       DxbcShaderResource res;
@@ -998,6 +999,7 @@ namespace dxvk {
       res.colorTypeId   = imageTypeId;
       res.depthTypeId   = 0;
       res.structStride  = 0;
+      res.structAlign   = 0;
       
       if ((sampledType == DxbcScalarType::Float32)
        && (resourceType == DxbcResourceDim::Texture2D
@@ -1065,12 +1067,19 @@ namespace dxvk {
       ? ins.imm[0].u32
       : 0;
     
+    uint32_t resAlign = isStructured
+      ? (resStride & -resStride)
+      : 16;
+    
     // Compute the DXVK binding slot index for the resource.
     uint32_t bindingId = isUav
       ? computeUavBinding(m_programInfo.type(), registerId)
       : computeSrvBinding(m_programInfo.type(), registerId);
     
-    if (m_moduleInfo.options.useRawSsbo) {
+    // Test whether we should use a raw SSBO for this resource
+    bool useRawSsbo = m_moduleInfo.options.minSsboAlignment <= resAlign;
+    
+    if (useRawSsbo) {
       uint32_t elemType   = getScalarTypeId(DxbcScalarType::Uint32);
       uint32_t arrayType  = m_module.defRuntimeArrayTypeUnique(elemType);
       uint32_t structType = m_module.defStructTypeUnique(1, &arrayType);
@@ -1132,6 +1141,7 @@ namespace dxvk {
       uav.sampledTypeId = sampledTypeId;
       uav.imageTypeId   = resTypeId;
       uav.structStride  = resStride;
+      uav.structAlign   = resAlign;
       m_uavs.at(registerId) = uav;
     } else {
       DxbcShaderResource res;
@@ -1145,13 +1155,14 @@ namespace dxvk {
       res.colorTypeId   = resTypeId;
       res.depthTypeId   = 0;
       res.structStride  = resStride;
+      res.structAlign   = resAlign;
       m_textures.at(registerId) = res;
     }
     
     // Store descriptor info for the shader interface
     DxvkResourceSlot resource;
     resource.slot = bindingId;
-    resource.type = m_moduleInfo.options.useRawSsbo
+    resource.type = useRawSsbo
       ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
       : (isUav
         ? VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
@@ -2684,8 +2695,8 @@ namespace dxvk {
     //    (src0) The buffer register to query
     const DxbcBufferInfo bufferInfo = getBufferInfo(ins.src[0]);
 
-    bool isSsbo = m_moduleInfo.options.useRawSsbo
-      && bufferInfo.type != DxbcResourceType::Typed;
+    bool isSsbo = m_moduleInfo.options.minSsboAlignment <= bufferInfo.align
+               && bufferInfo.type != DxbcResourceType::Typed;
     
     // We'll store this as a scalar unsigned integer
     DxbcRegisterValue result = isSsbo
@@ -4826,7 +4837,7 @@ namespace dxvk {
     // For UAVs and shared memory, different methods
     // of obtaining the final pointer are used.
     bool isTgsm = operand.type == DxbcOperandType::ThreadGroupSharedMemory;
-    bool isSsbo = m_moduleInfo.options.useRawSsbo
+    bool isSsbo = m_moduleInfo.options.minSsboAlignment <= resourceInfo.align
                && resourceInfo.type != DxbcResourceType::Typed
                && !isTgsm;
     
@@ -4891,7 +4902,8 @@ namespace dxvk {
     // Shared memory is the only type of buffer that
     // is not accessed through a texel buffer view
     bool isTgsm = operand.type == DxbcOperandType::ThreadGroupSharedMemory;
-    bool isSsbo = m_moduleInfo.options.useRawSsbo && !isTgsm;
+    bool isSsbo = m_moduleInfo.options.minSsboAlignment <= bufferInfo.align
+               && !isTgsm;
     
     // Common types and IDs used while loading the data
     uint32_t bufferId = isTgsm || isSsbo ? 0 : m_module.opLoad(bufferInfo.typeId, bufferInfo.varId);
@@ -4977,7 +4989,8 @@ namespace dxvk {
     
     // Thread Group Shared Memory is not accessed through a texel buffer view
     bool isTgsm = operand.type == DxbcOperandType::ThreadGroupSharedMemory;
-    bool isSsbo = m_moduleInfo.options.useRawSsbo && !isTgsm;
+    bool isSsbo = m_moduleInfo.options.minSsboAlignment <= bufferInfo.align
+               && !isTgsm;
     
     // Perform UAV writes only if the UAV is bound and if there
     // is nothing else preventing us from writing to it.
@@ -7298,6 +7311,7 @@ namespace dxvk {
         result.varId  = m_textures.at(registerId).varId;
         result.specId = m_textures.at(registerId).specId;
         result.stride = m_textures.at(registerId).structStride;
+        result.align  = m_textures.at(registerId).structAlign;
         return result;
       } break;
         
@@ -7310,6 +7324,7 @@ namespace dxvk {
         result.varId  = m_uavs.at(registerId).varId;
         result.specId = m_uavs.at(registerId).specId;
         result.stride = m_uavs.at(registerId).structStride;
+        result.align  = m_uavs.at(registerId).structAlign;
         return result;
       } break;
         
@@ -7324,6 +7339,7 @@ namespace dxvk {
         result.varId  = m_gRegs.at(registerId).varId;
         result.specId = 0;
         result.stride = m_gRegs.at(registerId).elementStride;
+        result.align  = 0;
         return result;
       } break;
         
