@@ -813,6 +813,10 @@ namespace dxvk {
             ID3D11RenderTargetView* const*    ppRenderTargetViews,
             ID3D11DepthStencilView*           pDepthStencilView);
     
+    VkClearValue ConvertColorValue(
+      const FLOAT                             Color[4],
+      const DxvkFormatInfo*                   pFormatInfo);
+    
     DxvkDataSlice AllocUpdateBufferSlice(size_t Size);
     
     DxvkCsChunkRef AllocCsChunk();
@@ -856,7 +860,7 @@ namespace dxvk {
     }
     
     void FlushCsChunk() {
-      if (likely(m_csChunk->commandCount())) {
+      if (likely(!m_csChunk->empty())) {
         EmitCsChunk(std::move(m_csChunk));
         m_csChunk = AllocCsChunk();
         m_cmdData = nullptr;

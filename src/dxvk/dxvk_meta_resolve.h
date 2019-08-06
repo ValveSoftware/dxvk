@@ -94,11 +94,11 @@ namespace dxvk {
    * Implements resolve operations in fragment
    * shaders when using different formats.
    */
-  class DxvkMetaResolveObjects : public RcObject {
+  class DxvkMetaResolveObjects {
 
   public:
 
-    DxvkMetaResolveObjects(DxvkDevice* device);
+    DxvkMetaResolveObjects(const DxvkDevice* device);
     ~DxvkMetaResolveObjects();
 
     /**
@@ -118,11 +118,11 @@ namespace dxvk {
 
     VkSampler m_sampler;
 
-    VkShaderModule m_shaderVert;
-    VkShaderModule m_shaderGeom;
-    VkShaderModule m_shaderFragF;
-    VkShaderModule m_shaderFragU;
-    VkShaderModule m_shaderFragI;
+    VkShaderModule m_shaderVert  = VK_NULL_HANDLE;
+    VkShaderModule m_shaderGeom  = VK_NULL_HANDLE;
+    VkShaderModule m_shaderFragF = VK_NULL_HANDLE;
+    VkShaderModule m_shaderFragU = VK_NULL_HANDLE;
+    VkShaderModule m_shaderFragI = VK_NULL_HANDLE;
 
     std::mutex m_mutex;
 

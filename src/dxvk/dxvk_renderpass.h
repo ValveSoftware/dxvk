@@ -8,6 +8,8 @@
 #include "dxvk_limits.h"
 
 namespace dxvk {
+
+  class DxvkDevice;
   
   /**
    * \brief Format and layout for a render target
@@ -32,7 +34,9 @@ namespace dxvk {
     DxvkAttachmentFormat  depth;
     DxvkAttachmentFormat  color[MaxNumRenderTargets];
     
-    bool matches(const DxvkRenderPassFormat& fmt) const;
+    bool eq(const DxvkRenderPassFormat& fmt) const;
+
+    size_t hash() const;
   };
   
   
@@ -101,7 +105,7 @@ namespace dxvk {
    * render passes which share the same format but
    * may differ in their attachment operations.
    */
-  class DxvkRenderPass : public RcObject {
+  class DxvkRenderPass {
     
   public:
     
@@ -197,12 +201,11 @@ namespace dxvk {
    * be created, but no two render pass objects
    * will have the same format.
    */
-  class DxvkRenderPassPool : public RcObject {
+  class DxvkRenderPassPool {
     
   public:
     
-    DxvkRenderPassPool(
-      const Rc<vk::DeviceFn>& vkd);
+    DxvkRenderPassPool(const DxvkDevice* device);
     ~DxvkRenderPassPool();
     
     /**
@@ -211,7 +214,7 @@ namespace dxvk {
      * \param [in] fmt The render pass format
      * \returns Matching render pass object
      */
-    Rc<DxvkRenderPass> getRenderPass(
+    DxvkRenderPass* getRenderPass(
       const DxvkRenderPassFormat&  fmt);
     
   private:
@@ -219,7 +222,10 @@ namespace dxvk {
     const Rc<vk::DeviceFn> m_vkd;
     
     std::mutex                      m_mutex;
-    std::vector<Rc<DxvkRenderPass>> m_renderPasses;
+    std::unordered_map<
+      DxvkRenderPassFormat,
+      DxvkRenderPass,
+      DxvkHash, DxvkEq>             m_renderPasses;
     
   };
   

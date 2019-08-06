@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <mutex>
@@ -21,41 +22,16 @@ namespace dxvk {
     uint32_t numComputePipelines;
   };
   
-  /**
-   * \brief Compute pipeline key
-   * 
-   * Identifier for a compute pipeline object.
-   * Consists of the compute shader itself.
-   */
-  struct DxvkComputePipelineKey {
-    Rc<DxvkShader> cs;
-  };
-  
-  
-  /**
-   * \brief Graphics pipeline key
-   * 
-   * Identifier for a graphics pipeline object.
-   * Consists of all graphics pipeline shaders.
-   */
-  struct DxvkGraphicsPipelineKey {
-    Rc<DxvkShader> vs;
-    Rc<DxvkShader> tcs;
-    Rc<DxvkShader> tes;
-    Rc<DxvkShader> gs;
-    Rc<DxvkShader> fs;
-  };
-  
   
   struct DxvkPipelineKeyHash {
-    size_t operator () (const DxvkComputePipelineKey& key) const;
-    size_t operator () (const DxvkGraphicsPipelineKey& key) const;
+    size_t operator () (const DxvkComputePipelineShaders& key) const;
+    size_t operator () (const DxvkGraphicsPipelineShaders& key) const;
   };
   
   
   struct DxvkPipelineKeyEq {
-    bool operator () (const DxvkComputePipelineKey& a, const DxvkComputePipelineKey& b) const;
-    bool operator () (const DxvkGraphicsPipelineKey& a, const DxvkGraphicsPipelineKey& b) const;
+    bool operator () (const DxvkComputePipelineShaders& a, const DxvkComputePipelineShaders& b) const;
+    bool operator () (const DxvkGraphicsPipelineShaders& a, const DxvkGraphicsPipelineShaders& b) const;
   };
   
   
@@ -68,7 +44,7 @@ namespace dxvk {
    * because DXVK does not expose the concept of shader
    * pipeline objects to the client API.
    */
-  class DxvkPipelineManager : public RcObject {
+  class DxvkPipelineManager {
     friend class DxvkComputePipeline;
     friend class DxvkGraphicsPipeline;
   public:
@@ -85,11 +61,11 @@ namespace dxvk {
      * If a pipeline for the given shader stage object
      * already exists, it will be returned. Otherwise,
      * a new pipeline will be created.
-     * \param [in] cs Compute shader
+     * \param [in] shaders Shaders for the pipeline
      * \returns Compute pipeline object
      */
-    Rc<DxvkComputePipeline> createComputePipeline(
-      const Rc<DxvkShader>&         cs);
+    DxvkComputePipeline* createComputePipeline(
+      const DxvkComputePipelineShaders& shaders);
     
     /**
      * \brief Retrieves a graphics pipeline object
@@ -97,19 +73,11 @@ namespace dxvk {
      * If a pipeline for the given shader stage objects
      * already exists, it will be returned. Otherwise,
      * a new pipeline will be created.
-     * \param [in] vs Vertex shader
-     * \param [in] tcs Tessellation control shader
-     * \param [in] tes Tessellation evaluation shader
-     * \param [in] gs Geometry shader
-     * \param [in] fs Fragment shader
+     * \param [in] shaders Shaders for the pipeline
      * \returns Graphics pipeline object
      */
-    Rc<DxvkGraphicsPipeline> createGraphicsPipeline(
-      const Rc<DxvkShader>&         vs,
-      const Rc<DxvkShader>&         tcs,
-      const Rc<DxvkShader>&         tes,
-      const Rc<DxvkShader>&         gs,
-      const Rc<DxvkShader>&         fs);
+    DxvkGraphicsPipeline* createGraphicsPipeline(
+      const DxvkGraphicsPipelineShaders& shaders);
     
     /*
      * \brief Registers a shader
@@ -146,14 +114,14 @@ namespace dxvk {
     std::mutex m_mutex;
     
     std::unordered_map<
-      DxvkComputePipelineKey,
-      Rc<DxvkComputePipeline>,
+      DxvkComputePipelineShaders,
+      DxvkComputePipeline,
       DxvkPipelineKeyHash,
       DxvkPipelineKeyEq> m_computePipelines;
     
     std::unordered_map<
-      DxvkGraphicsPipelineKey,
-      Rc<DxvkGraphicsPipeline>,
+      DxvkGraphicsPipelineShaders,
+      DxvkGraphicsPipeline,
       DxvkPipelineKeyHash,
       DxvkPipelineKeyEq> m_graphicsPipelines;
     

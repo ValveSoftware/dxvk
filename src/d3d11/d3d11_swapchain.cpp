@@ -34,7 +34,6 @@ namespace dxvk {
     InitRenderState();
     InitSamplers();
     InitShaders();
-    InitOptions();
   }
 
 
@@ -203,8 +202,7 @@ namespace dxvk {
       m_hud->update();
 
     for (uint32_t i = 0; i < SyncInterval || i < 1; i++) {
-      if (m_asyncPresent)
-        SynchronizePresent();
+      SynchronizePresent();
 
       m_context->beginRecording(
         m_device->createCommandList());
@@ -308,8 +306,9 @@ namespace dxvk {
       m_device->presentImage(m_presenter,
         sync.present, &m_presentStatus);
 
-      if (!m_asyncPresent)
-        SynchronizePresent();
+      if (m_presentStatus.result != VK_NOT_READY
+       && m_presentStatus.result != VK_SUCCESS)
+        RecreateSwapChain(m_vsync);
     }
   }
 
@@ -589,16 +588,6 @@ namespace dxvk {
 
   void D3D11SwapChain::CreateHud() {
     m_hud = hud::Hud::createHud(m_device);
-  }
-
-
-  void D3D11SwapChain::InitOptions() {
-    // Not synchronizing after present seems to increase
-    // the likelyhood of hangs on Nvidia for some reason.
-    m_asyncPresent = !m_device->adapter()->matchesDriver(
-      DxvkGpuVendor::Nvidia, VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR, 0, 0);
-    
-    applyTristate(m_asyncPresent, m_parent->GetOptions()->asyncPresent);
   }
 
 

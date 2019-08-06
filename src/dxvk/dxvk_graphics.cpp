@@ -38,19 +38,15 @@ namespace dxvk {
   
   
   DxvkGraphicsPipeline::DxvkGraphicsPipeline(
-          DxvkPipelineManager*      pipeMgr,
-    const Rc<DxvkShader>&           vs,
-    const Rc<DxvkShader>&           tcs,
-    const Rc<DxvkShader>&           tes,
-    const Rc<DxvkShader>&           gs,
-    const Rc<DxvkShader>&           fs)
+          DxvkPipelineManager*        pipeMgr,
+          DxvkGraphicsPipelineShaders shaders)
   : m_vkd(pipeMgr->m_device->vkd()), m_pipeMgr(pipeMgr),
-    m_vs(vs), m_tcs(tcs), m_tes(tes), m_gs(gs), m_fs(fs) {
-    if (vs  != nullptr) vs ->defineResourceSlots(m_slotMapping);
-    if (tcs != nullptr) tcs->defineResourceSlots(m_slotMapping);
-    if (tes != nullptr) tes->defineResourceSlots(m_slotMapping);
-    if (gs  != nullptr) gs ->defineResourceSlots(m_slotMapping);
-    if (fs  != nullptr) fs ->defineResourceSlots(m_slotMapping);
+    m_shaders(std::move(shaders)) {
+    if (m_shaders.vs  != nullptr) m_shaders.vs ->defineResourceSlots(m_slotMapping);
+    if (m_shaders.tcs != nullptr) m_shaders.tcs->defineResourceSlots(m_slotMapping);
+    if (m_shaders.tes != nullptr) m_shaders.tes->defineResourceSlots(m_slotMapping);
+    if (m_shaders.gs  != nullptr) m_shaders.gs ->defineResourceSlots(m_slotMapping);
+    if (m_shaders.fs  != nullptr) m_shaders.fs ->defineResourceSlots(m_slotMapping);
     
     m_slotMapping.makeDescriptorsDynamic(
       pipeMgr->m_device->options().maxNumDynamicUniformBuffers,
@@ -59,10 +55,10 @@ namespace dxvk {
     m_layout = new DxvkPipelineLayout(m_vkd,
       m_slotMapping, VK_PIPELINE_BIND_POINT_GRAPHICS);
     
-    m_vsIn  = vs != nullptr ? vs->interfaceSlots().inputSlots  : 0;
-    m_fsOut = fs != nullptr ? fs->interfaceSlots().outputSlots : 0;
+    m_vsIn  = m_shaders.vs != nullptr ? m_shaders.vs->interfaceSlots().inputSlots  : 0;
+    m_fsOut = m_shaders.fs != nullptr ? m_shaders.fs->interfaceSlots().outputSlots : 0;
 
-    if (gs != nullptr && gs->hasCapability(spv::CapabilityTransformFeedback))
+    if (m_shaders.gs != nullptr && m_shaders.gs->hasCapability(spv::CapabilityTransformFeedback))
       m_flags.set(DxvkGraphicsPipelineFlag::HasTransformFeedback);
     
     VkShaderStageFlags stoStages = m_layout->getStorageDescriptorStages();
@@ -73,7 +69,7 @@ namespace dxvk {
     if (stoStages & ~VK_SHADER_STAGE_FRAGMENT_BIT)
       m_flags.set(DxvkGraphicsPipelineFlag::HasVsStorageDescriptors);
     
-    m_common.msSampleShadingEnable = fs != nullptr && fs->hasCapability(spv::CapabilitySampleRateShading);
+    m_common.msSampleShadingEnable = m_shaders.fs != nullptr && m_shaders.fs->hasCapability(spv::CapabilitySampleRateShading);
     m_common.msSampleShadingFactor = 1.0f;
   }
   
@@ -87,11 +83,11 @@ namespace dxvk {
   Rc<DxvkShader> DxvkGraphicsPipeline::getShader(
           VkShaderStageFlagBits             stage) const {
     switch (stage) {
-      case VK_SHADER_STAGE_VERTEX_BIT:                  return m_vs;
-      case VK_SHADER_STAGE_GEOMETRY_BIT:                return m_gs;
-      case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:    return m_tcs;
-      case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT: return m_tes;
-      case VK_SHADER_STAGE_FRAGMENT_BIT:                return m_fs;
+      case VK_SHADER_STAGE_VERTEX_BIT:                  return m_shaders.vs;
+      case VK_SHADER_STAGE_GEOMETRY_BIT:                return m_shaders.gs;
+      case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:    return m_shaders.tcs;
+      case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT: return m_shaders.tes;
+      case VK_SHADER_STAGE_FRAGMENT_BIT:                return m_shaders.fs;
       default:
         return nullptr;
     }
@@ -100,46 +96,56 @@ namespace dxvk {
 
   VkPipeline DxvkGraphicsPipeline::getPipelineHandle(
     const DxvkGraphicsPipelineStateInfo& state,
-    const DxvkRenderPass&                renderPass) {
-    VkRenderPass renderPassHandle = renderPass.getDefaultHandle();
-    
-    VkPipeline newPipelineHandle = VK_NULL_HANDLE;
+    const DxvkRenderPass*                renderPass) {
+    DxvkGraphicsPipelineInstance* instance = nullptr;
 
     { std::lock_guard<sync::Spinlock> lock(m_mutex);
     
-      auto instance = this->findInstance(state, renderPassHandle);
+      instance = this->findInstance(state, renderPass);
       
-      if (instance != nullptr)
+      if (instance)
         return instance->pipeline();
-    
-      // If the pipeline state vector is invalid, don't try
-      // to create a new pipeline, it won't work anyway.
-      if (!this->validatePipelineState(state))
-        return VK_NULL_HANDLE;
       
-      // If no pipeline instance exists with the given state
-      // vector, create a new one and add it to the list.
-      newPipelineHandle = this->compilePipeline(state, renderPass, m_basePipeline);
-
-      // Add new pipeline to the set
-      m_pipelines.emplace_back(state, renderPassHandle, newPipelineHandle);
-      m_pipeMgr->m_numGraphicsPipelines += 1;
-      
-      if (!m_basePipeline && newPipelineHandle)
-        m_basePipeline = newPipelineHandle;
+      instance = this->createInstance(state, renderPass);
     }
     
-    if (newPipelineHandle != VK_NULL_HANDLE)
-      this->writePipelineStateToCache(state, renderPass.format());
-    
-    return newPipelineHandle;
+    if (!instance)
+      return VK_NULL_HANDLE;
+
+    this->writePipelineStateToCache(state, renderPass->format());
+    return instance->pipeline();
+  }
+
+
+  void DxvkGraphicsPipeline::compilePipeline(
+    const DxvkGraphicsPipelineStateInfo& state,
+    const DxvkRenderPass*                renderPass) {
+    std::lock_guard<sync::Spinlock> lock(m_mutex);
+
+    if (!this->findInstance(state, renderPass))
+      this->createInstance(state, renderPass);
+  }
+
+
+  DxvkGraphicsPipelineInstance* DxvkGraphicsPipeline::createInstance(
+    const DxvkGraphicsPipelineStateInfo& state,
+    const DxvkRenderPass*                renderPass) {
+    // If the pipeline state vector is invalid, don't try
+    // to create a new pipeline, it won't work anyway.
+    if (!this->validatePipelineState(state))
+      return nullptr;
+
+    VkPipeline newPipelineHandle = this->createPipeline(state, renderPass);
+
+    m_pipeMgr->m_numGraphicsPipelines += 1;
+    return &m_pipelines.emplace_back(state, renderPass, newPipelineHandle);
   }
   
   
-  const DxvkGraphicsPipelineInstance* DxvkGraphicsPipeline::findInstance(
+  DxvkGraphicsPipelineInstance* DxvkGraphicsPipeline::findInstance(
     const DxvkGraphicsPipelineStateInfo& state,
-          VkRenderPass                   renderPass) const {
-    for (const auto& instance : m_pipelines) {
+    const DxvkRenderPass*                renderPass) {
+    for (auto& instance : m_pipelines) {
       if (instance.isCompatible(state, renderPass))
         return &instance;
     }
@@ -148,17 +154,16 @@ namespace dxvk {
   }
   
   
-  VkPipeline DxvkGraphicsPipeline::compilePipeline(
+  VkPipeline DxvkGraphicsPipeline::createPipeline(
     const DxvkGraphicsPipelineStateInfo& state,
-    const DxvkRenderPass&                renderPass,
-          VkPipeline                     baseHandle) const {
+    const DxvkRenderPass*                renderPass) const {
     if (Logger::logLevel() <= LogLevel::Debug) {
       Logger::debug("Compiling graphics pipeline...");
       this->logPipelineState(LogLevel::Debug, state);
     }
 
     // Render pass format and image layouts
-    DxvkRenderPassFormat passFormat = renderPass.format();
+    DxvkRenderPassFormat passFormat = renderPass->format();
     
     // Set up dynamic states as needed
     std::array<VkDynamicState, 6> dynamicStates;
@@ -216,11 +221,11 @@ namespace dxvk {
       util::isDualSourceBlendFactor(state.omBlendAttachments[0].srcAlphaBlendFactor) ||
       util::isDualSourceBlendFactor(state.omBlendAttachments[0].dstAlphaBlendFactor));
     
-    auto vsm  = createShaderModule(m_vs,  moduleInfo);
-    auto gsm  = createShaderModule(m_gs,  moduleInfo);
-    auto tcsm = createShaderModule(m_tcs, moduleInfo);
-    auto tesm = createShaderModule(m_tes, moduleInfo);
-    auto fsm  = createShaderModule(m_fs,  moduleInfo);
+    auto vsm  = createShaderModule(m_shaders.vs,  moduleInfo);
+    auto gsm  = createShaderModule(m_shaders.gs,  moduleInfo);
+    auto tcsm = createShaderModule(m_shaders.tcs, moduleInfo);
+    auto tesm = createShaderModule(m_shaders.tes, moduleInfo);
+    auto fsm  = createShaderModule(m_shaders.fs,  moduleInfo);
 
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     if (vsm)  stages.push_back(vsm.stageInfo(&specInfo));
@@ -266,8 +271,8 @@ namespace dxvk {
       }
     }
 
-    int32_t rasterizedStream = m_gs != nullptr
-      ? m_gs->shaderOptions().rasterizedStream
+    int32_t rasterizedStream = m_shaders.gs != nullptr
+      ? m_shaders.gs->shaderOptions().rasterizedStream
       : 0;
     
     // Compact vertex bindings so that we can more easily update vertex buffers
@@ -425,14 +430,10 @@ namespace dxvk {
     info.pColorBlendState         = &cbInfo;
     info.pDynamicState            = &dyInfo;
     info.layout                   = m_layout->pipelineLayout();
-    info.renderPass               = renderPass.getDefaultHandle();
+    info.renderPass               = renderPass->getDefaultHandle();
     info.subpass                  = 0;
-    info.basePipelineHandle       = baseHandle;
+    info.basePipelineHandle       = VK_NULL_HANDLE;
     info.basePipelineIndex        = -1;
-    
-    info.flags |= baseHandle == VK_NULL_HANDLE
-      ? VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT
-      : VK_PIPELINE_CREATE_DERIVATIVE_BIT;
     
     if (tsInfo.patchControlPoints == 0)
       info.pTessellationState = nullptr;
@@ -483,7 +484,7 @@ namespace dxvk {
     
     // If there are no tessellation shaders, we
     // obviously cannot use tessellation patches.
-    if ((state.iaPatchVertexCount != 0) && (m_tcs == nullptr || m_tes == nullptr))
+    if ((state.iaPatchVertexCount != 0) && (m_shaders.tcs == nullptr || m_shaders.tes == nullptr))
       return false;
     
     // Prevent unintended out-of-bounds access to the IL arrays
@@ -503,11 +504,11 @@ namespace dxvk {
       return;
     
     DxvkStateCacheKey key;
-    if (m_vs  != nullptr) key.vs = m_vs->getShaderKey();
-    if (m_tcs != nullptr) key.tcs = m_tcs->getShaderKey();
-    if (m_tes != nullptr) key.tes = m_tes->getShaderKey();
-    if (m_gs  != nullptr) key.gs = m_gs->getShaderKey();
-    if (m_fs  != nullptr) key.fs = m_fs->getShaderKey();
+    if (m_shaders.vs  != nullptr) key.vs = m_shaders.vs->getShaderKey();
+    if (m_shaders.tcs != nullptr) key.tcs = m_shaders.tcs->getShaderKey();
+    if (m_shaders.tes != nullptr) key.tes = m_shaders.tes->getShaderKey();
+    if (m_shaders.gs  != nullptr) key.gs = m_shaders.gs->getShaderKey();
+    if (m_shaders.fs  != nullptr) key.fs = m_shaders.fs->getShaderKey();
 
     m_pipeMgr->m_stateCache->addGraphicsPipeline(key, state, format);
   }
@@ -516,11 +517,11 @@ namespace dxvk {
   void DxvkGraphicsPipeline::logPipelineState(
           LogLevel                       level,
     const DxvkGraphicsPipelineStateInfo& state) const {
-    if (m_vs  != nullptr) Logger::log(level, str::format("  vs  : ", m_vs ->debugName()));
-    if (m_tcs != nullptr) Logger::log(level, str::format("  tcs : ", m_tcs->debugName()));
-    if (m_tes != nullptr) Logger::log(level, str::format("  tes : ", m_tes->debugName()));
-    if (m_gs  != nullptr) Logger::log(level, str::format("  gs  : ", m_gs ->debugName()));
-    if (m_fs  != nullptr) Logger::log(level, str::format("  fs  : ", m_fs ->debugName()));
+    if (m_shaders.vs  != nullptr) Logger::log(level, str::format("  vs  : ", m_shaders.vs ->debugName()));
+    if (m_shaders.tcs != nullptr) Logger::log(level, str::format("  tcs : ", m_shaders.tcs->debugName()));
+    if (m_shaders.tes != nullptr) Logger::log(level, str::format("  tes : ", m_shaders.tes->debugName()));
+    if (m_shaders.gs  != nullptr) Logger::log(level, str::format("  gs  : ", m_shaders.gs ->debugName()));
+    if (m_shaders.fs  != nullptr) Logger::log(level, str::format("  fs  : ", m_shaders.fs ->debugName()));
 
     for (uint32_t i = 0; i < state.ilAttributeCount; i++) {
       const VkVertexInputAttributeDescription& attr = state.ilAttributes[i];

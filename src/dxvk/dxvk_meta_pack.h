@@ -72,11 +72,11 @@ namespace dxvk {
    * Stores compute shaders and related objects
    * for depth-stencil image packing operations.
    */
-  class DxvkMetaPackObjects : public RcObject {
+  class DxvkMetaPackObjects {
 
   public:
 
-    DxvkMetaPackObjects(const Rc<vk::DeviceFn>& vkd);
+    DxvkMetaPackObjects(const DxvkDevice* device);
     ~DxvkMetaPackObjects();
 
     /**

@@ -16,17 +16,8 @@ namespace dxvk {
     m_extensions        (extensions),
     m_features          (features),
     m_properties        (adapter->deviceProperties()),
-    m_memory            (new DxvkMemoryAllocator    (this)),
-    m_renderPassPool    (new DxvkRenderPassPool     (vkd)),
-    m_pipelineManager   (new DxvkPipelineManager    (this, m_renderPassPool.ptr())),
-    m_gpuEventPool      (new DxvkGpuEventPool       (vkd)),
-    m_gpuQueryPool      (new DxvkGpuQueryPool       (this)),
-    m_metaClearObjects  (new DxvkMetaClearObjects   (vkd)),
-    m_metaCopyObjects   (new DxvkMetaCopyObjects    (vkd)),
-    m_metaResolveObjects(new DxvkMetaResolveObjects (this)),
-    m_metaMipGenObjects (new DxvkMetaMipGenObjects  (vkd)),
-    m_metaPackObjects   (new DxvkMetaPackObjects    (vkd)),
-    m_unboundResources  (this),
+    m_perfHints         (getPerfHints()),
+    m_objects           (this),
     m_submissionQueue   (this) {
     auto queueFamilies = m_adapter->findQueueFamilies();
     m_queues.graphics = getQueue(queueFamilies.graphics, 0);
@@ -87,15 +78,7 @@ namespace dxvk {
   
   
   Rc<DxvkContext> DxvkDevice::createContext() {
-    return new DxvkContext(this,
-      m_pipelineManager,
-      m_gpuEventPool,
-      m_gpuQueryPool,
-      m_metaClearObjects,
-      m_metaCopyObjects,
-      m_metaResolveObjects,
-      m_metaMipGenObjects,
-      m_metaPackObjects);
+    return new DxvkContext(this);
   }
 
 
@@ -120,7 +103,7 @@ namespace dxvk {
       m_properties.limits.maxFramebufferLayers };
     
     auto renderPassFormat = DxvkFramebuffer::getRenderPassFormat(renderTargets);
-    auto renderPassObject = m_renderPassPool->getRenderPass(renderPassFormat);
+    auto renderPassObject = m_objects.renderPassPool().getRenderPass(renderPassFormat);
     
     return new DxvkFramebuffer(m_vkd,
       renderPassObject, renderTargets, defaultSize);
@@ -130,7 +113,7 @@ namespace dxvk {
   Rc<DxvkBuffer> DxvkDevice::createBuffer(
     const DxvkBufferCreateInfo& createInfo,
           VkMemoryPropertyFlags memoryType) {
-    return new DxvkBuffer(this, createInfo, *m_memory, memoryType);
+    return new DxvkBuffer(this, createInfo, m_objects.memoryManager(), memoryType);
   }
   
   
@@ -144,7 +127,7 @@ namespace dxvk {
   Rc<DxvkImage> DxvkDevice::createImage(
     const DxvkImageCreateInfo&  createInfo,
           VkMemoryPropertyFlags memoryType) {
-    return new DxvkImage(m_vkd, createInfo, *m_memory, memoryType);
+    return new DxvkImage(m_vkd, createInfo, m_objects.memoryManager(), memoryType);
   }
   
   
@@ -175,15 +158,16 @@ namespace dxvk {
   
   
   DxvkStatCounters DxvkDevice::getStatCounters() {
-    DxvkMemoryStats mem = m_memory->getMemoryStats();
-    DxvkPipelineCount pipe = m_pipelineManager->getPipelineCount();
+    DxvkMemoryStats mem = m_objects.memoryManager().getMemoryStats();
+    DxvkPipelineCount pipe = m_objects.pipelineManager().getPipelineCount();
     
     DxvkStatCounters result;
     result.setCtr(DxvkStatCounter::MemoryAllocated,   mem.memoryAllocated);
     result.setCtr(DxvkStatCounter::MemoryUsed,        mem.memoryUsed);
     result.setCtr(DxvkStatCounter::PipeCountGraphics, pipe.numGraphicsPipelines);
     result.setCtr(DxvkStatCounter::PipeCountCompute,  pipe.numComputePipelines);
-    result.setCtr(DxvkStatCounter::PipeCompilerBusy,  m_pipelineManager->isCompilingShaders());
+    result.setCtr(DxvkStatCounter::PipeCompilerBusy,  m_objects.pipelineManager().isCompilingShaders());
+    result.setCtr(DxvkStatCounter::GpuIdleTicks,      m_submissionQueue.gpuIdleTicks());
 
     std::lock_guard<sync::Spinlock> lock(m_statLock);
     result.merge(m_statCounters);
@@ -197,12 +181,12 @@ namespace dxvk {
   
   
   void DxvkDevice::initResources() {
-    m_unboundResources.clearResources(this);
+    m_objects.dummyResources().clearResources(this);
   }
 
 
   void DxvkDevice::registerShader(const Rc<DxvkShader>& shader) {
-    m_pipelineManager->registerShader(shader);
+    m_objects.pipelineManager().registerShader(shader);
   }
   
   
@@ -258,6 +242,14 @@ namespace dxvk {
   }
   
   
+  DxvkDevicePerfHints DxvkDevice::getPerfHints() {
+    DxvkDevicePerfHints hints;
+    hints.preferFbDepthStencilCopy = m_extensions.extShaderStencilExport
+      && m_adapter->matchesDriver(DxvkGpuVendor::Amd, VK_DRIVER_ID_MESA_RADV_KHR, 0, 0);
+    return hints;
+  }
+
+
   void DxvkDevice::recycleCommandList(const Rc<DxvkCommandList>& cmdList) {
     m_recycledCommandLists.returnObject(cmdList);
   }

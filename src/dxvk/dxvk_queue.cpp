@@ -7,7 +7,12 @@ namespace dxvk {
   : m_device(device),
     m_submitThread([this] () { submitCmdLists(); }),
     m_finishThread([this] () { finishCmdLists(); }) {
-    
+    // Asynchronous presentation seems to increase the
+    // likelyhood of hangs on Nvidia for some reason.
+    m_asyncPresent = !m_device->adapter()->matchesDriver(
+      DxvkGpuVendor::Nvidia, VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR, 0, 0);
+
+    applyTristate(m_asyncPresent, m_device->config().asyncPresent);
   }
   
   
@@ -43,12 +48,21 @@ namespace dxvk {
   void DxvkSubmissionQueue::present(DxvkPresentInfo presentInfo, DxvkSubmitStatus* status) {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    DxvkSubmitEntry entry = { };
-    entry.status  = status;
-    entry.present = std::move(presentInfo);
+    if (m_asyncPresent) {
+      DxvkSubmitEntry entry = { };
+      entry.status  = status;
+      entry.present = std::move(presentInfo);
 
-    m_submitQueue.push(std::move(entry));
-    m_appendCond.notify_all();
+      m_submitQueue.push(std::move(entry));
+      m_appendCond.notify_all();
+    } else {
+      m_submitCond.wait(lock, [this] {
+        return m_submitQueue.empty();
+      });
+
+      VkResult result = presentInfo.presenter->presentImage(presentInfo.waitSync);
+      status->result.store(result);
+    }
   }
 
 
@@ -121,7 +135,7 @@ namespace dxvk {
       if (status == VK_SUCCESS) {
         if (entry.submit.cmdList != nullptr)
           m_finishQueue.push(std::move(entry));
-      } else {
+      } else if (entry.submit.cmdList != nullptr) {
         Logger::err(str::format("DxvkSubmissionQueue: Command submission failed: ", status));
       }
 
@@ -137,9 +151,16 @@ namespace dxvk {
     std::unique_lock<std::mutex> lock(m_mutex);
 
     while (!m_stopped.load()) {
-      m_submitCond.wait(lock, [this] {
-        return m_stopped.load() || !m_finishQueue.empty();
-      });
+      if (m_finishQueue.empty()) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+
+        m_submitCond.wait(lock, [this] {
+          return m_stopped.load() || !m_finishQueue.empty();
+        });
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+        m_gpuIdle += std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+      }
 
       if (m_stopped.load())
         return;

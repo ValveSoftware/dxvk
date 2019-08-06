@@ -20,11 +20,11 @@ namespace dxvk {
   
   
   DxvkComputePipeline::DxvkComputePipeline(
-          DxvkPipelineManager*    pipeMgr,
-    const Rc<DxvkShader>&         cs)
-  : m_vkd(pipeMgr->m_device->vkd()),
-    m_pipeMgr(pipeMgr), m_cs(cs) {
-    cs->defineResourceSlots(m_slotMapping);
+          DxvkPipelineManager*        pipeMgr,
+          DxvkComputePipelineShaders  shaders)
+  : m_vkd(pipeMgr->m_device->vkd()), m_pipeMgr(pipeMgr),
+    m_shaders(std::move(shaders)) {
+    m_shaders.cs->defineResourceSlots(m_slotMapping);
 
     m_slotMapping.makeDescriptorsDynamic(
       m_pipeMgr->m_device->options().maxNumDynamicUniformBuffers,
@@ -37,60 +37,70 @@ namespace dxvk {
   
   DxvkComputePipeline::~DxvkComputePipeline() {
     for (const auto& instance : m_pipelines)
-      this->destroyPipeline(instance.pipeline);
+      this->destroyPipeline(instance.pipeline());
   }
   
   
   VkPipeline DxvkComputePipeline::getPipelineHandle(
     const DxvkComputePipelineStateInfo& state) {
-    VkPipeline newPipelineHandle = VK_NULL_HANDLE;
+    DxvkComputePipelineInstance* instance = nullptr;
 
     { std::lock_guard<sync::Spinlock> lock(m_mutex);
 
-      if (this->findPipeline(state, newPipelineHandle))
-        return newPipelineHandle;
+      instance = this->findInstance(state);
+
+      if (instance)
+        return instance->pipeline();
     
       // If no pipeline instance exists with the given state
       // vector, create a new one and add it to the list.
-      newPipelineHandle = this->compilePipeline(state, m_basePipeline);
-      
-      // Add new pipeline to the set
-      m_pipelines.push_back({ state, newPipelineHandle });
-      m_pipeMgr->m_numComputePipelines += 1;
-      
-      if (!m_basePipeline && newPipelineHandle)
-        m_basePipeline = newPipelineHandle;
+      instance = this->createInstance(state);
     }
     
-    if (newPipelineHandle != VK_NULL_HANDLE)
-      this->writePipelineStateToCache(state);
-    
-    return newPipelineHandle;
+    if (!instance)
+      return VK_NULL_HANDLE;
+
+    this->writePipelineStateToCache(state);
+    return instance->pipeline();
+  }
+
+
+  void DxvkComputePipeline::compilePipeline(
+    const DxvkComputePipelineStateInfo& state) {
+    std::lock_guard<sync::Spinlock> lock(m_mutex);
+
+    if (!this->findInstance(state))
+      this->createInstance(state);
   }
   
   
-  bool DxvkComputePipeline::findPipeline(
-    const DxvkComputePipelineStateInfo& state,
-          VkPipeline&                   pipeline) const {
-    for (const PipelineStruct& pair : m_pipelines) {
-      if (pair.stateVector == state) {
-        pipeline = pair.pipeline;
-        return true;
-      }
+  DxvkComputePipelineInstance* DxvkComputePipeline::createInstance(
+    const DxvkComputePipelineStateInfo& state) {
+    VkPipeline newPipelineHandle = this->createPipeline(state);
+
+    m_pipeMgr->m_numComputePipelines += 1;
+    return &m_pipelines.emplace_back(state, newPipelineHandle);
+  }
+
+  
+  DxvkComputePipelineInstance* DxvkComputePipeline::findInstance(
+    const DxvkComputePipelineStateInfo& state) {
+    for (auto& instance : m_pipelines) {
+      if (instance.isCompatible(state))
+        return &instance;
     }
     
-    return false;
+    return nullptr;
   }
   
   
-  VkPipeline DxvkComputePipeline::compilePipeline(
-    const DxvkComputePipelineStateInfo& state,
-          VkPipeline                    baseHandle) const {
+  VkPipeline DxvkComputePipeline::createPipeline(
+    const DxvkComputePipelineStateInfo& state) const {
     std::vector<VkDescriptorSetLayoutBinding> bindings;
 
     if (Logger::logLevel() <= LogLevel::Debug) {
       Logger::debug("Compiling compute pipeline..."); 
-      Logger::debug(str::format("  cs  : ", m_cs->debugName()));
+      Logger::debug(str::format("  cs  : ", m_shaders.cs->debugName()));
     }
     
     DxvkSpecConstants specData;
@@ -102,17 +112,15 @@ namespace dxvk {
     DxvkShaderModuleCreateInfo moduleInfo;
     moduleInfo.fsDualSrcBlend = false;
 
-    auto csm = m_cs->createShaderModule(m_vkd, m_slotMapping, moduleInfo);
+    auto csm = m_shaders.cs->createShaderModule(m_vkd, m_slotMapping, moduleInfo);
 
     VkComputePipelineCreateInfo info;
     info.sType                = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     info.pNext                = nullptr;
-    info.flags                = baseHandle == VK_NULL_HANDLE
-      ? VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT
-      : VK_PIPELINE_CREATE_DERIVATIVE_BIT;
+    info.flags                = 0;
     info.stage                = csm.stageInfo(&specInfo);
     info.layout               = m_layout->pipelineLayout();
-    info.basePipelineHandle   = baseHandle;
+    info.basePipelineHandle   = VK_NULL_HANDLE;
     info.basePipelineIndex    = -1;
     
     // Time pipeline compilation for debugging purposes
@@ -122,7 +130,7 @@ namespace dxvk {
     if (m_vkd->vkCreateComputePipelines(m_vkd->device(),
           m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline) != VK_SUCCESS) {
       Logger::err("DxvkComputePipeline: Failed to compile pipeline");
-      Logger::err(str::format("  cs  : ", m_cs->debugName()));
+      Logger::err(str::format("  cs  : ", m_shaders.cs->debugName()));
       return VK_NULL_HANDLE;
     }
     
@@ -145,8 +153,8 @@ namespace dxvk {
     
     DxvkStateCacheKey key;
 
-    if (m_cs != nullptr)
-      key.cs = m_cs->getShaderKey();
+    if (m_shaders.cs != nullptr)
+      key.cs = m_shaders.cs->getShaderKey();
 
     m_pipeMgr->m_stateCache->addComputePipeline(key, state);
   }

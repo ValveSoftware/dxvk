@@ -80,9 +80,15 @@ namespace dxvk {
     HRESULT hr = query->GetData(pData, GetDataFlags);
     
     // If we're likely going to spin on the asynchronous object,
-    // flush the context so that we're keeping the GPU busy
+    // flush the context so that we're keeping the GPU busy.
     if (hr == S_FALSE) {
-      query->NotifyStall();
+      // Don't mark the event query as stalling if the app does
+      // not intend to spin on it. This reduces flushes on End.
+      if (!(GetDataFlags & D3D11_ASYNC_GETDATA_DONOTFLUSH))
+        query->NotifyStall();
+
+      // Ignore the DONOTFLUSH flag here as some games will spin
+      // on queries without ever flushing the context otherwise.
       FlushImplicit(FALSE);
     }
     
@@ -108,7 +114,7 @@ namespace dxvk {
     
     D3D10DeviceLock lock = LockContext();
     
-    if (m_csIsBusy || m_csChunk->commandCount() != 0) {
+    if (m_csIsBusy || !m_csChunk->empty()) {
       // Add commands to flush the threaded
       // context, then flush the command list
       EmitCs([] (DxvkContext* ctx) {
@@ -334,11 +340,6 @@ namespace dxvk {
     if (unlikely(Subresource >= pResource->CountSubresources()))
       return E_INVALIDARG;
 
-    if (unlikely(pResource->GetMapType(Subresource) != D3D11_MAP(~0u)))
-      return E_OUTOFMEMORY;
-
-    pResource->SetMapType(Subresource, MapType);
-
     VkFormat packedFormat = m_parent->LookupPackedFormat(
       pResource->Desc()->Format, pResource->GetFormatMode()).Format;
     
@@ -353,6 +354,9 @@ namespace dxvk {
       if (!WaitForResource(mappedImage, MapFlags))
         return DXGI_ERROR_WAS_STILL_DRAWING;
       
+      // Mark the given subresource as mapped
+      pResource->SetMapType(Subresource, MapType);
+
       // Query the subresource's memory layout and hope that
       // the application respects the returned pitch values.
       VkSubresourceLayout layout  = mappedImage->querySubresourceLayout(subresource);
@@ -394,6 +398,9 @@ namespace dxvk {
         physSlice = mappedBuffer->getSliceHandle();
       }
       
+      // Mark the given subresource as mapped
+      pResource->SetMapType(Subresource, MapType);
+
       // Set up map pointer. Data is tightly packed within the mapped buffer.
       pMappedResource->pData      = physSlice.mapPtr;
       pMappedResource->RowPitch   = formatInfo->elementSize * blockCount.width;

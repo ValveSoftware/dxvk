@@ -6,6 +6,7 @@
 
 namespace dxvk {
 
+  class DxvkDevice;
   class DxvkGpuEventPool;
 
   /**
@@ -83,11 +84,11 @@ namespace dxvk {
    * Thread-safe event allocator that provides
    * a way to create and recycle Vulkan events.
    */
-  class DxvkGpuEventPool : public RcObject {
+  class DxvkGpuEventPool {
   
   public:
 
-    DxvkGpuEventPool(const Rc<vk::DeviceFn>& vkd);
+    DxvkGpuEventPool(const DxvkDevice* device);
     ~DxvkGpuEventPool();
 
     /**

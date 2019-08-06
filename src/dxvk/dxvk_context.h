@@ -5,15 +5,7 @@
 #include "dxvk_cmdlist.h"
 #include "dxvk_context_state.h"
 #include "dxvk_data.h"
-#include "dxvk_gpu_event.h"
-#include "dxvk_gpu_query.h"
-#include "dxvk_meta_clear.h"
-#include "dxvk_meta_copy.h"
-#include "dxvk_meta_mipgen.h"
-#include "dxvk_meta_pack.h"
-#include "dxvk_meta_resolve.h"
-#include "dxvk_pipecache.h"
-#include "dxvk_pipemanager.h"
+#include "dxvk_objects.h"
 #include "dxvk_util.h"
 
 namespace dxvk {
@@ -29,16 +21,7 @@ namespace dxvk {
     
   public:
     
-    DxvkContext(
-      const Rc<DxvkDevice>&             device,
-      const Rc<DxvkPipelineManager>&    pipelineManager,
-      const Rc<DxvkGpuEventPool>&       gpuEventPool,
-      const Rc<DxvkGpuQueryPool>&       gpuQueryPool,
-      const Rc<DxvkMetaClearObjects>&   metaClearObjects,
-      const Rc<DxvkMetaCopyObjects>&    metaCopyObjects,
-      const Rc<DxvkMetaResolveObjects>& metaResolveObjects,
-      const Rc<DxvkMetaMipGenObjects>&  metaMipGenObjects,
-      const Rc<DxvkMetaPackObjects>&    metaPackObjects);
+    DxvkContext(const Rc<DxvkDevice>& device);
     ~DxvkContext();
     
     /**
@@ -996,14 +979,8 @@ namespace dxvk {
     
   private:
     
-    const Rc<DxvkDevice>              m_device;
-    const Rc<DxvkPipelineManager>     m_pipeMgr;
-    const Rc<DxvkGpuEventPool>        m_gpuEvents;
-    const Rc<DxvkMetaClearObjects>    m_metaClear;
-    const Rc<DxvkMetaCopyObjects>     m_metaCopy;
-    const Rc<DxvkMetaResolveObjects>  m_metaResolve;
-    const Rc<DxvkMetaMipGenObjects>   m_metaMipGen;
-    const Rc<DxvkMetaPackObjects>     m_metaPack;
+    Rc<DxvkDevice>          m_device;
+    DxvkObjects*            m_common;
     
     Rc<DxvkCommandList>     m_cmd;
     Rc<DxvkDescriptorPool>  m_descPool;
@@ -1126,16 +1103,15 @@ namespace dxvk {
     void updateShaderSamplers(
       const DxvkPipelineLayout*     layout);
     
+    template<VkPipelineBindPoint BindPoint>
     bool updateShaderResources(
-            VkPipelineBindPoint     bindPoint,
       const DxvkPipelineLayout*     layout);
     
     VkDescriptorSet updateShaderDescriptors(
-            VkPipelineBindPoint     bindPoint,
       const DxvkPipelineLayout*     layout);
     
+    template<VkPipelineBindPoint BindPoint>
     void updateShaderDescriptorSetBinding(
-            VkPipelineBindPoint     bindPoint,
             VkDescriptorSet         set,
       const DxvkPipelineLayout*     layout);
 
@@ -1151,14 +1127,13 @@ namespace dxvk {
     
     void updateDynamicState();
 
-    void updatePushConstants(
-            VkPipelineBindPoint     bindPoint);
-    
-    bool validateComputeState();
-    bool validateGraphicsState();
+    template<VkPipelineBindPoint BindPoint>
+    void updatePushConstants();
     
     void commitComputeState();
-    void commitGraphicsState(bool indexed);
+    
+    template<bool Indexed>
+    void commitGraphicsState();
     
     void commitComputeInitBarriers();
     void commitComputePostBarriers();

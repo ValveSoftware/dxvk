@@ -723,6 +723,12 @@ namespace dxvk {
       if (m_moduleInfo.xfb != nullptr)
         info.sclass = spv::StorageClassPrivate;
       
+      // In geometry shaders, don't duplicate system value outputs
+      // to stay within device limits. The pixel shader will read
+      // all GS system value outputs as system value inputs.
+      if (m_programInfo.type() == DxbcProgramType::GeometryShader && sv != DxbcSystemValue::None)
+        info.sclass = spv::StorageClassPrivate;
+
       const uint32_t varId = this->emitNewVariable(info);
       m_module.setDebugName(varId, str::format("o", regIdx).c_str());
       
@@ -2405,6 +2411,11 @@ namespace dxvk {
     
     m_module.opLabel(cond.labelIf);
 
+    // Only use subgroup ops on compute to avoid having to
+    // deal with helper invocations or hardware limitations
+    bool useSubgroupOps = m_moduleInfo.options.useSubgroupOpsForAtomicCounters
+      && m_programInfo.type() == DxbcProgramType::ComputeShader;
+
     // In case we have subgroup ops enabled, we need to
     // count the number of active lanes, the lane index,
     // and we need to perform the atomic op conditionally
@@ -2413,7 +2424,7 @@ namespace dxvk {
 
     DxbcConditional elect;
 
-    if (m_moduleInfo.options.useSubgroupOpsForAtomicCounters) {
+    if (useSubgroupOps) {
       m_module.enableCapability(spv::CapabilityGroupNonUniform);
       m_module.enableCapability(spv::CapabilityGroupNonUniformBallot);
 
@@ -2498,7 +2509,7 @@ namespace dxvk {
 
     // If we're using subgroup ops, we have to broadcast
     // the result of the atomic op and compute the index
-    if (m_moduleInfo.options.useSubgroupOpsForAtomicCounters) {
+    if (useSubgroupOps) {
       m_module.opBranch(elect.labelEnd);
       m_module.opLabel (elect.labelEnd);
 

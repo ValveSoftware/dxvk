@@ -1,10 +1,11 @@
 #include <algorithm>
 
+#include "dxvk_device.h"
 #include "dxvk_renderpass.h"
 
 namespace dxvk {
   
-  bool DxvkRenderPassFormat::matches(const DxvkRenderPassFormat& fmt) const {
+  bool DxvkRenderPassFormat::eq(const DxvkRenderPassFormat& fmt) const {
     bool eq = sampleCount == fmt.sampleCount;
     
     for (uint32_t i = 0; i < MaxNumRenderTargets && eq; i++) {
@@ -16,6 +17,21 @@ namespace dxvk {
        && depth.layout == fmt.depth.layout;
     
     return eq;
+  }
+
+
+  size_t DxvkRenderPassFormat::hash() const {
+    DxvkHashState state;
+    state.add(uint32_t(sampleCount));
+
+    for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+      state.add(uint32_t(color[i].format));
+      state.add(uint32_t(color[i].layout));
+    }
+
+    state.add(uint32_t(depth.format));
+    state.add(uint32_t(depth.layout));
+    return state;
   }
   
   
@@ -39,7 +55,7 @@ namespace dxvk {
   
   
   bool DxvkRenderPass::hasCompatibleFormat(const DxvkRenderPassFormat& fmt) const {
-    return m_format.matches(fmt);
+    return m_format.eq(fmt);
   }
   
   
@@ -205,8 +221,8 @@ namespace dxvk {
   }
   
   
-  DxvkRenderPassPool::DxvkRenderPassPool(const Rc<vk::DeviceFn>& vkd)
-  : m_vkd(vkd) {
+  DxvkRenderPassPool::DxvkRenderPassPool(const DxvkDevice* device)
+  : m_vkd(device->vkd()) {
     
   }
   
@@ -216,17 +232,17 @@ namespace dxvk {
   }
   
   
-  Rc<DxvkRenderPass> DxvkRenderPassPool::getRenderPass(const DxvkRenderPassFormat& fmt) {
+  DxvkRenderPass* DxvkRenderPassPool::getRenderPass(const DxvkRenderPassFormat& fmt) {
     std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto entry = m_renderPasses.find(fmt);
+    if (entry != m_renderPasses.end())
+      return &entry->second;
     
-    for (const auto& r : m_renderPasses) {
-      if (r->hasCompatibleFormat(fmt))
-        return r;
-    }
-    
-    Rc<DxvkRenderPass> rp = new DxvkRenderPass(m_vkd, fmt);
-    m_renderPasses.push_back(rp);
-    return rp;
+    auto result = m_renderPasses.emplace(std::piecewise_construct,
+      std::tuple(fmt),
+      std::tuple(m_vkd, fmt));
+    return &result.first->second;
   }
   
 }

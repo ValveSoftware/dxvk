@@ -80,6 +80,18 @@ namespace dxvk {
     uint32_t pendingSubmissions() const {
       return m_pending.load();
     }
+
+    /**
+     * \brief Retrieves estimated GPU idle time
+     *
+     * This is a monotonically increasing counter
+     * which can be evaluated periodically in order
+     * to calculate the GPU load.
+     * \returns Accumulated GPU idle time, in us
+     */
+    uint64_t gpuIdleTicks() const {
+      return m_gpuIdle.load();
+    }
     
     /**
      * \brief Submits a command list asynchronously
@@ -144,9 +156,11 @@ namespace dxvk {
   private:
 
     DxvkDevice*             m_device;
+    bool                    m_asyncPresent;
     
     std::atomic<bool>       m_stopped = { false };
     std::atomic<uint32_t>   m_pending = { 0u };
+    std::atomic<uint64_t>   m_gpuIdle = { 0ull };
 
     std::mutex              m_mutex;
     std::mutex              m_mutexQueue;

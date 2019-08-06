@@ -247,13 +247,14 @@ namespace dxvk {
   void STDMETHODCALLTYPE D3D11DeviceContext::Begin(ID3D11Asynchronous *pAsync) {
     D3D10DeviceLock lock = LockContext();
 
-    if (!pAsync)
+    if (unlikely(!pAsync))
       return;
     
-    Com<D3D11Query> queryPtr = static_cast<D3D11Query*>(pAsync);
+    Com<D3D11Query, false> query(static_cast<D3D11Query*>(pAsync));
 
-    EmitCs([queryPtr] (DxvkContext* ctx) {
-      queryPtr->Begin(ctx);
+    EmitCs([cQuery = std::move(query)]
+    (DxvkContext* ctx) {
+      cQuery->Begin(ctx);
     });
   }
   
@@ -261,13 +262,14 @@ namespace dxvk {
   void STDMETHODCALLTYPE D3D11DeviceContext::End(ID3D11Asynchronous *pAsync) {
     D3D10DeviceLock lock = LockContext();
 
-    if (!pAsync)
+    if (unlikely(!pAsync))
       return;
     
-    Com<D3D11Query> queryPtr = static_cast<D3D11Query*>(pAsync);
-    
-    EmitCs([queryPtr] (DxvkContext* ctx) {
-      queryPtr->End(ctx);
+    Com<D3D11Query, false> query(static_cast<D3D11Query*>(pAsync));
+
+    EmitCs([cQuery = std::move(query)]
+    (DxvkContext* ctx) {
+      cQuery->End(ctx);
     });
   }
   
@@ -291,7 +293,7 @@ namespace dxvk {
     //   return;
 
     // EmitCs([
-    //   cPredicate = Com<D3D11Query>(predicate),
+    //   cPredicate = Com<D3D11Query, false>(predicate),
     //   cValue     = PredicateValue
     // ] (DxvkContext* ctx) {
     //   DxvkBufferSlice predSlice;
@@ -711,17 +713,12 @@ namespace dxvk {
     if (!rtv)
       return;
     
-    const Rc<DxvkImageView> view = rtv->GetImageView();
-    
-    VkClearValue clearValue;
-    clearValue.color.float32[0] = ColorRGBA[0];
-    clearValue.color.float32[1] = ColorRGBA[1];
-    clearValue.color.float32[2] = ColorRGBA[2];
-    clearValue.color.float32[3] = ColorRGBA[3];
+    auto view  = rtv->GetImageView();
+    auto color = ConvertColorValue(ColorRGBA, view->formatInfo());
     
     EmitCs([
-      cClearValue = clearValue,
-      cImageView  = view
+      cClearValue = color,
+      cImageView  = std::move(view)
     ] (DxvkContext* ctx) {
       ctx->clearRenderTarget(
         cImageView,
@@ -843,6 +840,16 @@ namespace dxvk {
     if (!uav)
       return;
     
+    auto imgView = uav->GetImageView();
+    auto bufView = uav->GetBufferView();
+
+    const DxvkFormatInfo* info = nullptr;
+    if (imgView != nullptr) info = imgView->formatInfo();
+    if (bufView != nullptr) info = bufView->formatInfo();
+
+    if (!info || info->flags.any(DxvkFormatFlag::SampledSInt, DxvkFormatFlag::SampledUInt))
+      return;
+    
     VkClearValue clearValue;
     clearValue.color.float32[0] = Values[0];
     clearValue.color.float32[1] = Values[1];
@@ -852,7 +859,7 @@ namespace dxvk {
     if (uav->GetResourceType() == D3D11_RESOURCE_DIMENSION_BUFFER) {
       EmitCs([
         cClearValue = clearValue,
-        cDstView    = uav->GetBufferView()
+        cDstView    = std::move(bufView)
       ] (DxvkContext* ctx) {
         ctx->clearBufferView(
           cDstView, 0,
@@ -862,7 +869,7 @@ namespace dxvk {
     } else {
       EmitCs([
         cClearValue = clearValue,
-        cDstView    = uav->GetImageView()
+        cDstView    = std::move(imgView)
       ] (DxvkContext* ctx) {
         ctx->clearImageView(cDstView,
           VkOffset3D { 0, 0, 0 },
@@ -971,25 +978,8 @@ namespace dxvk {
     // Convert the clear color format. ClearView takes
     // the clear value for integer formats as a set of
     // integral floats, so we'll have to convert.
-    VkClearValue        clearValue;
-    VkImageAspectFlags  clearAspect;
-
-    if (imgView == nullptr || imgView->info().aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
-      clearAspect = VK_IMAGE_ASPECT_COLOR_BIT;
-
-      for (uint32_t i = 0; i < 4; i++) {
-        if (formatInfo->flags.test(DxvkFormatFlag::SampledUInt))
-          clearValue.color.uint32[i] = uint32_t(Color[i]);
-        else if (formatInfo->flags.test(DxvkFormatFlag::SampledSInt))
-          clearValue.color.int32[i] = int32_t(Color[i]);
-        else
-          clearValue.color.float32[i] = Color[i];
-      }
-    } else {
-      clearAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-      clearValue.depthStencil.depth   = Color[0];
-      clearValue.depthStencil.stencil = 0;
-    }
+    VkClearValue        clearValue  = ConvertColorValue(Color, formatInfo);
+    VkImageAspectFlags  clearAspect = formatInfo->aspectMask & (VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT);
 
     // Clear all the rectangles that are specified
     for (uint32_t i = 0; i < NumRects; i++) {
@@ -2969,8 +2959,12 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyInputLayout() {
-    if (m_state.ia.inputLayout != nullptr) {
-      EmitCs([cInputLayout = m_state.ia.inputLayout] (DxvkContext* ctx) {
+    auto inputLayout = m_state.ia.inputLayout.prvRef();
+
+    if (likely(inputLayout != nullptr)) {
+      EmitCs([
+        cInputLayout = std::move(inputLayout)
+      ] (DxvkContext* ctx) {
         cInputLayout->BindToContext(ctx);
       });
     } else {
@@ -2982,52 +2976,31 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyPrimitiveTopology() {
-    if (m_state.ia.primitiveTopology == D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED)
-      return;
-    
-    const DxvkInputAssemblyState iaState =
-      [Topology = m_state.ia.primitiveTopology] () -> DxvkInputAssemblyState {
-      if (Topology >= D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST
-       && Topology <= D3D11_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST) {
-        // Tessellation patch. The number of control points per
-        // patch can be inferred from the enum value in D3D11.
-        return { VK_PRIMITIVE_TOPOLOGY_PATCH_LIST, VK_FALSE,
-          uint32_t(Topology - D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + 1) };
-      } else {
-        switch (Topology) {
-          case D3D11_PRIMITIVE_TOPOLOGY_POINTLIST:
-            return { VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_FALSE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_LINELIST:
-            return { VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_FALSE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP:
-            return { VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_TRUE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST:
-            return { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE, 0 };
-            
-          case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
-            return { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_TRUE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_LINELIST_ADJ:
-            return { VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY, VK_FALSE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ:
-            return { VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY, VK_TRUE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ:
-            return { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY, VK_FALSE, 0 };
-          
-          case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ:
-            return { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY, VK_TRUE, 0 };
-          
-          default:
-            Logger::err(str::format("D3D11: Invalid primitive topology: ", Topology));
-            return { };
-        }
-      }
-    }();
+    D3D11_PRIMITIVE_TOPOLOGY topology = m_state.ia.primitiveTopology;
+    DxvkInputAssemblyState iaState = { };
+
+    if (topology <= D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ) {
+      static const std::array<DxvkInputAssemblyState, 14> s_iaStates = {{
+        { }, // D3D_PRIMITIVE_TOPOLOGY_UNDEFINED
+        { VK_PRIMITIVE_TOPOLOGY_POINT_LIST,     VK_FALSE, 0 },
+        { VK_PRIMITIVE_TOPOLOGY_LINE_LIST,      VK_FALSE, 0 },
+        { VK_PRIMITIVE_TOPOLOGY_LINE_STRIP,     VK_TRUE,  0 },
+        { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,  VK_FALSE, 0 },
+        { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_TRUE,  0 },
+        { }, { }, { }, { }, // Random gap that exists for no reason
+        { VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY,       VK_FALSE, 0 },
+        { VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY,      VK_TRUE,  0 },
+        { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY,   VK_FALSE, 0 },
+        { VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY,  VK_TRUE,  0 },
+      }};
+
+      iaState = s_iaStates[uint32_t(topology)];
+    } else if (topology >= D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST
+            && topology <= D3D11_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST) {
+      // The number of control points per patch can be inferred from the enum value in D3D11
+      uint32_t vertexCount = uint32_t(topology - D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + 1);
+      iaState = { VK_PRIMITIVE_TOPOLOGY_PATCH_LIST, VK_FALSE, vertexCount };
+    }
     
     EmitCs([iaState] (DxvkContext* ctx) {
       ctx->setInputAssemblyState(iaState);
@@ -3036,10 +3009,13 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyBlendState() {
+    auto cbState = m_state.om.cbState.prvRef();
+
+    if (unlikely(cbState == nullptr))
+      cbState = m_defaultBlendState.prvRef();
+
     EmitCs([
-      cBlendState = m_state.om.cbState != nullptr
-        ? m_state.om.cbState
-        : m_defaultBlendState,
+      cBlendState = std::move(cbState),
       cSampleMask = m_state.om.sampleMask
     ] (DxvkContext* ctx) {
       cBlendState->BindToContext(ctx, cSampleMask);
@@ -3059,10 +3035,13 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyDepthStencilState() {
+    auto dsState = m_state.om.dsState.prvRef();
+
+    if (unlikely(dsState == nullptr))
+      dsState = m_defaultDepthStencilState.prvRef();
+
     EmitCs([
-      cDepthStencilState = m_state.om.dsState != nullptr
-        ? m_state.om.dsState
-        : m_defaultDepthStencilState
+      cDepthStencilState = std::move(dsState)
     ] (DxvkContext* ctx) {
       cDepthStencilState->BindToContext(ctx);
     });
@@ -3079,10 +3058,13 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyRasterizerState() {
+    auto rsState = m_state.rs.state.prvRef();
+
+    if (unlikely(rsState == nullptr))
+      rsState = m_defaultRasterizerState.prvRef();
+
     EmitCs([
-      cRasterizerState = m_state.rs.state != nullptr
-        ? m_state.rs.state
-        : m_defaultRasterizerState
+      cRasterizerState = std::move(rsState)
     ] (DxvkContext* ctx) {
       cRasterizerState->BindToContext(ctx);
     });
@@ -3259,17 +3241,9 @@ namespace dxvk {
           D3D11Buffer*                      pBuffer,
           UINT                              Offset,
           DXGI_FORMAT                       Format) {
-    // As in Vulkan, the index format can be either a 32-bit
-    // or 16-bit unsigned integer, no other formats are allowed.
-    VkIndexType indexType = VK_INDEX_TYPE_UINT32;
-    
-    if (pBuffer != nullptr) {
-      switch (Format) {
-        case DXGI_FORMAT_R16_UINT: indexType = VK_INDEX_TYPE_UINT16; break;
-        case DXGI_FORMAT_R32_UINT: indexType = VK_INDEX_TYPE_UINT32; break;
-        default: Logger::err(str::format("D3D11: Invalid index format: ", Format));
-      }
-    }
+    VkIndexType indexType = Format == DXGI_FORMAT_R16_UINT
+      ? VK_INDEX_TYPE_UINT16
+      : VK_INDEX_TYPE_UINT32;
     
     EmitCs([
       cBufferSlice  = pBuffer != nullptr ? pBuffer->GetBufferSlice(Offset) : DxvkBufferSlice(),
@@ -3780,6 +3754,29 @@ namespace dxvk {
   }
   
   
+  VkClearValue D3D11DeviceContext::ConvertColorValue(
+    const FLOAT                             Color[4],
+    const DxvkFormatInfo*                   pFormatInfo) {
+    VkClearValue result;
+
+    if (pFormatInfo->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) {
+      for (uint32_t i = 0; i < 4; i++) {
+        if (pFormatInfo->flags.test(DxvkFormatFlag::SampledUInt))
+          result.color.uint32[i] = uint32_t(std::max(0.0f, Color[i]));
+        else if (pFormatInfo->flags.test(DxvkFormatFlag::SampledSInt))
+          result.color.int32[i] = int32_t(Color[i]);
+        else
+          result.color.float32[i] = Color[i];
+      }
+    } else {
+      result.depthStencil.depth = Color[0];
+      result.depthStencil.stencil = 0;
+    }
+
+    return result;
+  }
+
+
   DxvkDataSlice D3D11DeviceContext::AllocUpdateBufferSlice(size_t Size) {
     constexpr size_t UpdateBufferSize = 16 * 1024 * 1024;
     

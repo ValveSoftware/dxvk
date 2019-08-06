@@ -12,6 +12,8 @@
 
 namespace dxvk {
 
+  class DxvkDevice;
+
   /**
    * \brief Copy pipeline
    * 
@@ -63,6 +65,7 @@ namespace dxvk {
       const Rc<vk::DeviceFn>&   vkd,
       const Rc<DxvkImageView>&  dstImageView,
       const Rc<DxvkImageView>&  srcImageView,
+      const Rc<DxvkImageView>&  srcStencilView,
             bool                discardDst);
     
     ~DxvkMetaCopyRenderPass();
@@ -77,10 +80,11 @@ namespace dxvk {
 
   private:
 
-    const Rc<vk::DeviceFn>  m_vkd;
+    Rc<vk::DeviceFn>  m_vkd;
 
-    const Rc<DxvkImageView> m_dstImageView;
-    const Rc<DxvkImageView> m_srcImageView;
+    Rc<DxvkImageView> m_dstImageView;
+    Rc<DxvkImageView> m_srcImageView;
+    Rc<DxvkImageView> m_srcStencilView;
     
     VkRenderPass  m_renderPass  = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
@@ -97,11 +101,11 @@ namespace dxvk {
    * Meta copy operations are necessary in order
    * to copy data between color and depth images.
    */
-  class DxvkMetaCopyObjects : public RcObject {
+  class DxvkMetaCopyObjects {
 
   public:
 
-    DxvkMetaCopyObjects(const Rc<vk::DeviceFn>& vkd);
+    DxvkMetaCopyObjects(const DxvkDevice* device);
     ~DxvkMetaCopyObjects();
 
     /**
@@ -134,20 +138,21 @@ namespace dxvk {
   private:
 
     struct FragShaders {
-      VkShaderModule frag1D;
-      VkShaderModule frag2D;
-      VkShaderModule fragMs;
+      VkShaderModule frag1D = VK_NULL_HANDLE;
+      VkShaderModule frag2D = VK_NULL_HANDLE;
+      VkShaderModule fragMs = VK_NULL_HANDLE;
     };
 
     Rc<vk::DeviceFn> m_vkd;
 
     VkSampler m_sampler;
 
-    VkShaderModule m_shaderVert;
-    VkShaderModule m_shaderGeom;
+    VkShaderModule m_shaderVert = VK_NULL_HANDLE;
+    VkShaderModule m_shaderGeom = VK_NULL_HANDLE;
 
     FragShaders m_color;
     FragShaders m_depth;
+    FragShaders m_depthStencil;
 
     std::mutex m_mutex;
 
@@ -167,7 +172,8 @@ namespace dxvk {
     VkRenderPass createRenderPass(
       const DxvkMetaCopyPipelineKey&  key) const;
     
-    VkDescriptorSetLayout createDescriptorSetLayout() const;
+    VkDescriptorSetLayout createDescriptorSetLayout(
+      const DxvkMetaCopyPipelineKey&  key) const;
     
     VkPipelineLayout createPipelineLayout(
             VkDescriptorSetLayout     descriptorSetLayout) const;
