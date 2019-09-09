@@ -31,17 +31,23 @@ namespace dxvk {
    * on the copy operation they support.
    */
   struct DxvkMetaResolvePipelineKey {
-    VkFormat              format;
-    VkSampleCountFlagBits samples;
+    VkFormat                  format;
+    VkSampleCountFlagBits     samples;
+    VkResolveModeFlagBitsKHR  modeD;
+    VkResolveModeFlagBitsKHR  modeS;
 
     bool eq(const DxvkMetaResolvePipelineKey& other) const {
       return this->format  == other.format
-          && this->samples == other.samples;
+          && this->samples == other.samples
+          && this->modeD   == other.modeD
+          && this->modeS   == other.modeS;
     }
 
     size_t hash() const {
       return (uint32_t(format)  << 4)
-           ^ (uint32_t(samples) << 0);
+           ^ (uint32_t(samples) << 0)
+           ^ (uint32_t(modeD)   << 12)
+           ^ (uint32_t(modeS)   << 16);
     }
   };
 
@@ -59,7 +65,15 @@ namespace dxvk {
       const Rc<vk::DeviceFn>&   vkd,
       const Rc<DxvkImageView>&  dstImageView,
       const Rc<DxvkImageView>&  srcImageView,
+      const Rc<DxvkImageView>&  srcStencilView,
             bool                discardDst);
+    
+    DxvkMetaResolveRenderPass(
+      const Rc<vk::DeviceFn>&        vkd,
+      const Rc<DxvkImageView>&       dstImageView,
+      const Rc<DxvkImageView>&       srcImageView,
+            VkResolveModeFlagBitsKHR modeD,
+            VkResolveModeFlagBitsKHR modeS);
     
     ~DxvkMetaResolveRenderPass();
     
@@ -77,13 +91,20 @@ namespace dxvk {
 
     const Rc<DxvkImageView> m_dstImageView;
     const Rc<DxvkImageView> m_srcImageView;
+    const Rc<DxvkImageView> m_srcStencilView;
     
     VkRenderPass  m_renderPass  = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
 
-    VkRenderPass createRenderPass(bool discard) const;
+    VkRenderPass createShaderRenderPass(bool discard) const;
+    
+    VkRenderPass createAttachmentRenderPass(
+            VkResolveModeFlagBitsKHR modeD,
+            VkResolveModeFlagBitsKHR modeS) const;
 
-    VkFramebuffer createFramebuffer() const;
+    VkFramebuffer createShaderFramebuffer() const;
+    
+    VkFramebuffer createAttachmentFramebuffer() const;
 
   };
   
@@ -106,11 +127,15 @@ namespace dxvk {
      * 
      * \param [in] format Destination image format
      * \param [in] samples Destination sample count
+     * \param [in] depthResolveMode Depth resolve mode
+     * \param [in] stencilResolveMode Stencil resolve mode
      * \returns Compatible pipeline for the operation
      */
     DxvkMetaResolvePipeline getPipeline(
-            VkFormat              format,
-            VkSampleCountFlagBits samples);
+            VkFormat                  format,
+            VkSampleCountFlagBits     samples,
+            VkResolveModeFlagBitsKHR  depthResolveMode,
+            VkResolveModeFlagBitsKHR  stencilResolveMode);
 
   private:
 
@@ -123,6 +148,8 @@ namespace dxvk {
     VkShaderModule m_shaderFragF = VK_NULL_HANDLE;
     VkShaderModule m_shaderFragU = VK_NULL_HANDLE;
     VkShaderModule m_shaderFragI = VK_NULL_HANDLE;
+    VkShaderModule m_shaderFragD = VK_NULL_HANDLE;
+    VkShaderModule m_shaderFragDS = VK_NULL_HANDLE;
 
     std::mutex m_mutex;
 
@@ -142,10 +169,11 @@ namespace dxvk {
     VkRenderPass createRenderPass(
       const DxvkMetaResolvePipelineKey& key);
     
-    VkDescriptorSetLayout createDescriptorSetLayout() const;
+    VkDescriptorSetLayout createDescriptorSetLayout(
+      const DxvkMetaResolvePipelineKey& key);
     
     VkPipelineLayout createPipelineLayout(
-            VkDescriptorSetLayout  descriptorSetLayout) const;
+            VkDescriptorSetLayout  descriptorSetLayout);
     
     VkPipeline createPipelineObject(
       const DxvkMetaResolvePipelineKey& key,

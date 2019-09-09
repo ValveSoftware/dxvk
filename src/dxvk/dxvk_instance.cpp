@@ -12,7 +12,7 @@ namespace dxvk {
     Logger::info(str::format("DXVK: ", DXVK_VERSION));
 
     m_config = Config::getUserConfig();
-    m_config.merge(Config::getAppConfig(env::getExeName()));
+    m_config.merge(Config::getAppConfig(env::getExePath()));
     m_config.logOptions();
 
     g_vrInstance.initInstanceExtensions();
@@ -102,7 +102,7 @@ namespace dxvk {
     appInfo.pApplicationName      = appName.c_str();
     appInfo.applicationVersion    = 0;
     appInfo.pEngineName           = "DXVK";
-    appInfo.engineVersion         = VK_MAKE_VERSION(1, 3, 2);
+    appInfo.engineVersion         = VK_MAKE_VERSION(1, 3, 4);
     appInfo.apiVersion            = VK_MAKE_VERSION(1, 1, 0);
     
     VkInstanceCreateInfo info;

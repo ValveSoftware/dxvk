@@ -1,4 +1,4 @@
-project('dxvk', ['c', 'cpp'], version : 'v1.3.2', meson_version : '>= 0.43')
+project('dxvk', ['c', 'cpp'], version : 'v1.3.4', meson_version : '>= 0.46')
 
 cpu_family = target_machine.cpu_family()
 
@@ -9,7 +9,7 @@ if dxvk_compiler.get_id() == 'msvc'
   dxvk_cpp_std='c++latest'
   dxvk_msvc=true
 else
-  dxvk_cpp_std='c++1z'
+  dxvk_cpp_std='c++17'
   dxvk_msvc=false
 endif
 
@@ -33,6 +33,9 @@ dxvk_winelib = dxvk_compiler.compiles(code, name: 'winelib check')
 dxvk_extradep = [ ]
 
 if dxvk_winelib
+  if dxvk_compiler.has_argument('--no-gnu-unique')
+    add_project_arguments('--no-gnu-unique', language : ['cpp'])
+  endif
   wrc = find_program('wrc')
   lib_vulkan  = declare_dependency(link_args: [ '-lwinevulkan' ])
   lib_d3d11   = declare_dependency(link_args: [ '-ld3d11' ])
@@ -49,6 +52,14 @@ else
     wrc = find_program('rc')
   else
     wrc = cpu_family == 'x86_64' ? find_program('x86_64-w64-mingw32-windres') : find_program('i686-w64-mingw32-windres')
+  endif
+  if cpu_family == 'x86'
+    if dxvk_compiler.has_link_argument('-Wl,--add-stdcall-alias')
+      add_global_link_arguments('-Wl,--add-stdcall-alias', language: 'cpp')
+    endif
+    if dxvk_compiler.has_link_argument('-Wl,--enable-stdcall-fixup')
+      add_global_link_arguments('-Wl,--enable-stdcall-fixup', language: 'cpp')
+    endif
   endif
 
   lib_vulkan  = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)

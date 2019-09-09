@@ -30,8 +30,10 @@ namespace dxvk {
     Com<D3D11SamplerState>, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT>;
     
   
-  using D3D11ShaderResourceBindings = std::array<
-    Com<D3D11ShaderResourceView>, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>;
+  struct D3D11ShaderResourceBindings {
+    std::array<Com<D3D11ShaderResourceView>, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT> views;
+    DxvkBindingSet<D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>                           hazardous;
+  };
     
     
   using D3D11UnorderedAccessBindings = std::array<
@@ -85,6 +87,8 @@ namespace dxvk {
     D3D11SamplerBindings          samplers;
     D3D11ShaderResourceBindings   shaderResources;
     D3D11UnorderedAccessBindings  unorderedAccessViews;
+
+    DxvkBindingSet<D3D11_1_UAV_SLOT_COUNT> uavMask = { };
   };
   
   

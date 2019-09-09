@@ -5,6 +5,7 @@
 #include "../d3d10/d3d10_view_srv.h"
 
 #include "d3d11_device_child.h"
+#include "d3d11_view.h"
 
 namespace dxvk {
   
@@ -32,6 +33,14 @@ namespace dxvk {
     
     void STDMETHODCALLTYPE GetDesc(D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc) final;
     
+    const D3D11_VK_VIEW_INFO& GetViewInfo() const {
+      return m_info;
+    }
+
+    BOOL TestHazards() const {
+      return m_info.BindFlags & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_UNORDERED_ACCESS);
+    }
+
     D3D11_RESOURCE_DIMENSION GetResourceType() const {
       D3D11_RESOURCE_DIMENSION type;
       m_resource->GetType(&type);
@@ -69,6 +78,7 @@ namespace dxvk {
     Com<D3D11Device>                  m_device;
     ID3D11Resource*                   m_resource;
     D3D11_SHADER_RESOURCE_VIEW_DESC   m_desc;
+    D3D11_VK_VIEW_INFO                m_info;
     Rc<DxvkBufferView>                m_bufferView;
     Rc<DxvkImageView>                 m_imageView;
     D3D10ShaderResourceView           m_d3d10;

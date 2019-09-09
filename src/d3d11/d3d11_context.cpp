@@ -171,19 +171,28 @@ namespace dxvk {
     
     // Default shader resources
     for (uint32_t i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; i++) {
-      m_state.vs.shaderResources[i] = nullptr;
-      m_state.hs.shaderResources[i] = nullptr;
-      m_state.ds.shaderResources[i] = nullptr;
-      m_state.gs.shaderResources[i] = nullptr;
-      m_state.ps.shaderResources[i] = nullptr;
-      m_state.cs.shaderResources[i] = nullptr;
+      m_state.vs.shaderResources.views[i] = nullptr;
+      m_state.hs.shaderResources.views[i] = nullptr;
+      m_state.ds.shaderResources.views[i] = nullptr;
+      m_state.gs.shaderResources.views[i] = nullptr;
+      m_state.ps.shaderResources.views[i] = nullptr;
+      m_state.cs.shaderResources.views[i] = nullptr;
     }
+
+    m_state.vs.shaderResources.hazardous.clear();
+    m_state.hs.shaderResources.hazardous.clear();
+    m_state.ds.shaderResources.hazardous.clear();
+    m_state.gs.shaderResources.hazardous.clear();
+    m_state.ps.shaderResources.hazardous.clear();
+    m_state.cs.shaderResources.hazardous.clear();
     
     // Default UAVs
     for (uint32_t i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++) {
       m_state.ps.unorderedAccessViews[i] = nullptr;
       m_state.cs.unorderedAccessViews[i] = nullptr;
     }
+
+    m_state.cs.uavMask.clear();
 
     // Default ID state
     m_state.id.argBuffer = nullptr;
@@ -1804,7 +1813,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.vs.shaderResources.at(StartSlot + i).ref();
+      ppShaderResourceViews[i] = m_state.vs.shaderResources.views[StartSlot + i].ref();
   }
   
   
@@ -1815,7 +1824,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.vs.samplers.at(StartSlot + i).ref();
+      ppSamplers[i] = m_state.vs.samplers[StartSlot + i].ref();
   }
   
   
@@ -1946,7 +1955,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.hs.shaderResources.at(StartSlot + i).ref();
+      ppShaderResourceViews[i] = m_state.hs.shaderResources.views[StartSlot + i].ref();
   }
   
   
@@ -1957,7 +1966,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.hs.samplers.at(StartSlot + i).ref();
+      ppSamplers[i] = m_state.hs.samplers[StartSlot + i].ref();
   }
   
   
@@ -2088,7 +2097,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.ds.shaderResources.at(StartSlot + i).ref();
+      ppShaderResourceViews[i] = m_state.ds.shaderResources.views[StartSlot + i].ref();
   }
   
   
@@ -2099,7 +2108,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.ds.samplers.at(StartSlot + i).ref();
+      ppSamplers[i] = m_state.ds.samplers[StartSlot + i].ref();
   }
   
   
@@ -2230,7 +2239,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.gs.shaderResources.at(StartSlot + i).ref();
+      ppShaderResourceViews[i] = m_state.gs.shaderResources.views[StartSlot + i].ref();
   }
   
   
@@ -2241,7 +2250,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.gs.samplers.at(StartSlot + i).ref();
+      ppSamplers[i] = m_state.gs.samplers[StartSlot + i].ref();
   }
   
   
@@ -2372,7 +2381,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.ps.shaderResources.at(StartSlot + i).ref();
+      ppShaderResourceViews[i] = m_state.ps.shaderResources.views[StartSlot + i].ref();
   }
   
   
@@ -2383,7 +2392,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.ps.samplers.at(StartSlot + i).ref();
+      ppSamplers[i] = m_state.ps.samplers[StartSlot + i].ref();
   }
   
   
@@ -2468,12 +2477,53 @@ namespace dxvk {
           ID3D11UnorderedAccessView* const* ppUnorderedAccessViews,
     const UINT*                             pUAVInitialCounts) {
     D3D10DeviceLock lock = LockContext();
+
+    if (TestRtvUavHazards(0, nullptr, NumUAVs, ppUnorderedAccessViews))
+      return;
     
-    SetUnorderedAccessViews<DxbcProgramType::ComputeShader>(
-      m_state.cs.unorderedAccessViews,
-      StartSlot, NumUAVs,
-      ppUnorderedAccessViews,
-      pUAVInitialCounts);
+    // Unbind previously bound conflicting UAVs
+    uint32_t uavSlotId = computeUavBinding       (DxbcProgramType::ComputeShader, 0);
+    uint32_t ctrSlotId = computeUavCounterBinding(DxbcProgramType::ComputeShader, 0);
+
+    int32_t uavId = m_state.cs.uavMask.findNext(0);
+
+    while (uavId >= 0) {
+      if (uint32_t(uavId) < StartSlot || uint32_t(uavId) >= StartSlot + NumUAVs) {
+        for (uint32_t i = 0; i < NumUAVs; i++) {
+          auto uav = static_cast<D3D11UnorderedAccessView*>(ppUnorderedAccessViews[i]);
+
+          if (CheckViewOverlap(uav, m_state.cs.unorderedAccessViews[uavId].ptr())) {
+            m_state.cs.unorderedAccessViews[uavId] = nullptr;
+            m_state.cs.uavMask.clr(uavId);
+
+            BindUnorderedAccessView(
+              uavSlotId + uavId, nullptr,
+              ctrSlotId + uavId, ~0u);
+          }
+        }
+
+        uavId = m_state.cs.uavMask.findNext(uavId + 1);
+      } else {
+        uavId = m_state.cs.uavMask.findNext(StartSlot + NumUAVs);
+      }
+    }
+
+    // Actually bind the given UAVs
+    for (uint32_t i = 0; i < NumUAVs; i++) {
+      auto uav = static_cast<D3D11UnorderedAccessView*>(ppUnorderedAccessViews[i]);
+      auto ctr = pUAVInitialCounts ? pUAVInitialCounts[i] : ~0u;
+
+      if (m_state.cs.unorderedAccessViews[StartSlot + i] != uav || ctr != ~0u) {
+        m_state.cs.unorderedAccessViews[StartSlot + i] = uav;
+        m_state.cs.uavMask.set(StartSlot + i, uav != nullptr);
+
+        BindUnorderedAccessView(
+          uavSlotId + StartSlot + i, uav,
+          ctrSlotId + StartSlot + i, ctr);
+        
+        ResolveCsSrvHazards(uav);
+      }
+    }
   }
   
   
@@ -2529,7 +2579,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.cs.shaderResources.at(StartSlot + i).ref();
+      ppShaderResourceViews[i] = m_state.cs.shaderResources.views[StartSlot + i].ref();
   }
   
   
@@ -2540,7 +2590,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.cs.samplers.at(StartSlot + i).ref();
+      ppSamplers[i] = m_state.cs.samplers[StartSlot + i].ref();
   }
   
   
@@ -2551,7 +2601,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumUAVs; i++)
-      ppUnorderedAccessViews[i] = m_state.cs.unorderedAccessViews.at(StartSlot + i).ref();
+      ppUnorderedAccessViews[i] = m_state.cs.unorderedAccessViews[StartSlot + i].ref();
   }
   
   
@@ -2574,23 +2624,44 @@ namespace dxvk {
           ID3D11UnorderedAccessView* const* ppUnorderedAccessViews,
     const UINT*                             pUAVInitialCounts) {
     D3D10DeviceLock lock = LockContext();
+
+    if (TestRtvUavHazards(NumRTVs, ppRenderTargetViews, NumUAVs, ppUnorderedAccessViews))
+      return;
     
+    bool needsUpdate = false;
+    bool needsSpill  = false;
+
     if (likely(NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)) {
       // Native D3D11 does not change the render targets if
       // the parameters passed to this method are invalid.
       if (!ValidateRenderTargets(NumRTVs, ppRenderTargetViews, pDepthStencilView))
         return;
       
-      for (uint32_t i = 0; i < m_state.om.renderTargetViews.size(); i++)
-        m_state.om.renderTargetViews[i] = i < NumRTVs
+      for (uint32_t i = 0; i < m_state.om.renderTargetViews.size(); i++) {
+        auto rtv = i < NumRTVs
           ? static_cast<D3D11RenderTargetView*>(ppRenderTargetViews[i])
           : nullptr;
-      
-      m_state.om.depthStencilView = static_cast<D3D11DepthStencilView*>(pDepthStencilView);
-      m_state.om.maxRtv           = NumRTVs;
-    }
+        
+        if (m_state.om.renderTargetViews[i] != rtv) {
+          m_state.om.renderTargetViews[i] = rtv;
+          needsUpdate = true;
+          ResolveOmSrvHazards(rtv);
 
-    bool spillRenderPass = false;
+          if (NumUAVs == D3D11_KEEP_UNORDERED_ACCESS_VIEWS)
+            ResolveOmUavHazards(rtv);
+        }
+      }
+
+      auto dsv = static_cast<D3D11DepthStencilView*>(pDepthStencilView);
+
+      if (m_state.om.depthStencilView != dsv) {
+        m_state.om.depthStencilView = dsv;
+        needsUpdate = true;
+        ResolveOmSrvHazards(dsv);
+      }
+      
+      m_state.om.maxRtv = NumRTVs;
+    }
 
     if (unlikely(NumUAVs || m_state.om.maxUav)) {
       uint32_t uavSlotId = computeUavBinding       (DxbcProgramType::PixelShader, 0);
@@ -2615,14 +2686,20 @@ namespace dxvk {
             BindUnorderedAccessView(
               uavSlotId + i, uav,
               ctrSlotId + i, ctr);
+            
+            ResolveOmSrvHazards(uav);
 
-            spillRenderPass = true;
+            if (NumRTVs == D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
+              needsUpdate |= ResolveOmRtvHazards(uav);
+
+            needsSpill = true;
           }
         }
       }
     }
 
-    BindFramebuffer(spillRenderPass);
+    if (needsUpdate || needsSpill)
+      BindFramebuffer(needsSpill);
   }
   
   
@@ -2838,7 +2915,7 @@ namespace dxvk {
     if (pViewports != nullptr) {
       for (uint32_t i = 0; i < *pNumViewports; i++) {
         if (i < m_state.rs.numViewports) {
-          pViewports[i] = m_state.rs.viewports.at(i);
+          pViewports[i] = m_state.rs.viewports[i];
         } else {
           pViewports[i].TopLeftX = 0.0f;
           pViewports[i].TopLeftY = 0.0f;
@@ -2862,7 +2939,7 @@ namespace dxvk {
     if (pRects != nullptr) {
       for (uint32_t i = 0; i < *pNumRects; i++) {
         if (i < m_state.rs.numScissors) {
-          pRects[i] = m_state.rs.scissors.at(i);
+          pRects[i] = m_state.rs.scissors[i];
         } else {
           pRects[i].left   = 0;
           pRects[i].top    = 0;
@@ -3177,10 +3254,6 @@ namespace dxvk {
 
 
   void D3D11DeviceContext::BindFramebuffer(BOOL Spill) {
-    // NOTE According to the Microsoft docs, we are supposed to
-    // unbind overlapping shader resource views. Since this comes
-    // with a large performance penalty we'll ignore this until an
-    // application actually relies on this behaviour.
     DxvkRenderTargets attachments;
     
     // D3D11 doesn't have the concept of a framebuffer object,
@@ -3514,39 +3587,24 @@ namespace dxvk {
     for (uint32_t i = 0; i < NumResources; i++) {
       auto resView = static_cast<D3D11ShaderResourceView*>(ppResources[i]);
       
-      if (Bindings[StartSlot + i] != resView) {
-        Bindings[StartSlot + i] = resView;
+      if (Bindings.views[StartSlot + i] != resView) {
+        if (unlikely(resView && resView->TestHazards())) {
+          if (TestSrvHazards<ShaderStage>(resView))
+            resView = nullptr;
+
+          // Only set if necessary, but don't reset it on every
+          // bind as this would be more expensive than a few
+          // redundant checks in OMSetRenderTargets and friends.
+          Bindings.hazardous.set(StartSlot + i, resView);
+        }
+
+        Bindings.views[StartSlot + i] = resView;
         BindShaderResource(slotId + i, resView);
       }
     }
   }
   
   
-  template<DxbcProgramType ShaderStage>
-  void D3D11DeviceContext::SetUnorderedAccessViews(
-          D3D11UnorderedAccessBindings&     Bindings,
-          UINT                              StartSlot,
-          UINT                              NumUAVs,
-          ID3D11UnorderedAccessView* const* ppUnorderedAccessViews,
-    const UINT*                             pUAVInitialCounts) {
-    uint32_t uavSlotId = computeUavBinding       (ShaderStage, StartSlot);
-    uint32_t ctrSlotId = computeUavCounterBinding(ShaderStage, StartSlot);
-    
-    for (uint32_t i = 0; i < NumUAVs; i++) {
-      auto uav = static_cast<D3D11UnorderedAccessView*>(ppUnorderedAccessViews[i]);
-      auto ctr = pUAVInitialCounts ? pUAVInitialCounts[i] : ~0u;
-      
-      if (Bindings[StartSlot + i] != uav || ctr != ~0u) {
-        Bindings[StartSlot + i] = uav;
-        
-        BindUnorderedAccessView(
-          uavSlotId + i, uav,
-          ctrSlotId + i, ctr);
-      }
-    }
-  }
-
-
   void D3D11DeviceContext::GetConstantBuffers(
     const D3D11ConstantBufferBindings&      Bindings,
           UINT                              StartSlot,
@@ -3658,8 +3716,8 @@ namespace dxvk {
           D3D11ShaderResourceBindings&      Bindings) {
     uint32_t slotId = computeSrvBinding(Stage, 0);
     
-    for (uint32_t i = 0; i < Bindings.size(); i++)
-      BindShaderResource(slotId + i, Bindings[i].ptr());
+    for (uint32_t i = 0; i < Bindings.views.size(); i++)
+      BindShaderResource(slotId + i, Bindings.views[i].ptr());
   }
   
   
@@ -3716,6 +3774,167 @@ namespace dxvk {
   }
   
   
+  bool D3D11DeviceContext::TestRtvUavHazards(
+          UINT                              NumRTVs,
+          ID3D11RenderTargetView* const*    ppRTVs,
+          UINT                              NumUAVs,
+          ID3D11UnorderedAccessView* const* ppUAVs) {
+    if (NumRTVs == D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL) NumRTVs = 0;
+    if (NumUAVs == D3D11_KEEP_UNORDERED_ACCESS_VIEWS)           NumUAVs = 0;
+
+    for (uint32_t i = 0; i < NumRTVs; i++) {
+      auto rtv = static_cast<D3D11RenderTargetView*>(ppRTVs[i]);
+
+      if (!rtv)
+        continue;
+      
+      for (uint32_t j = 0; j < i; j++) {
+        if (CheckViewOverlap(rtv, static_cast<D3D11RenderTargetView*>(ppRTVs[j])))
+          return true;
+      }
+
+      if (rtv->HasBindFlag(D3D11_BIND_UNORDERED_ACCESS)) {
+        for (uint32_t j = 0; j < NumUAVs; j++) {
+          if (CheckViewOverlap(rtv, static_cast<D3D11UnorderedAccessView*>(ppUAVs[j])))
+            return true;
+        }
+      }
+    }
+
+    for (uint32_t i = 0; i < NumUAVs; i++) {
+      auto uav = static_cast<D3D11UnorderedAccessView*>(ppUAVs[i]);
+
+      if (!uav)
+        continue;
+
+      for (uint32_t j = 0; j < i; j++) {
+        if (CheckViewOverlap(uav, static_cast<D3D11UnorderedAccessView*>(ppUAVs[j])))
+          return true;
+      }
+    }
+
+    return false;
+  }
+
+  
+  template<DxbcProgramType ShaderStage>
+  bool D3D11DeviceContext::TestSrvHazards(
+          D3D11ShaderResourceView*          pView) {
+    bool hazard = false;
+
+    if (ShaderStage == DxbcProgramType::ComputeShader) {
+      int32_t uav = m_state.cs.uavMask.findNext(0);
+
+      while (uav >= 0 && !hazard) {
+        hazard = CheckViewOverlap(pView, m_state.cs.unorderedAccessViews[uav].ptr());
+        uav = m_state.cs.uavMask.findNext(uav + 1);
+      }
+    } else {
+      hazard = CheckViewOverlap(pView, m_state.om.depthStencilView.ptr());
+
+      for (uint32_t i = 0; !hazard && i < m_state.om.maxRtv; i++)
+        hazard = CheckViewOverlap(pView, m_state.om.renderTargetViews[i].ptr());
+
+      for (uint32_t i = 0; !hazard && i < m_state.om.maxUav; i++)
+        hazard = CheckViewOverlap(pView, m_state.ps.unorderedAccessViews[i].ptr());
+    }
+
+    return hazard;
+  }
+
+
+  template<DxbcProgramType ShaderStage, typename T>
+  void D3D11DeviceContext::ResolveSrvHazards(
+          T*                                pView,
+          D3D11ShaderResourceBindings&      Bindings) {
+    uint32_t slotId = computeSrvBinding(ShaderStage, 0);
+    int32_t srvId = Bindings.hazardous.findNext(0);
+
+    while (srvId >= 0) {
+      auto srv = Bindings.views[srvId].ptr();
+
+      if (likely(srv && srv->TestHazards())) {
+        bool hazard = CheckViewOverlap(pView, srv);
+
+        if (unlikely(hazard)) {
+          Bindings.views[srvId] = nullptr;
+          Bindings.hazardous.clr(srvId);
+
+          BindShaderResource(slotId + srvId, nullptr);
+        }
+      } else {
+        // Avoid further redundant iterations
+        Bindings.hazardous.clr(srvId);
+      }
+
+      srvId = Bindings.hazardous.findNext(srvId + 1);
+    }
+  }
+
+
+  template<typename T>
+  void D3D11DeviceContext::ResolveCsSrvHazards(
+          T*                                pView) {
+    if (!pView) return;
+    ResolveSrvHazards<DxbcProgramType::ComputeShader>  (pView, m_state.cs.shaderResources);
+  }
+
+
+  template<typename T>
+  void D3D11DeviceContext::ResolveOmSrvHazards(
+          T*                                pView) {
+    if (!pView) return;
+    ResolveSrvHazards<DxbcProgramType::VertexShader>   (pView, m_state.vs.shaderResources);
+    ResolveSrvHazards<DxbcProgramType::HullShader>     (pView, m_state.hs.shaderResources);
+    ResolveSrvHazards<DxbcProgramType::DomainShader>   (pView, m_state.ds.shaderResources);
+    ResolveSrvHazards<DxbcProgramType::GeometryShader> (pView, m_state.gs.shaderResources);
+    ResolveSrvHazards<DxbcProgramType::PixelShader>    (pView, m_state.ps.shaderResources);
+  }
+
+  
+  bool D3D11DeviceContext::ResolveOmRtvHazards(
+          D3D11UnorderedAccessView*         pView) {
+    if (!pView || !pView->HasBindFlag(D3D11_BIND_RENDER_TARGET))
+      return false;
+
+    bool hazard = false;
+
+    if (CheckViewOverlap(pView, m_state.om.depthStencilView.ptr())) {
+      m_state.om.depthStencilView = nullptr;
+      hazard = true;
+    }
+
+    for (uint32_t i = 0; i < m_state.om.maxRtv; i++) {
+      if (CheckViewOverlap(pView, m_state.om.renderTargetViews[i].ptr())) {
+        m_state.om.renderTargetViews[i] = nullptr;
+        hazard = true;
+      }
+    }
+
+    return hazard;
+  }
+
+
+  void D3D11DeviceContext::ResolveOmUavHazards(
+          D3D11RenderTargetView*            pView) {
+    if (!pView || !pView->HasBindFlag(D3D11_BIND_UNORDERED_ACCESS))
+      return;
+
+    uint32_t uavSlotId = computeUavBinding       (DxbcProgramType::PixelShader, 0);
+    uint32_t ctrSlotId = computeUavCounterBinding(DxbcProgramType::PixelShader, 0);
+
+    for (uint32_t i = 0; i < m_state.om.maxUav; i++) {
+      if (CheckViewOverlap(pView, m_state.ps.unorderedAccessViews[i].ptr())) {
+        m_state.ps.unorderedAccessViews[i] = nullptr;
+
+        BindUnorderedAccessView(
+          uavSlotId + i, nullptr,
+          ctrSlotId + i, ~0u);
+      }
+    }
+  }
+
+
   bool D3D11DeviceContext::ValidateRenderTargets(
           UINT                              NumViews,
           ID3D11RenderTargetView* const*    ppRenderTargetViews,
