@@ -1,4 +1,5 @@
 #include "d3d11_device.h"
+#include "d3d11_gdi.h"
 #include "d3d11_texture.h"
 
 namespace dxvk {
@@ -29,6 +30,7 @@ namespace dxvk {
                               | VK_ACCESS_TRANSFER_WRITE_BIT;
     imageInfo.tiling          = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.layout          = VK_IMAGE_LAYOUT_GENERAL;
+    imageInfo.initialLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
 
     DecodeSampleCount(m_desc.SampleDesc.Count, &imageInfo.sampleCount);
 
@@ -126,8 +128,9 @@ namespace dxvk {
     // to enable linear tiling, and DXVK needs to be aware that
     // the image can be accessed by the host.
     if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT) {
-      imageInfo.stages |= VK_PIPELINE_STAGE_HOST_BIT;
-      imageInfo.tiling  = VK_IMAGE_TILING_LINEAR;
+      imageInfo.stages       |= VK_PIPELINE_STAGE_HOST_BIT;
+      imageInfo.tiling        = VK_IMAGE_TILING_LINEAR;
+      imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
       
       if (m_desc.CPUAccessFlags & D3D11_CPU_ACCESS_WRITE)
         imageInfo.access |= VK_ACCESS_HOST_WRITE_BIT;
@@ -277,9 +280,20 @@ namespace dxvk {
     if (FAILED(DecodeSampleCount(pDesc->SampleDesc.Count, nullptr)))
       return E_INVALIDARG;
     
+    if ((pDesc->MiscFlags & D3D11_RESOURCE_MISC_GDI_COMPATIBLE)
+     && (pDesc->Usage == D3D11_USAGE_STAGING
+      || (pDesc->Format != DXGI_FORMAT_B8G8R8A8_TYPELESS
+       && pDesc->Format != DXGI_FORMAT_B8G8R8A8_UNORM
+       && pDesc->Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)))
+      return E_INVALIDARG;
+
     if ((pDesc->MiscFlags & D3D11_RESOURCE_MISC_GENERATE_MIPS)
      && (pDesc->BindFlags & (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
                          != (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
+      return E_INVALIDARG;
+
+    // TILE_POOL is invalid, but we don't support TILED either
+    if (pDesc->MiscFlags & (D3D11_RESOURCE_MISC_TILE_POOL | D3D11_RESOURCE_MISC_TILED))
       return E_INVALIDARG;
 
     // Use the maximum possible mip level count if the supplied
@@ -291,6 +305,16 @@ namespace dxvk {
     if (pDesc->MipLevels == 0 || pDesc->MipLevels > maxMipLevelCount)
       pDesc->MipLevels = maxMipLevelCount;
     
+    // Row-major is only supported for textures with one single
+    // subresource and one sample and cannot have bind flags.
+    if (pDesc->TextureLayout == D3D11_TEXTURE_LAYOUT_ROW_MAJOR
+     && (pDesc->MipLevels != 1 || pDesc->SampleDesc.Count != 1 || pDesc->BindFlags))
+      return E_INVALIDARG;
+
+    // Standard swizzle is unsupported
+    if (pDesc->TextureLayout == D3D11_TEXTURE_LAYOUT_64K_STANDARD_SWIZZLE)
+      return E_INVALIDARG;
+
     return S_OK;
   }
   
@@ -400,7 +424,9 @@ namespace dxvk {
     // 2. Since the image will most likely be read for rendering by the GPU,
     //    writing the image to device-local image may be more efficient than
     //    reading its contents from host-visible memory.
-    if (m_desc.Usage == D3D11_USAGE_DYNAMIC)
+    if (m_desc.Usage         == D3D11_USAGE_DYNAMIC
+     && m_desc.BindFlags     != 0
+     && m_desc.TextureLayout != D3D11_TEXTURE_LAYOUT_ROW_MAJOR)
       return D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
     
     // Depth-stencil formats in D3D11 can be mapped and follow special
@@ -408,12 +434,6 @@ namespace dxvk {
     if (GetPackedDepthStencilFormat(m_desc.Format))
       return D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
     
-    // The only way to write to compressed textures on the GPU is by
-    // using copy commands, so we might as well copy to a buffer to
-    // prevent accidentally hitting a slow path if games misuse this.
-    if (imageFormatInfo(pImageInfo->format)->flags.test(DxvkFormatFlag::BlockCompressed))
-      return D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
-
     // Images that can be read by the host should be mapped directly in
     // order to avoid expensive synchronization with the GPU. This does
     // however require linear tiling, which may not be supported for all
@@ -499,17 +519,22 @@ namespace dxvk {
   }
   
   
+
+
   D3D11DXGISurface::D3D11DXGISurface(
           ID3D11Resource*     pResource,
           D3D11CommonTexture* pTexture)
-  : m_resource(pResource),
-    m_texture (pTexture) {
-
+  : m_resource  (pResource),
+    m_texture   (pTexture),
+    m_gdiSurface(nullptr) {
+    if (pTexture->Desc()->MiscFlags & D3D11_RESOURCE_MISC_GDI_COMPATIBLE)
+      m_gdiSurface = new D3D11GDISurface(m_resource, 0);
   }
 
   
   D3D11DXGISurface::~D3D11DXGISurface() {
-
+    if (m_gdiSurface)
+      delete m_gdiSurface;
   }
 
   
@@ -638,23 +663,19 @@ namespace dxvk {
   HRESULT STDMETHODCALLTYPE D3D11DXGISurface::GetDC(
           BOOL                    Discard,
           HDC*                    phdc) {
-    static bool s_errorShown = false;
-
-    if (!std::exchange(s_errorShown, true))
-      Logger::err("D3D11DXGISurface::GetDC: Stub");
-
-    return E_NOTIMPL;
+    if (!m_gdiSurface)
+      return DXGI_ERROR_INVALID_CALL;
+    
+    return m_gdiSurface->Acquire(Discard, phdc);
   }
 
 
   HRESULT STDMETHODCALLTYPE D3D11DXGISurface::ReleaseDC(
           RECT*                   pDirtyRect) {
-    static bool s_errorShown = false;
+    if (!m_gdiSurface)
+      return DXGI_ERROR_INVALID_CALL;
 
-    if (!std::exchange(s_errorShown, true))
-      Logger::err("D3D11DXGISurface::ReleaseDC: Stub");
-
-    return E_NOTIMPL;
+    return m_gdiSurface->Release(pDirtyRect);
   }
 
   
@@ -888,7 +909,8 @@ namespace dxvk {
     if (riid == __uuidof(IUnknown)
      || riid == __uuidof(ID3D11DeviceChild)
      || riid == __uuidof(ID3D11Resource)
-     || riid == __uuidof(ID3D11Texture2D)) {
+     || riid == __uuidof(ID3D11Texture2D)
+     || riid == __uuidof(ID3D11Texture2D1)) {
       *ppvObject = ref(this);
       return S_OK;
     }
@@ -956,7 +978,7 @@ namespace dxvk {
   }
   
   
-  void STDMETHODCALLTYPE D3D11Texture2D::GetDesc(D3D11_TEXTURE2D_DESC *pDesc) {
+  void STDMETHODCALLTYPE D3D11Texture2D::GetDesc(D3D11_TEXTURE2D_DESC* pDesc) {
     pDesc->Width          = m_texture.Desc()->Width;
     pDesc->Height         = m_texture.Desc()->Height;
     pDesc->MipLevels      = m_texture.Desc()->MipLevels;
@@ -967,6 +989,21 @@ namespace dxvk {
     pDesc->BindFlags      = m_texture.Desc()->BindFlags;
     pDesc->CPUAccessFlags = m_texture.Desc()->CPUAccessFlags;
     pDesc->MiscFlags      = m_texture.Desc()->MiscFlags;
+  }
+  
+  
+  void STDMETHODCALLTYPE D3D11Texture2D::GetDesc1(D3D11_TEXTURE2D_DESC1* pDesc) {
+    pDesc->Width          = m_texture.Desc()->Width;
+    pDesc->Height         = m_texture.Desc()->Height;
+    pDesc->MipLevels      = m_texture.Desc()->MipLevels;
+    pDesc->ArraySize      = m_texture.Desc()->ArraySize;
+    pDesc->Format         = m_texture.Desc()->Format;
+    pDesc->SampleDesc     = m_texture.Desc()->SampleDesc;
+    pDesc->Usage          = m_texture.Desc()->Usage;
+    pDesc->BindFlags      = m_texture.Desc()->BindFlags;
+    pDesc->CPUAccessFlags = m_texture.Desc()->CPUAccessFlags;
+    pDesc->MiscFlags      = m_texture.Desc()->MiscFlags;
+    pDesc->TextureLayout  = m_texture.Desc()->TextureLayout;
   }
   
   
@@ -997,7 +1034,8 @@ namespace dxvk {
     if (riid == __uuidof(IUnknown)
      || riid == __uuidof(ID3D11DeviceChild)
      || riid == __uuidof(ID3D11Resource)
-     || riid == __uuidof(ID3D11Texture3D)) {
+     || riid == __uuidof(ID3D11Texture3D)
+     || riid == __uuidof(ID3D11Texture3D1)) {
       *ppvObject = ref(this);
       return S_OK;
     }
@@ -1051,7 +1089,7 @@ namespace dxvk {
   }
   
   
-  void STDMETHODCALLTYPE D3D11Texture3D::GetDesc(D3D11_TEXTURE3D_DESC *pDesc) {
+  void STDMETHODCALLTYPE D3D11Texture3D::GetDesc(D3D11_TEXTURE3D_DESC* pDesc) {
     pDesc->Width          = m_texture.Desc()->Width;
     pDesc->Height         = m_texture.Desc()->Height;
     pDesc->Depth          = m_texture.Desc()->Depth;
@@ -1063,6 +1101,18 @@ namespace dxvk {
     pDesc->MiscFlags      = m_texture.Desc()->MiscFlags;
   }
   
+  
+  void STDMETHODCALLTYPE D3D11Texture3D::GetDesc1(D3D11_TEXTURE3D_DESC1* pDesc) {
+    pDesc->Width          = m_texture.Desc()->Width;
+    pDesc->Height         = m_texture.Desc()->Height;
+    pDesc->Depth          = m_texture.Desc()->Depth;
+    pDesc->MipLevels      = m_texture.Desc()->MipLevels;
+    pDesc->Format         = m_texture.Desc()->Format;
+    pDesc->Usage          = m_texture.Desc()->Usage;
+    pDesc->BindFlags      = m_texture.Desc()->BindFlags;
+    pDesc->CPUAccessFlags = m_texture.Desc()->CPUAccessFlags;
+    pDesc->MiscFlags      = m_texture.Desc()->MiscFlags;
+  }
   
   
   D3D11CommonTexture* GetCommonTexture(ID3D11Resource* pResource) {

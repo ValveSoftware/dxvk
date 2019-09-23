@@ -175,6 +175,9 @@ namespace dxvk {
       case DxbcInstClass::VectorImul:
         return this->emitVectorImul(ins);
         
+      case DxbcInstClass::VectorMsad:
+        return this->emitVectorMsad(ins);
+        
       case DxbcInstClass::VectorShift:
         return this->emitVectorShift(ins);
         
@@ -551,6 +554,18 @@ namespace dxvk {
           "oDepth");
       } break;
       
+      case DxbcOperandType::OutputStencilRef: {
+        m_module.enableExtension("SPV_EXT_shader_stencil_export");
+        m_module.enableCapability(spv::CapabilityStencilExportEXT);
+        m_module.setExecutionMode(m_entryPointId,
+          spv::ExecutionModeStencilRefReplacingEXT);
+        m_ps.builtinStencilRef = emitNewBuiltinVariable({
+          { DxbcScalarType::Sint32, 1, 0 },
+          spv::StorageClassOutput },
+          spv::BuiltInFragStencilRefEXT,
+          "oStencilRef");
+      } break;
+
       case DxbcOperandType::OutputDepthGe: {
         m_module.setExecutionMode(m_entryPointId, spv::ExecutionModeDepthReplacing);
         m_module.setExecutionMode(m_entryPointId, spv::ExecutionModeDepthGreater);
@@ -2110,6 +2125,38 @@ namespace dxvk {
   }
   
   
+  void DxbcCompiler::emitVectorMsad(const DxbcShaderInstruction& ins) {
+    // msad has four operands:
+    //    (dst0) Destination
+    //    (src0) Reference (packed uint8)
+    //    (src1) Source (packed uint8)
+    //    (src2) Accumulator
+    DxbcRegisterValue refReg = emitRegisterLoad(ins.src[0], ins.dst[0].mask);
+    DxbcRegisterValue srcReg = emitRegisterLoad(ins.src[1], ins.dst[0].mask);
+    DxbcRegisterValue result = emitRegisterLoad(ins.src[2], ins.dst[0].mask);
+    
+    auto typeId = getVectorTypeId(result.type);
+    auto bvecId = getVectorTypeId({ DxbcScalarType::Bool, result.type.ccount });
+
+    for (uint32_t i = 0; i < 4; i++) {
+      auto shift = m_module.constu32(8 * i);
+      auto count = m_module.constu32(8);
+
+      auto ref = m_module.opBitFieldUExtract(typeId, refReg.id, shift, count);
+      auto src = m_module.opBitFieldUExtract(typeId, srcReg.id, shift, count);
+
+      auto zero = emitBuildConstVecu32(0, 0, 0, 0, ins.dst[0].mask);
+      auto mask = m_module.opINotEqual(bvecId, ref, zero.id);
+
+      auto diff = m_module.opSAbs(typeId, m_module.opISub(typeId, ref, src));
+      result.id = m_module.opSelect(typeId, mask, m_module.opIAdd(typeId, result.id, diff), result.id);
+    }
+
+    result = emitDstOperandModifiers(result, ins.modifiers);
+    emitRegisterStore(ins.dst[0], result);
+  }
+
+
   void DxbcCompiler::emitVectorShift(const DxbcShaderInstruction& ins) {
     // Shift operations have three operands:
     //    (dst0) The destination register
@@ -4825,6 +4872,11 @@ namespace dxvk {
           { DxbcScalarType::Float32, 1 },
           m_ps.builtinDepth };
       
+      case DxbcOperandType::OutputStencilRef:
+        return DxbcRegisterPointer {
+          { DxbcScalarType::Sint32, 1 },
+          m_ps.builtinStencilRef };
+
       case DxbcOperandType::InputPrimitiveId:
         return DxbcRegisterPointer {
           { DxbcScalarType::Uint32, 1 },

@@ -4,8 +4,8 @@
 namespace dxvk {
   
   D3D11Query::D3D11Query(
-          D3D11Device*      device,
-    const D3D11_QUERY_DESC& desc)
+          D3D11Device*       device,
+    const D3D11_QUERY_DESC1& desc)
   : m_device(device), m_desc(desc),
     m_state(D3D11_VK_QUERY_INITIAL),
     m_d3d10(this, device->GetD3D10Interface()) {
@@ -94,7 +94,8 @@ namespace dxvk {
     if (riid == __uuidof(IUnknown)
      || riid == __uuidof(ID3D11DeviceChild)
      || riid == __uuidof(ID3D11Asynchronous)
-     || riid == __uuidof(ID3D11Query)) {
+     || riid == __uuidof(ID3D11Query)
+     || riid == __uuidof(ID3D11Query1)) {
       *ppvObject = ref(this);
       return S_OK;
     }
@@ -109,7 +110,7 @@ namespace dxvk {
     
     if (m_desc.Query == D3D11_QUERY_OCCLUSION_PREDICATE) {
       if (riid == __uuidof(ID3D11Predicate)) {
-        *ppvObject = ref(this);
+        *ppvObject = AsPredicate(ref(this));
         return S_OK;
       }
 
@@ -170,7 +171,13 @@ namespace dxvk {
   }
   
     
-  void STDMETHODCALLTYPE D3D11Query::GetDesc(D3D11_QUERY_DESC *pDesc) {
+  void STDMETHODCALLTYPE D3D11Query::GetDesc(D3D11_QUERY_DESC* pDesc) {
+    pDesc->Query     = m_desc.Query;
+    pDesc->MiscFlags = m_desc.MiscFlags;
+  }
+  
+  
+  void STDMETHODCALLTYPE D3D11Query::GetDesc1(D3D11_QUERY_DESC1* pDesc) {
     *pDesc = m_desc;
   }
   
@@ -339,6 +346,15 @@ namespace dxvk {
 
     VkPhysicalDeviceLimits limits = adapter->deviceProperties().limits;
     return uint64_t(1'000'000'000.0f / limits.timestampPeriod);
+  }
+
+
+  HRESULT D3D11Query::ValidateDesc(const D3D11_QUERY_DESC1* pDesc) {
+    if (pDesc->Query       >= D3D11_QUERY_PIPELINE_STATISTICS
+     && pDesc->ContextType >  D3D11_CONTEXT_TYPE_3D)
+      return E_INVALIDARG;
+    
+    return S_OK;
   }
   
 }

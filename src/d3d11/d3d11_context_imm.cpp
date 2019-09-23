@@ -110,7 +110,17 @@ namespace dxvk {
 
 
   void STDMETHODCALLTYPE D3D11ImmediateContext::Flush() {
+    Flush1(D3D11_CONTEXT_TYPE_ALL, nullptr);
+  }
+
+
+  void STDMETHODCALLTYPE D3D11ImmediateContext::Flush1(
+          D3D11_CONTEXT_TYPE          ContextType,
+          HANDLE                      hEvent) {
     m_parent->FlushInitContext();
+
+    if (hEvent)
+      Logger::warn("D3D11: Flush1: Ignoring event");
     
     D3D10DeviceLock lock = LockContext();
     
@@ -130,6 +140,22 @@ namespace dxvk {
   }
   
   
+  HRESULT STDMETHODCALLTYPE D3D11ImmediateContext::Signal(
+          ID3D11Fence*                pFence,
+          UINT64                      Value) {
+    Logger::err("D3D11ImmediateContext::Signal: Not implemented");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11ImmediateContext::Wait(
+          ID3D11Fence*                pFence,
+          UINT64                      Value) {
+    Logger::err("D3D11ImmediateContext::Wait: Not implemented");
+    return E_NOTIMPL;
+  }
+
+
   void STDMETHODCALLTYPE D3D11ImmediateContext::ExecuteCommandList(
           ID3D11CommandList*  pCommandList,
           BOOL                RestoreContextState) {
@@ -178,7 +204,7 @@ namespace dxvk {
           D3D11_MAPPED_SUBRESOURCE*   pMappedResource) {
     D3D10DeviceLock lock = LockContext();
 
-    if (unlikely(!pResource || !pMappedResource))
+    if (unlikely(!pResource))
       return E_INVALIDARG;
     
     D3D11_RESOURCE_DIMENSION resourceDim = D3D11_RESOURCE_DIMENSION_UNKNOWN;
@@ -281,6 +307,9 @@ namespace dxvk {
           D3D11_MAP                   MapType,
           UINT                        MapFlags,
           D3D11_MAPPED_SUBRESOURCE*   pMappedResource) {
+    if (unlikely(!pMappedResource))
+      return E_INVALIDARG;
+
     if (unlikely(pResource->GetMapMode() == D3D11_COMMON_BUFFER_MAP_MODE_NONE)) {
       Logger::err("D3D11: Cannot map a device-local buffer");
       return E_INVALIDARG;
@@ -306,7 +335,7 @@ namespace dxvk {
     } else {
       // Wait until the resource is no longer in use
       if (MapType != D3D11_MAP_WRITE_NO_OVERWRITE) {
-        if (!WaitForResource(pResource->GetBuffer(), MapFlags))
+        if (!WaitForResource(pResource->GetBuffer(), MapType, MapFlags))
           return DXGI_ERROR_WAS_STILL_DRAWING;
       }
 
@@ -339,6 +368,16 @@ namespace dxvk {
 
     if (unlikely(Subresource >= pResource->CountSubresources()))
       return E_INVALIDARG;
+    
+    if (likely(pMappedResource != nullptr)) {
+      // Resources with an unknown memory layout cannot return a pointer
+      if (pResource->Desc()->Usage         == D3D11_USAGE_DEFAULT
+       && pResource->Desc()->TextureLayout == D3D11_TEXTURE_LAYOUT_UNDEFINED)
+        return E_INVALIDARG;
+    } else {
+      if (pResource->Desc()->Usage != D3D11_USAGE_DEFAULT)
+        return E_INVALIDARG;
+    }
 
     VkFormat packedFormat = m_parent->LookupPackedFormat(
       pResource->Desc()->Format, pResource->GetFormatMode()).Format;
@@ -351,7 +390,7 @@ namespace dxvk {
       const VkImageType imageType = mappedImage->info().type;
       
       // Wait for the resource to become available
-      if (!WaitForResource(mappedImage, MapFlags))
+      if (!WaitForResource(mappedImage, MapType, MapFlags))
         return DXGI_ERROR_WAS_STILL_DRAWING;
       
       // Mark the given subresource as mapped
@@ -359,10 +398,13 @@ namespace dxvk {
 
       // Query the subresource's memory layout and hope that
       // the application respects the returned pitch values.
-      VkSubresourceLayout layout  = mappedImage->querySubresourceLayout(subresource);
-      pMappedResource->pData      = mappedImage->mapPtr(layout.offset);
-      pMappedResource->RowPitch   = imageType >= VK_IMAGE_TYPE_2D ? layout.rowPitch   : layout.size;
-      pMappedResource->DepthPitch = imageType >= VK_IMAGE_TYPE_3D ? layout.depthPitch : layout.size;
+      if (pMappedResource) {
+        VkSubresourceLayout layout  = mappedImage->querySubresourceLayout(subresource);
+        pMappedResource->pData      = mappedImage->mapPtr(layout.offset);
+        pMappedResource->RowPitch   = imageType >= VK_IMAGE_TYPE_2D ? layout.rowPitch   : layout.size;
+        pMappedResource->DepthPitch = imageType >= VK_IMAGE_TYPE_3D ? layout.depthPitch : layout.size;
+      }
+
       return S_OK;
     } else {
       VkExtent3D levelExtent = mappedImage->mipLevelExtent(subresource.mipLevel);
@@ -392,7 +434,7 @@ namespace dxvk {
         }
         
         // Wait for mapped buffer to become available
-        if (!WaitForResource(mappedBuffer, MapFlags))
+        if (!WaitForResource(mappedBuffer, MapType, MapFlags))
           return DXGI_ERROR_WAS_STILL_DRAWING;
         
         physSlice = mappedBuffer->getSliceHandle();
@@ -402,9 +444,12 @@ namespace dxvk {
       pResource->SetMapType(Subresource, MapType);
 
       // Set up map pointer. Data is tightly packed within the mapped buffer.
-      pMappedResource->pData      = physSlice.mapPtr;
-      pMappedResource->RowPitch   = formatInfo->elementSize * blockCount.width;
-      pMappedResource->DepthPitch = formatInfo->elementSize * blockCount.width * blockCount.height;
+      if (pMappedResource) {
+        pMappedResource->pData      = physSlice.mapPtr;
+        pMappedResource->RowPitch   = formatInfo->elementSize * blockCount.width;
+        pMappedResource->DepthPitch = formatInfo->elementSize * blockCount.width * blockCount.height;
+      }
+
       return S_OK;
     }
   }
@@ -509,18 +554,24 @@ namespace dxvk {
   
   bool D3D11ImmediateContext::WaitForResource(
     const Rc<DxvkResource>&                 Resource,
+          D3D11_MAP                         MapType,
           UINT                              MapFlags) {
-    // Some games (e.g. The Witcher 3) do not work correctly
-    // when a map fails with D3D11_MAP_FLAG_DO_NOT_WAIT set
+    // Some games might not work correctly when a map
+    // fails with D3D11_MAP_FLAG_DO_NOT_WAIT set
     if (!m_parent->GetOptions()->allowMapFlagNoWait)
       MapFlags &= ~D3D11_MAP_FLAG_DO_NOT_WAIT;
+
+    // Determine access type to wait for based on map mode
+    DxvkAccess access = MapType == D3D11_MAP_READ
+      ? DxvkAccess::Write
+      : DxvkAccess::Read;
     
     // Wait for the any pending D3D11 command to be executed
     // on the CS thread so that we can determine whether the
     // resource is currently in use or not.
     SynchronizeCsThread();
     
-    if (Resource->isInUse()) {
+    if (Resource->isInUse(access)) {
       if (MapFlags & D3D11_MAP_FLAG_DO_NOT_WAIT) {
         // We don't have to wait, but misbehaving games may
         // still try to spin on `Map` until the resource is
@@ -533,7 +584,7 @@ namespace dxvk {
         Flush();
         SynchronizeCsThread();
         
-        while (Resource->isInUse())
+        while (Resource->isInUse(access))
           dxvk::this_thread::yield();
       }
     }

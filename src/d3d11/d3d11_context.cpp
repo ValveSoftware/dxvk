@@ -54,7 +54,10 @@ namespace dxvk {
     if (riid == __uuidof(IUnknown)
      || riid == __uuidof(ID3D11DeviceChild)
      || riid == __uuidof(ID3D11DeviceContext)
-     || riid == __uuidof(ID3D11DeviceContext1)) {
+     || riid == __uuidof(ID3D11DeviceContext1)
+     || riid == __uuidof(ID3D11DeviceContext2)
+     || riid == __uuidof(ID3D11DeviceContext3)
+     || riid == __uuidof(ID3D11DeviceContext4)) {
       *ppvObject = ref(this);
       return S_OK;
     }
@@ -98,7 +101,19 @@ namespace dxvk {
 
 
   void STDMETHODCALLTYPE D3D11DeviceContext::DiscardView(ID3D11View* pResourceView) {
+    DiscardView1(pResourceView, nullptr, 0);
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::DiscardView1(
+          ID3D11View*              pResourceView,
+    const D3D11_RECT*              pRects,
+          UINT                     NumRects) {
     D3D10DeviceLock lock = LockContext();
+
+    // We don't support discarding individual rectangles
+    if (!pResourceView || (NumRects && pRects))
+      return;
 
     // ID3D11View has no methods to query the exact type of
     // the view, so we'll have to check each possible class
@@ -111,25 +126,15 @@ namespace dxvk {
     if (rtv) view = rtv->GetImageView();
     if (uav) view = uav->GetImageView();
 
-    if (view != nullptr) {
-      EmitCs([cView = std::move(view)]
-      (DxvkContext* ctx) {
-        ctx->discardImage(
-          cView->image(),
-          cView->subresources());
-      });
-    }
-  }
-
-
-  void STDMETHODCALLTYPE D3D11DeviceContext::DiscardView1(
-          ID3D11View*              pResourceView, 
-    const D3D11_RECT*              pRects, 
-          UINT                     NumRects) {
-    static bool s_errorShown = false;
+    if (view == nullptr)
+      return;
     
-    if (!std::exchange(s_errorShown, true))
-      Logger::err("D3D11DeviceContext::DiscardView1: Not implemented");
+    EmitCs([cView = std::move(view)]
+    (DxvkContext* ctx) {
+      ctx->discardImage(
+        cView->image(),
+        cView->subresources());
+    });
   }
 
 
@@ -288,7 +293,7 @@ namespace dxvk {
           BOOL                              PredicateValue) {
     D3D10DeviceLock lock = LockContext();
 
-    auto predicate = static_cast<D3D11Query*>(pPredicate);
+    auto predicate = D3D11Query::FromPredicate(pPredicate);
     m_state.pr.predicateObject = predicate;
     m_state.pr.predicateValue  = PredicateValue;
 
@@ -322,7 +327,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
 
     if (ppPredicate != nullptr)
-      *ppPredicate = m_state.pr.predicateObject.ref();
+      D3D11Query::AsPredicate(m_state.pr.predicateObject.ref());
     
     if (pPredicateValue != nullptr)
       *pPredicateValue = m_state.pr.predicateValue;
@@ -710,8 +715,57 @@ namespace dxvk {
         sizeof(uint32_t));
     });
   }
-  
-  
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::CopyTiles(
+          ID3D11Resource*                   pTiledResource,
+    const D3D11_TILED_RESOURCE_COORDINATE*  pTileRegionStartCoordinate,
+    const D3D11_TILE_REGION_SIZE*           pTileRegionSize,
+          ID3D11Buffer*                     pBuffer,
+          UINT64                            BufferStartOffsetInBytes,
+          UINT                              Flags) {
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::CopyTiles: Not implemented");
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11DeviceContext::CopyTileMappings(
+          ID3D11Resource*                   pDestTiledResource,
+    const D3D11_TILED_RESOURCE_COORDINATE*  pDestRegionStartCoordinate,
+          ID3D11Resource*                   pSourceTiledResource,
+    const D3D11_TILED_RESOURCE_COORDINATE*  pSourceRegionStartCoordinate,
+    const D3D11_TILE_REGION_SIZE*           pTileRegionSize,
+          UINT                              Flags) {
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::CopyTileMappings: Not implemented");
+
+    return DXGI_ERROR_INVALID_CALL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11DeviceContext::ResizeTilePool(
+          ID3D11Buffer*                     pTilePool,
+          UINT64                            NewSizeInBytes) {
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::ResizeTilePool: Not implemented");
+
+    return DXGI_ERROR_INVALID_CALL;
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::TiledResourceBarrier(
+          ID3D11DeviceChild*                pTiledResourceOrViewAccessBeforeBarrier,
+          ID3D11DeviceChild*                pTiledResourceOrViewAccessAfterBarrier) {
+    
+  }
+
+
   void STDMETHODCALLTYPE D3D11DeviceContext::ClearRenderTargetView(
           ID3D11RenderTargetView*           pRenderTargetView,
     const FLOAT                             ColorRGBA[4]) {
@@ -1250,17 +1304,57 @@ namespace dxvk {
         UpdateMappedBuffer(textureInfo, subresource);
     }
   }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11DeviceContext::UpdateTileMappings(
+          ID3D11Resource*                   pTiledResource,
+          UINT                              NumTiledResourceRegions,
+    const D3D11_TILED_RESOURCE_COORDINATE*  pTiledResourceRegionStartCoordinates,
+    const D3D11_TILE_REGION_SIZE*           pTiledResourceRegionSizes,
+          ID3D11Buffer*                     pTilePool,
+          UINT                              NumRanges,
+    const UINT*                             pRangeFlags,
+    const UINT*                             pTilePoolStartOffsets,
+    const UINT*                             pRangeTileCounts,
+          UINT                              Flags) {
+    bool s_errorShown = false;
+
+    if (std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::UpdateTileMappings: Not implemented");
+
+    return DXGI_ERROR_INVALID_CALL;
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::UpdateTiles(
+          ID3D11Resource*                   pDestTiledResource,
+    const D3D11_TILED_RESOURCE_COORDINATE*  pDestTileRegionStartCoordinate,
+    const D3D11_TILE_REGION_SIZE*           pDestTileRegionSize,
+    const void*                             pSourceTileData,
+          UINT                              Flags) {
+    bool s_errorShown = false;
+
+    if (std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::UpdateTiles: Not implemented");
+  }
   
   
   void STDMETHODCALLTYPE D3D11DeviceContext::SetResourceMinLOD(
           ID3D11Resource*                   pResource,
           FLOAT                             MinLOD) {
-    Logger::err("D3D11DeviceContext::SetResourceMinLOD: Not implemented");
+    bool s_errorShown = false;
+
+    if (std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::SetResourceMinLOD: Not implemented");
   }
   
   
   FLOAT STDMETHODCALLTYPE D3D11DeviceContext::GetResourceMinLOD(ID3D11Resource* pResource) {
-    Logger::err("D3D11DeviceContext::GetResourceMinLOD: Not implemented");
+    bool s_errorShown = false;
+
+    if (std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::GetResourceMinLOD: Not implemented");
+
     return 0.0f;
   }
   
@@ -2843,7 +2937,7 @@ namespace dxvk {
     const D3D11_VIEWPORT*                   pViewports) {
     D3D10DeviceLock lock = LockContext();
 
-    if (NumViewports > m_state.rs.viewports.size())
+    if (unlikely(NumViewports > m_state.rs.viewports.size()))
       return;
     
     bool dirty = m_state.rs.numViewports != NumViewports;
@@ -2871,6 +2965,9 @@ namespace dxvk {
           UINT                              NumRects,
     const D3D11_RECT*                       pRects) {
     D3D10DeviceLock lock = LockContext();
+
+    if (unlikely(NumRects > m_state.rs.scissors.size()))
+      return;
     
     bool dirty = m_state.rs.numScissors != NumRects;
     m_state.rs.numScissors = NumRects;
@@ -3003,6 +3100,52 @@ namespace dxvk {
       if (pOffsets != nullptr)
         pOffsets[i] = m_state.so.targets[i].offset;
     }
+  }
+
+
+  BOOL STDMETHODCALLTYPE D3D11DeviceContext::IsAnnotationEnabled() {
+    // Not implemented in the backend
+    return FALSE;
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::SetMarkerInt(
+          LPCWSTR                           pLabel,
+          INT                               Data) {
+    // Not implemented in the backend, ignore
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::BeginEventInt(
+          LPCWSTR                           pLabel,
+          INT                               Data) {
+    // Not implemented in the backend, ignore
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::EndEvent() {
+    // Not implemented in the backend, ignore
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeviceContext::GetHardwareProtectionState(
+          BOOL*                             pHwProtectionEnable) {
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::GetHardwareProtectionState: Not implemented");
+    
+    if (pHwProtectionEnable)
+      *pHwProtectionEnable = FALSE;
+  }
+
+  
+  void STDMETHODCALLTYPE D3D11DeviceContext::SetHardwareProtectionState(
+          BOOL                              HwProtectionEnable) {
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::err("D3D11DeviceContext::SetHardwareProtectionState: Not implemented");
   }
 
 
@@ -3216,16 +3359,27 @@ namespace dxvk {
       }
     }
     
-    EmitCs([
-      cViewportCount = viewportCount,
-      cViewports     = viewports,
-      cScissors      = scissors
-    ] (DxvkContext* ctx) {
-      ctx->setViewports(
-        cViewportCount,
-        cViewports.data(),
-        cScissors.data());
-    });
+    if (likely(viewportCount == 1)) {
+      EmitCs([
+        cViewport = viewports[0],
+        cScissor  = scissors[0]
+      ] (DxvkContext* ctx) {
+        ctx->setViewports(1,
+          &cViewport,
+          &cScissor);
+      });
+    } else {
+      EmitCs([
+        cViewportCount = viewportCount,
+        cViewports     = viewports,
+        cScissors      = scissors
+      ] (DxvkContext* ctx) {
+        ctx->setViewports(
+          cViewportCount,
+          cViewports.data(),
+          cScissors.data());
+      });
+    }
   }
 
   

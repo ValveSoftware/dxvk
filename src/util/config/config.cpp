@@ -12,17 +12,9 @@
 namespace dxvk {
 
   const static std::vector<std::pair<const char*, Config>> g_appDefaults = {{
-    /* Anno 1800                                  */
-    { R"(\\Anno1800\.exe$)", {{
-      { "d3d11.allowMapFlagNoWait",         "True" }
-    }} },
     /* Assassin's Creed Syndicate: amdags issues  */
     { R"(\\ACS\.exe$)", {{
       { "dxgi.customVendorId",              "10de" },
-    }} },
-    /* Dishonored 2                               */
-    { R"(\\Dishonored2\.exe$)", {{
-      { "d3d11.allowMapFlagNoWait",         "True" }
     }} },
     /* Dissidia Final Fantasy NT Free Edition */
     { R"(\\dffnt\.exe$)", {{
@@ -53,10 +45,6 @@ namespace dxvk {
     { R"(\\FarCry4\.exe$)", {{
       { "dxgi.nvapiHack",                   "False" },
     }} },
-    /* Far Cry 5: Avoid CPU <-> GPU sync          */
-    { R"(\\FarCry5\.exe$)", {{
-      { "d3d11.allowMapFlagNoWait",         "True" }
-    }} },
     /* Far Cry Primal: Nvidia performance         */
     { R"(\\FCPrimal\.exe$)", {{
       { "dxgi.nvapiHack",                   "False" },
@@ -79,9 +67,9 @@ namespace dxvk {
     { R"(\\anno2205\.exe$)", {{
       { "dxvk.enableStateCache",            "False" },
     }} },
-    /* Fifa '19: Binds typed buffer SRV to shader *
+    /* Fifa '19+: Binds typed buffer SRV to shader *
      * that expects raw/structured buffer SRV     */
-    { R"(\\FIFA19(_demo)?\.exe$)", {{
+    { R"(\\FIFA(19|[2-9][0-9])(_demo)?\.exe$)", {{
       { "dxvk.useRawSsbo",                  "True" },
     }} },
     /* Final Fantasy XIV: Fix random black blocks */
@@ -132,18 +120,17 @@ namespace dxvk {
     { R"(\\NieRAutomata\.exe$)", {{
       { "d3d11.constantBufferRangeCheck",   "True" },
     }} },
-    /* The Surge                                  */
-    { R"(\\TheSurge\.exe$)", {{
-      { "d3d11.allowMapFlagNoWait",         "True" },
-    }} },
     /* SteamVR performance test                   */
     { R"(\\vr\.exe$)", {{
       { "d3d11.dcSingleUseMode",            "False" },
     }} },
-    /* Control                                    */
-    { R"(\\Control_DX11\.exe$)", {{
-      { "d3d11.allowMapFlagNoWait",         "True" }
-    }} },
+    /* Overwatch                                  *
+     * Broken for at least one user for unknown   *
+     * reasons, seems to work for others. Just    *
+     * disable DO_NOT_WAIT to be on the safe side */
+     { R"(\\Overwatch\.exe$)", {{
+      { "d3d11.allowMapFlagNoWait",         "False" },
+     }} },
   }};
 
 

@@ -627,10 +627,12 @@ namespace dxvk {
      * while discarding any previous contents.
      * \param [in] image The image to initialize
      * \param [in] subresources Image subresources
+     * \param [in] initialLayout Initial image layout
      */
     void initImage(
       const Rc<DxvkImage>&            image,
-      const VkImageSubresourceRange&  subresources);
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             initialLayout);
     
     /**
      * \brief Invalidates a buffer's contents
@@ -915,10 +917,12 @@ namespace dxvk {
      * Replaces current specialization constants with
      * the given list of constant entries. The specId
      * in the shader can be computed with \c getSpecId.
+     * \param [in] pipeline Graphics or Compute pipeline
      * \param [in] index Constant index
      * \param [in] value Constant value
      */
     void setSpecConstant(
+            VkPipelineBindPoint pipeline,
             uint32_t            index,
             uint32_t            value);
     
@@ -1125,9 +1129,6 @@ namespace dxvk {
     void updateGraphicsShaderResources();
     void updateGraphicsShaderDescriptors();
 
-    void updateShaderSamplers(
-      const DxvkPipelineLayout*     layout);
-    
     template<VkPipelineBindPoint BindPoint>
     bool updateShaderResources(
       const DxvkPipelineLayout*     layout);

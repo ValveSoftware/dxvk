@@ -9,6 +9,24 @@
 
 namespace dxvk {
   
+  DxvkComputePipelineStateInfo::DxvkComputePipelineStateInfo() {
+    std::memset(this, 0, sizeof(*this));
+  }
+
+
+  DxvkComputePipelineStateInfo::DxvkComputePipelineStateInfo(
+    const DxvkComputePipelineStateInfo& other) {
+    std::memcpy(this, &other, sizeof(*this));
+  }
+  
+
+  DxvkComputePipelineStateInfo& DxvkComputePipelineStateInfo::operator = (
+    const DxvkComputePipelineStateInfo& other) {
+    std::memcpy(this, &other, sizeof(*this));
+    return *this;
+  }
+
+
   bool DxvkComputePipelineStateInfo::operator == (const DxvkComputePipelineStateInfo& other) const {
     return std::memcmp(this, &other, sizeof(DxvkComputePipelineStateInfo)) == 0;
   }
@@ -107,6 +125,9 @@ namespace dxvk {
     for (uint32_t i = 0; i < m_layout->bindingCount(); i++)
       specData.set(i, state.bsBindingMask.test(i), true);
     
+    for (uint32_t i = 0; i < MaxNumSpecConstants; i++)
+      specData.set(getSpecId(i), state.scSpecConstants[i], 0u);
+
     VkSpecializationInfo specInfo = specData.getSpecInfo();
     
     DxvkShaderModuleCreateInfo moduleInfo;
@@ -124,7 +145,10 @@ namespace dxvk {
     info.basePipelineIndex    = -1;
     
     // Time pipeline compilation for debugging purposes
-    auto t0 = std::chrono::high_resolution_clock::now();
+    std::chrono::high_resolution_clock::time_point t0, t1;
+
+    if (Logger::logLevel() <= LogLevel::Debug)
+      t0 = std::chrono::high_resolution_clock::now();
     
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (m_vkd->vkCreateComputePipelines(m_vkd->device(),
@@ -134,9 +158,12 @@ namespace dxvk {
       return VK_NULL_HANDLE;
     }
     
-    auto t1 = std::chrono::high_resolution_clock::now();
-    auto td = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
-    Logger::debug(str::format("DxvkComputePipeline: Finished in ", td.count(), " ms"));
+    if (Logger::logLevel() <= LogLevel::Debug) {
+      t1 = std::chrono::high_resolution_clock::now();
+      auto td = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+      Logger::debug(str::format("DxvkComputePipeline: Finished in ", td.count(), " ms"));
+    }
+
     return pipeline;
   }
 

@@ -171,6 +171,7 @@ namespace dxvk {
     
     uint32_t builtinFragCoord     = 0;
     uint32_t builtinDepth         = 0;
+    uint32_t builtinStencilRef    = 0;
     uint32_t builtinIsFrontFace   = 0;
     uint32_t builtinSampleId      = 0;
     uint32_t builtinSampleMaskIn  = 0;
@@ -656,6 +657,9 @@ namespace dxvk {
       const DxbcShaderInstruction&  ins);
     
     void emitVectorImul(
+      const DxbcShaderInstruction&  ins);
+    
+    void emitVectorMsad(
       const DxbcShaderInstruction&  ins);
     
     void emitVectorShift(
