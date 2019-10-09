@@ -219,7 +219,7 @@ namespace dxvk {
     std::vector<DXGI_MODE_DESC1> modes;
 
     if (pDesc)
-      modes.resize(*pNumModes);
+      modes.resize(std::max(1u, *pNumModes));
     
     HRESULT hr = GetDisplayModeList1(
       EnumFormat, Flags, pNumModes,
@@ -246,6 +246,12 @@ namespace dxvk {
     if (pNumModes == nullptr)
       return DXGI_ERROR_INVALID_CALL;
     
+    // Special case, just return zero modes
+    if (EnumFormat == DXGI_FORMAT_UNKNOWN) {
+      *pNumModes = 0;
+      return S_OK;
+    }
+
     // Query monitor info to get the device name
     ::MONITORINFOEXW monInfo;
     monInfo.cbSize = sizeof(monInfo);

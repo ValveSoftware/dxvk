@@ -10,6 +10,8 @@
 #include "dxgi_options.h"
 #include "dxgi_output.h"
 
+#include "../util/util_luid.h"
+
 namespace dxvk {
 
   DxgiVkAdapter::DxgiVkAdapter(DxgiAdapter* pAdapter)
@@ -53,10 +55,12 @@ namespace dxvk {
 
   DxgiAdapter::DxgiAdapter(
           DxgiFactory*      factory,
-    const Rc<DxvkAdapter>&  adapter)
+    const Rc<DxvkAdapter>&  adapter,
+          UINT              index)
   : m_factory (factory),
     m_adapter (adapter),
-    m_interop (this) {
+    m_interop (this),
+    m_index   (index) {
     
   }
   
@@ -102,20 +106,28 @@ namespace dxvk {
   HRESULT STDMETHODCALLTYPE DxgiAdapter::CheckInterfaceSupport(
           REFGUID                   InterfaceName,
           LARGE_INTEGER*            pUMDVersion) {
-    const DxgiOptions* options = m_factory->GetOptions();
+    HRESULT hr = DXGI_ERROR_UNSUPPORTED;
 
-    if (pUMDVersion != nullptr)
-      *pUMDVersion = LARGE_INTEGER();
-    
-    if (options->d3d10Enable) {
+    if (InterfaceName == __uuidof(IDXGIDevice))
+      hr = S_OK;
+
+    if (m_factory->GetOptions()->d3d10Enable) {
       if (InterfaceName == __uuidof(ID3D10Device)
        || InterfaceName == __uuidof(ID3D10Device1))
-        return S_OK;
+        hr = S_OK;
     }
-    
-    Logger::err("DXGI: CheckInterfaceSupport: Unsupported interface");
-    Logger::err(str::format(InterfaceName));
-    return DXGI_ERROR_UNSUPPORTED;
+
+    // We can't really reconstruct the version numbers
+    // returned by Windows drivers from Vulkan data
+    if (SUCCEEDED(hr) && pUMDVersion)
+      pUMDVersion->QuadPart = ~0ull;
+
+    if (FAILED(hr)) {
+      Logger::err("DXGI: CheckInterfaceSupport: Unsupported interface");
+      Logger::err(str::format(InterfaceName));
+    }
+
+    return hr;
   }
   
   
@@ -125,7 +137,7 @@ namespace dxvk {
     InitReturnPtr(ppOutput);
     
     if (ppOutput == nullptr)
-      return DXGI_ERROR_INVALID_CALL;
+      return E_INVALIDARG;
     
     if (Output > 0) {
       *ppOutput = nullptr;
@@ -141,7 +153,7 @@ namespace dxvk {
   
   HRESULT STDMETHODCALLTYPE DxgiAdapter::GetDesc(DXGI_ADAPTER_DESC* pDesc) {
     if (pDesc == nullptr)
-      return DXGI_ERROR_INVALID_CALL;
+      return E_INVALIDARG;
 
     DXGI_ADAPTER_DESC2 desc;
     HRESULT hr = GetDesc2(&desc);
@@ -165,7 +177,7 @@ namespace dxvk {
   
   HRESULT STDMETHODCALLTYPE DxgiAdapter::GetDesc1(DXGI_ADAPTER_DESC1* pDesc) {
     if (pDesc == nullptr)
-      return DXGI_ERROR_INVALID_CALL;
+      return E_INVALIDARG;
 
     DXGI_ADAPTER_DESC2 desc;
     HRESULT hr = GetDesc2(&desc);
@@ -190,7 +202,7 @@ namespace dxvk {
   
   HRESULT STDMETHODCALLTYPE DxgiAdapter::GetDesc2(DXGI_ADAPTER_DESC2* pDesc) {
     if (pDesc == nullptr)
-      return DXGI_ERROR_INVALID_CALL;
+      return E_INVALIDARG;
     
     const DxgiOptions* options = m_factory->GetOptions();
     
@@ -263,6 +275,9 @@ namespace dxvk {
 
     if (deviceId.deviceLUIDValid)
       std::memcpy(&pDesc->AdapterLuid, deviceId.deviceLUID, VK_LUID_SIZE);
+    else
+      pDesc->AdapterLuid = GetAdapterLUID(m_index);
+
     return S_OK;
   }
   
@@ -272,11 +287,11 @@ namespace dxvk {
           DXGI_MEMORY_SEGMENT_GROUP     MemorySegmentGroup,
           DXGI_QUERY_VIDEO_MEMORY_INFO* pVideoMemoryInfo) {
     if (NodeIndex > 0 || !pVideoMemoryInfo)
-      return DXGI_ERROR_INVALID_CALL;
+      return E_INVALIDARG;
     
     if (MemorySegmentGroup != DXGI_MEMORY_SEGMENT_GROUP_LOCAL
      && MemorySegmentGroup != DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL)
-      return DXGI_ERROR_INVALID_CALL;
+      return E_INVALIDARG;
     
     DxvkAdapterMemoryInfo memInfo = m_adapter->getMemoryHeapInfo();
 

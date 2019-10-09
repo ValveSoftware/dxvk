@@ -326,10 +326,10 @@ namespace dxvk {
           BOOL*                             pPredicateValue) {
     D3D10DeviceLock lock = LockContext();
 
-    if (ppPredicate != nullptr)
-      D3D11Query::AsPredicate(m_state.pr.predicateObject.ref());
+    if (ppPredicate)
+      *ppPredicate = D3D11Query::AsPredicate(m_state.pr.predicateObject.ref());
     
-    if (pPredicateValue != nullptr)
+    if (pPredicateValue)
       *pPredicateValue = m_state.pr.predicateValue;
   }
   
@@ -3201,7 +3201,7 @@ namespace dxvk {
 
     if (topology <= D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ) {
       static const std::array<DxvkInputAssemblyState, 14> s_iaStates = {{
-        { }, // D3D_PRIMITIVE_TOPOLOGY_UNDEFINED
+        { VK_PRIMITIVE_TOPOLOGY_MAX_ENUM,       VK_FALSE, 0 },
         { VK_PRIMITIVE_TOPOLOGY_POINT_LIST,     VK_FALSE, 0 },
         { VK_PRIMITIVE_TOPOLOGY_LINE_LIST,      VK_FALSE, 0 },
         { VK_PRIMITIVE_TOPOLOGY_LINE_STRIP,     VK_TRUE,  0 },

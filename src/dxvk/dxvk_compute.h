@@ -20,6 +20,14 @@ namespace dxvk {
    */
   struct DxvkComputePipelineShaders {
     Rc<DxvkShader> cs;
+
+    bool eq(const DxvkComputePipelineShaders& other) const {
+      return cs == other.cs;
+    }
+
+    size_t hash() const {
+      return DxvkShader::getHash(cs);
+    }
   };
 
 
@@ -103,6 +111,14 @@ namespace dxvk {
             DxvkComputePipelineShaders  shaders);
 
     ~DxvkComputePipeline();
+    
+    /**
+     * \brief Shaders used by the pipeline
+     * \returns Shaders used by the pipeline
+     */
+    const DxvkComputePipelineShaders& shaders() const {
+      return m_shaders;
+    }
     
     /**
      * \brief Pipeline layout

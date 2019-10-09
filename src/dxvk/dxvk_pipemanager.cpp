@@ -4,41 +4,6 @@
 
 namespace dxvk {
   
-  size_t DxvkPipelineKeyHash::operator () (const DxvkComputePipelineShaders& key) const {
-    std::hash<DxvkShader*> hash;
-    return hash(key.cs.ptr());
-  }
-  
-  
-  size_t DxvkPipelineKeyHash::operator () (const DxvkGraphicsPipelineShaders& key) const {
-    DxvkHashState state;
-    
-    std::hash<DxvkShader*> hash;
-    state.add(hash(key.vs.ptr()));
-    state.add(hash(key.tcs.ptr()));
-    state.add(hash(key.tes.ptr()));
-    state.add(hash(key.gs.ptr()));
-    state.add(hash(key.fs.ptr()));
-    return state;
-  }
-  
-  
-  bool DxvkPipelineKeyEq::operator () (
-    const DxvkComputePipelineShaders& a,
-    const DxvkComputePipelineShaders& b) const {
-    return a.cs == b.cs;
-  }
-  
-  
-  bool DxvkPipelineKeyEq::operator () (
-    const DxvkGraphicsPipelineShaders& a,
-    const DxvkGraphicsPipelineShaders& b) const {
-    return a.vs == b.vs && a.tcs == b.tcs
-        && a.tes == b.tes && a.gs == b.gs
-        && a.fs == b.fs;
-  }
-  
-  
   DxvkPipelineManager::DxvkPipelineManager(
     const DxvkDevice*         device,
           DxvkRenderPassPool* passManager)

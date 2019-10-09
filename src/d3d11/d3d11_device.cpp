@@ -1492,58 +1492,64 @@ namespace dxvk {
           UINT          FeatureSupportDataSize) {
     switch (Feature) {
       case D3D11_FEATURE_THREADING: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_THREADING))
+        auto info = static_cast<D3D11_FEATURE_DATA_THREADING*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
         // We report native support for command lists here so that we do not actually
         // have to re-implement the UpdateSubresource bug from the D3D11 runtime, see
         // https://msdn.microsoft.com/en-us/library/windows/desktop/ff476486(v=vs.85).aspx)
-        auto info = static_cast<D3D11_FEATURE_DATA_THREADING*>(pFeatureSupportData);
         info->DriverConcurrentCreates = TRUE;
         info->DriverCommandLists      = TRUE;
       } return S_OK;
       
       case D3D11_FEATURE_DOUBLES: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_DOUBLES))
+        auto info = static_cast<D3D11_FEATURE_DATA_DOUBLES*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
-        auto info = static_cast<D3D11_FEATURE_DATA_DOUBLES*>(pFeatureSupportData);
         info->DoublePrecisionFloatShaderOps = m_dxvkDevice->features().core.features.shaderFloat64
                                            && m_dxvkDevice->features().core.features.shaderInt64;
       } return S_OK;
       
       case D3D11_FEATURE_FORMAT_SUPPORT: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_FORMAT_SUPPORT))
+        auto info = static_cast<D3D11_FEATURE_DATA_FORMAT_SUPPORT*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
-        auto info = static_cast<D3D11_FEATURE_DATA_FORMAT_SUPPORT*>(pFeatureSupportData);
         return GetFormatSupportFlags(info->InFormat, &info->OutFormatSupport, nullptr);
       } return S_OK;
       
       case D3D11_FEATURE_FORMAT_SUPPORT2: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_FORMAT_SUPPORT2))
+        auto info = static_cast<D3D11_FEATURE_DATA_FORMAT_SUPPORT2*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
-        auto info = static_cast<D3D11_FEATURE_DATA_FORMAT_SUPPORT2*>(pFeatureSupportData);
         return GetFormatSupportFlags(info->InFormat, nullptr, &info->OutFormatSupport2);
       } return S_OK;
       
       case D3D11_FEATURE_D3D10_X_HARDWARE_OPTIONS: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS*>(pFeatureSupportData);
         info->ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = TRUE;
       } return S_OK;
       
       case D3D11_FEATURE_D3D11_OPTIONS: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D11_OPTIONS))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
         // https://msdn.microsoft.com/en-us/library/windows/desktop/hh404457(v=vs.85).aspx
         const auto& features = m_dxvkDevice->features();
 
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS*>(pFeatureSupportData);
         info->OutputMergerLogicOp                     = features.core.features.logicOp;
         info->UAVOnlyRenderingForcedSampleCount       = features.core.features.variableMultisampleRate;
         info->DiscardAPIsSeenByDriver                 = TRUE;
@@ -1561,46 +1567,51 @@ namespace dxvk {
       } return S_OK;
 
       case D3D11_FEATURE_ARCHITECTURE_INFO: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_ARCHITECTURE_INFO))
+        auto info = static_cast<D3D11_FEATURE_DATA_ARCHITECTURE_INFO*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
-        auto info = static_cast<D3D11_FEATURE_DATA_ARCHITECTURE_INFO*>(pFeatureSupportData);
         info->TileBasedDeferredRenderer = FALSE;
       } return S_OK;
 
       case D3D11_FEATURE_D3D9_OPTIONS: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D9_OPTIONS))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_OPTIONS*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_OPTIONS*>(pFeatureSupportData);
         info->FullNonPow2TextureSupport = TRUE;
       } return S_OK;
       
       case D3D11_FEATURE_SHADER_MIN_PRECISION_SUPPORT: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT))
+        auto info = static_cast<D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
         // Report that we only support full 32-bit operations
-        auto info = static_cast<D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT*>(pFeatureSupportData);
         info->PixelShaderMinPrecision          = 0;
         info->AllOtherShaderStagesMinPrecision = 0;
       } return S_OK;
       
       case D3D11_FEATURE_D3D9_SHADOW_SUPPORT: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D9_SHADOW_SUPPORT))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_SHADOW_SUPPORT*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
         
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_SHADOW_SUPPORT*>(pFeatureSupportData);
         info->SupportsDepthAsTextureWithLessEqualComparisonFilter = TRUE;
       } return S_OK;
 
       case D3D11_FEATURE_D3D11_OPTIONS1: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D11_OPTIONS1))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS1*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
         // Min/Max filtering requires Tiled Resources Tier 2 for some reason,
         // so we cannot support it even though Vulkan exposes this feature
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS1*>(pFeatureSupportData);
         info->TiledResourcesTier                    = D3D11_TILED_RESOURCES_NOT_SUPPORTED;
         info->MinMaxFiltering                       = FALSE;
         info->ClearViewAlsoSupportsDepthOnlyFormats = TRUE;
@@ -1608,26 +1619,29 @@ namespace dxvk {
       } return S_OK;
 
       case D3D11_FEATURE_D3D9_SIMPLE_INSTANCING_SUPPORT: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D9_SIMPLE_INSTANCING_SUPPORT))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_SIMPLE_INSTANCING_SUPPORT*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_SIMPLE_INSTANCING_SUPPORT*>(pFeatureSupportData);
         info->SimpleInstancingSupported = TRUE;
       } return S_OK;
 
       case D3D11_FEATURE_MARKER_SUPPORT: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_MARKER_SUPPORT))
+        auto info = static_cast<D3D11_FEATURE_DATA_MARKER_SUPPORT*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
-        auto info = static_cast<D3D11_FEATURE_DATA_MARKER_SUPPORT*>(pFeatureSupportData);
         info->Profile = FALSE;
       } return S_OK;
 
       case D3D11_FEATURE_D3D9_OPTIONS1: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D9_OPTIONS1))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_OPTIONS1*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D9_OPTIONS1*>(pFeatureSupportData);
         info->FullNonPow2TextureSupported                                 = TRUE;
         info->DepthAsTextureWithLessEqualComparisonFilterSupported        = TRUE;
         info->SimpleInstancingSupported                                   = TRUE;
@@ -1635,13 +1649,14 @@ namespace dxvk {
       } return S_OK;
 
       case D3D11_FEATURE_D3D11_OPTIONS2: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D11_OPTIONS2))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS2*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
         const auto& extensions = m_dxvkDevice->extensions();
         const auto& features = m_dxvkDevice->features();
 
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS2*>(pFeatureSupportData);
         info->PSSpecifiedStencilRefSupported = extensions.extShaderStencilExport;
         info->TypedUAVLoadAdditionalFormats  = features.core.features.shaderStorageImageReadWithoutFormat;
         info->ROVsSupported                  = FALSE;
@@ -1663,28 +1678,28 @@ namespace dxvk {
       } return S_OK;
 
       case D3D11_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT))
+        auto info = static_cast<D3D11_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
         // These numbers are not accurate, but it should not have any effect on D3D11 apps
-        auto info = static_cast<D3D11_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT*>(pFeatureSupportData);
         info->MaxGPUVirtualAddressBitsPerResource = 32;
         info->MaxGPUVirtualAddressBitsPerProcess  = 40;
       } return S_OK;
 
       case D3D11_FEATURE_D3D11_OPTIONS4: {
-        if (FeatureSupportDataSize != sizeof(D3D11_FEATURE_DATA_D3D11_OPTIONS4))
+        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS4*>(pFeatureSupportData);
+
+        if (FeatureSupportDataSize != sizeof(*info))
           return E_INVALIDARG;
 
-        auto info = static_cast<D3D11_FEATURE_DATA_D3D11_OPTIONS4*>(pFeatureSupportData);
         info->ExtendedNV12SharedTextureSupported = FALSE;
       } return S_OK;
 
       default:
-        Logger::err(str::format(
-          "D3D11Device: CheckFeatureSupport: Unknown feature: ",
-          Feature));
-        return E_NOTIMPL;
+        Logger::err(str::format("D3D11Device: CheckFeatureSupport: Unknown feature: ", Feature));
+        return E_INVALIDARG;
     }
   }
   
@@ -1718,12 +1733,12 @@ namespace dxvk {
   
   
   HRESULT STDMETHODCALLTYPE D3D11Device::GetDeviceRemovedReason() {
-    static std::atomic<bool> s_errorShown = { false };
-    
-    if (!s_errorShown.exchange(true))
-      Logger::warn("D3D11Device::GetDeviceRemovedReason: Stub");
-    
-    return S_OK;
+    VkResult status = m_dxvkDevice->getDeviceStatus();
+
+    switch (status) {
+      case VK_SUCCESS: return S_OK;
+      default:         return DXGI_ERROR_DEVICE_RESET;
+    }
   }
   
   
@@ -2468,7 +2483,7 @@ namespace dxvk {
       return S_OK;
     } catch (const DxvkError& e) {
       Logger::err(e.message());
-      return DXGI_ERROR_UNSUPPORTED;
+      return E_INVALIDARG;
     }
   }
   
@@ -2578,10 +2593,88 @@ namespace dxvk {
           DXGI_USAGE            Usage,
     const DXGI_SHARED_RESOURCE* pSharedResource,
           IDXGISurface**        ppSurface) {
-    InitReturnPtr(ppSurface);
+    if (!pDesc || (NumSurfaces && !ppSurface))
+      return E_INVALIDARG;
     
-    Logger::err("D3D11DXGIDevice::CreateSurface: Not implemented");
-    return E_NOTIMPL;
+    D3D11_TEXTURE2D_DESC desc;
+    desc.Width          = pDesc->Width;
+    desc.Height         = pDesc->Height;
+    desc.MipLevels      = 1;
+    desc.ArraySize      = 1;
+    desc.Format         = pDesc->Format;
+    desc.SampleDesc     = pDesc->SampleDesc;
+    desc.BindFlags      = 0;
+    desc.MiscFlags      = 0;
+
+    // Handle bind flags
+    if (Usage & DXGI_USAGE_RENDER_TARGET_OUTPUT)
+      desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
+
+    if (Usage & DXGI_USAGE_SHADER_INPUT)
+      desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+
+    if (Usage & DXGI_USAGE_UNORDERED_ACCESS)
+      desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+
+    // Handle CPU access flags
+    switch (Usage & DXGI_CPU_ACCESS_FIELD) {
+      case DXGI_CPU_ACCESS_NONE:
+        desc.Usage          = D3D11_USAGE_DEFAULT;
+        desc.CPUAccessFlags = 0;
+        break;
+
+      case DXGI_CPU_ACCESS_DYNAMIC:
+        desc.Usage          = D3D11_USAGE_DYNAMIC;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        break;
+
+      case DXGI_CPU_ACCESS_READ_WRITE:
+      case DXGI_CPU_ACCESS_SCRATCH:
+        desc.Usage          = D3D11_USAGE_STAGING;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+        break;
+
+      default:
+        return E_INVALIDARG;
+    }
+
+    // Restrictions and limitations of CreateSurface are not
+    // well-documented, so we'll be a lenient on validation.
+    HRESULT hr = m_d3d11Device.CreateTexture2D(&desc, nullptr, nullptr);
+
+    if (FAILED(hr))
+      return hr;
+
+    // We don't support shared resources
+    if (NumSurfaces && pSharedResource)
+      Logger::err("D3D11: CreateSurface: Shared surfaces not supported");
+
+    // Try to create the given number of surfaces
+    uint32_t surfacesCreated = 0;
+    hr = S_OK;
+
+    for (uint32_t i = 0; i < NumSurfaces; i++) {
+      Com<ID3D11Texture2D> texture;
+
+      hr = m_d3d11Device.CreateTexture2D(&desc, nullptr, &texture);
+
+      if (SUCCEEDED(hr)) {
+        hr = texture->QueryInterface(__uuidof(IDXGISurface),
+          reinterpret_cast<void**>(&ppSurface[i]));
+        surfacesCreated = i + 1;
+      }
+
+      if (FAILED(hr))
+        break;
+    }
+
+    // Don't leak surfaces if we failed to create one
+    if (FAILED(hr)) {
+      for (uint32_t i = 0; i < surfacesCreated; i++)
+        ppSurface[i]->Release();
+    }
+
+    return hr;
   }
   
   
@@ -2647,7 +2740,7 @@ namespace dxvk {
       MaxLatency = DefaultFrameLatency;
     
     if (MaxLatency > m_frameEvents.size())
-      MaxLatency = m_frameEvents.size();
+      return DXGI_ERROR_INVALID_CALL;
     
     m_frameLatency = MaxLatency;
     return S_OK;

@@ -1892,8 +1892,9 @@ namespace dxvk {
       
       case DxbcOpcode::Ne:
       case DxbcOpcode::DNe:
-        condition = m_module.opFOrdNotEqual(
-          conditionType, src.at(0).id, src.at(1).id);
+        // Avoid poorly supported FUnordNotEqual
+        condition = m_module.opLogicalNot(conditionType,
+          m_module.opFOrdEqual(conditionType, src.at(0).id, src.at(1).id));
         break;
       
       case DxbcOpcode::IEq:
@@ -4174,6 +4175,64 @@ namespace dxvk {
   }
   
   
+  void DxbcCompiler::emitControlFlowLabel(const DxbcShaderInstruction& ins) {
+    uint32_t functionNr = ins.dst[0].idx[0].offset;
+    uint32_t functionId = getFunctionId(functionNr);
+    
+    this->emitFunctionBegin(
+      functionId,
+      m_module.defVoidType(),
+      m_module.defFunctionType(
+        m_module.defVoidType(), 0, nullptr));
+    
+    m_module.opLabel(m_module.allocateId());
+    m_module.setDebugName(functionId, str::format("label", functionNr).c_str());
+    
+    m_insideFunction = true;
+  }
+
+  
+  void DxbcCompiler::emitControlFlowCall(const DxbcShaderInstruction& ins) {
+    uint32_t functionNr = ins.src[0].idx[0].offset;
+    uint32_t functionId = getFunctionId(functionNr);
+
+    m_module.opFunctionCall(
+      m_module.defVoidType(),
+      functionId, 0, nullptr);
+  }
+
+  
+  void DxbcCompiler::emitControlFlowCallc(const DxbcShaderInstruction& ins) {
+    uint32_t functionNr = ins.src[1].idx[0].offset;
+    uint32_t functionId = getFunctionId(functionNr);
+
+    // Perform zero test on the first component of the condition
+    const DxbcRegisterValue condition = emitRegisterLoad(
+      ins.src[0], DxbcRegMask(true, false, false, false));
+    
+    const DxbcRegisterValue zeroTest = emitRegisterZeroTest(
+      condition, ins.controls.zeroTest());
+    
+    // We basically have to wrap this into an 'if' block
+    const uint32_t callLabel = m_module.allocateId();
+    const uint32_t skipLabel = m_module.allocateId();
+    
+    m_module.opSelectionMerge(skipLabel,
+      spv::SelectionControlMaskNone);
+    
+    m_module.opBranchConditional(
+      zeroTest.id, callLabel, skipLabel);
+    
+    m_module.opLabel(callLabel);
+    m_module.opFunctionCall(
+      m_module.defVoidType(),
+      functionId, 0, nullptr);
+
+    m_module.opBranch(skipLabel);
+    m_module.opLabel(skipLabel);
+  }
+
+  
   void DxbcCompiler::emitControlFlow(const DxbcShaderInstruction& ins) {
     switch (ins.op) {
       case DxbcOpcode::If:
@@ -4210,7 +4269,7 @@ namespace dxvk {
       case DxbcOpcode::Breakc:
       case DxbcOpcode::Continuec:
         return this->emitControlFlowBreakc(ins);
-        
+
       case DxbcOpcode::Ret:
         return this->emitControlFlowRet(ins);
 
@@ -4220,6 +4279,15 @@ namespace dxvk {
       case DxbcOpcode::Discard:
         return this->emitControlFlowDiscard(ins);
       
+      case DxbcOpcode::Label:
+        return this->emitControlFlowLabel(ins);
+
+      case DxbcOpcode::Call:
+        return this->emitControlFlowCall(ins);
+
+      case DxbcOpcode::Callc:
+        return this->emitControlFlowCallc(ins);
+
       default:
         Logger::warn(str::format(
           "DxbcCompiler: Unhandled instruction: ",
@@ -7659,6 +7727,18 @@ namespace dxvk {
   }
   
   
+  uint32_t DxbcCompiler::getFunctionId(
+          uint32_t          functionNr) {
+    auto entry = m_subroutines.find(functionNr);
+    if (entry != m_subroutines.end())
+      return entry->second;
+    
+    uint32_t functionId = m_module.allocateId();
+    m_subroutines.insert({ functionNr, functionId });
+    return functionId;
+  }
+
+
   DxbcCompilerHsForkJoinPhase* DxbcCompiler::getCurrentHsForkJoinPhase() {
     switch (m_hs.currPhaseType) {
       case DxbcCompilerHsPhase::Fork: return &m_hs.forkPhases.at(m_hs.currPhaseId);

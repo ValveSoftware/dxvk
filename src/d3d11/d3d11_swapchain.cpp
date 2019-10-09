@@ -183,13 +183,19 @@ namespace dxvk {
     
     FlushImmediateContext();
 
+    HRESULT hr = S_OK;
+
     try {
       PresentImage(SyncInterval);
-      return S_OK;
     } catch (const DxvkError& e) {
       Logger::err(e.message());
-      return E_FAIL;
+      hr = E_FAIL;
     }
+
+    if (m_device->getDeviceStatus() != VK_SUCCESS)
+      hr = DXGI_ERROR_DEVICE_RESET;
+
+    return hr;
   }
 
 
@@ -447,6 +453,9 @@ namespace dxvk {
 
     if (m_desc.BufferUsage & DXGI_USAGE_UNORDERED_ACCESS)
       desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+    
+    if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE)
+      desc.MiscFlags |= D3D11_RESOURCE_MISC_GDI_COMPATIBLE;
     
     m_backBuffer = new D3D11Texture2D(m_parent, &desc);
     m_backBuffer->AddRefPrivate();

@@ -131,6 +131,14 @@ namespace dxvk {
      { R"(\\Overwatch\.exe$)", {{
       { "d3d11.allowMapFlagNoWait",         "False" },
      }} },
+    /* Hitman 2 - requires AGS library            */
+    { R"(\\HITMAN2\.exe$)", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
+    /* Modern Warfare Remastered                  */
+    { R"(\\h1_[ms]p64_ship\.exe$)", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
   }};
 
 
