@@ -36,12 +36,18 @@ namespace dxvk {
   
   
   ULONG STDMETHODCALLTYPE D3D11ImmediateContext::AddRef() {
-    return m_parent->AddRef();
+    ULONG refCount = m_refCount++;
+    if (!refCount)
+      m_parent->AddRef();
+    return refCount + 1;
   }
   
   
   ULONG STDMETHODCALLTYPE D3D11ImmediateContext::Release() {
-    return m_parent->Release();
+    ULONG refCount = --m_refCount;
+    if (!refCount)
+      m_parent->Release();
+    return refCount;
   }
   
   
@@ -569,7 +575,8 @@ namespace dxvk {
     // Wait for the any pending D3D11 command to be executed
     // on the CS thread so that we can determine whether the
     // resource is currently in use or not.
-    SynchronizeCsThread();
+    if (!Resource->isInUse(access))
+      SynchronizeCsThread();
     
     if (Resource->isInUse(access)) {
       if (MapFlags & D3D11_MAP_FLAG_DO_NOT_WAIT) {

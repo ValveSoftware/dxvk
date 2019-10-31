@@ -8,6 +8,15 @@
   
 namespace dxvk {
   
+  template<typename T>
+  class NoWrapper : public T {
+
+  public:
+
+    virtual ~NoWrapper() { }
+
+  };
+  
   /**
    * \brief Reference-counted COM object
    *
@@ -24,8 +33,8 @@ namespace dxvk {
    * holding on to objects which the application wants
    * to delete.
    */
-  template<typename... Base>
-  class ComObject : public Base... {
+  template<typename Base>
+  class ComObject : public Base {
     
   public:
     

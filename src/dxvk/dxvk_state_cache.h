@@ -143,6 +143,11 @@ namespace dxvk {
             std::istream&             stream,
             DxvkStateCacheHeader&     header) const;
 
+    bool readCacheEntryV7(
+            uint32_t                  version,
+            std::istream&             stream, 
+            DxvkStateCacheEntry&      entry) const;
+    
     bool readCacheEntry(
             uint32_t                  version,
             std::istream&             stream, 
@@ -157,10 +162,14 @@ namespace dxvk {
     
     bool convertEntryV4(
       const DxvkStateCacheEntryV4&    in,
-            DxvkStateCacheEntry&      out) const;
+            DxvkStateCacheEntryV6&    out) const;
     
     bool convertEntryV5(
       const DxvkStateCacheEntryV5&    in,
+            DxvkStateCacheEntryV6&    out) const;
+    
+    bool convertEntryV6(
+      const DxvkStateCacheEntryV6&    in,
             DxvkStateCacheEntry&      out) const;
     
     void workerFunc();
@@ -170,6 +179,15 @@ namespace dxvk {
     std::string getCacheFileName() const;
     
     std::string getCacheDir() const;
+
+    static uint8_t packImageLayout(
+            VkImageLayout             layout);
+
+    static VkImageLayout unpackImageLayout(
+            uint8_t                   layout);
+
+    static bool validateRenderPassFormat(
+      const DxvkRenderPassFormat&     format);
 
   };
 

@@ -74,15 +74,11 @@ namespace dxvk {
      * \brief Sets render targets
      * 
      * Creates a framebuffer on the fly if necessary
-     * and binds it using \c bindFramebuffer. Set the
-     * \c spill flag in order to make shader writes
-     * from previous rendering operations visible.
+     * and binds it using \c bindFramebuffer.
      * \param [in] targets Render targets to bind
-     * \param [in] spill Spill render pass if true
      */
     void bindRenderTargets(
-      const DxvkRenderTargets&    targets,
-            bool                  spill);
+      const DxvkRenderTargets&    targets);
     
     /**
      * \brief Binds indirect argument buffer
@@ -184,13 +180,17 @@ namespace dxvk {
      * \brief Blits an image
      * 
      * \param [in] dstImage Destination image
+     * \param [in] dstMapping Destination swizzle
      * \param [in] srcImage Source image
+     * \param [in] srcMapping Source swizzle
      * \param [in] region Blit region
      * \param [in] filter Texture filter
      */
     void blitImage(
       const Rc<DxvkImage>&        dstImage,
+      const VkComponentMapping&   dstMapping,
       const Rc<DxvkImage>&        srcImage,
+      const VkComponentMapping&   srcMapping,
       const VkImageBlit&          region,
             VkFilter              filter);
     
@@ -611,6 +611,14 @@ namespace dxvk {
             uint32_t          counterBias);
     
     /**
+     * \brief Emits barrier for render target readback
+     *
+     * Use between draw calls if the fragment shader
+     * reads one of the currently bound render targets.
+     */
+    void emitRenderTargetReadbackBarrier();
+
+    /**
      * \brief Generates mip maps
      * 
      * Uses blitting to generate lower mip levels from
@@ -1013,6 +1021,7 @@ namespace dxvk {
     DxvkBarrierSet          m_initBarriers;
     DxvkBarrierSet          m_execAcquires;
     DxvkBarrierSet          m_execBarriers;
+    DxvkBarrierSet          m_gfxBarriers;
     DxvkBarrierControlFlags m_barrierControl;
     
     DxvkGpuQueryManager     m_queryManager;
@@ -1028,9 +1037,6 @@ namespace dxvk {
     DxvkBindingSet<MaxNumResourceSlots>       m_rcTracked;
 
     std::array<DxvkShaderResourceSlot, MaxNumResourceSlots>  m_rc;
-    std::array<DxvkDescriptorInfo,     MaxNumActiveBindings> m_descInfos;
-    std::array<uint32_t,               MaxNumActiveBindings> m_descOffsets;
-    
     std::array<DxvkGraphicsPipeline*, 4096> m_gpLookupCache = { };
     std::array<DxvkComputePipeline*,   256> m_cpLookupCache = { };
 
@@ -1039,6 +1045,19 @@ namespace dxvk {
       DxvkGpuQueryHandle,
       DxvkHash, DxvkEq>     m_predicateWrites;
     
+    void blitImageFb(
+      const Rc<DxvkImage>&        dstImage,
+      const Rc<DxvkImage>&        srcImage,
+      const VkImageBlit&          region,
+      const VkComponentMapping&   mapping,
+            VkFilter              filter);
+
+    void blitImageHw(
+      const Rc<DxvkImage>&        dstImage,
+      const Rc<DxvkImage>&        srcImage,
+      const VkImageBlit&          region,
+            VkFilter              filter);
+
     void clearImageViewFb(
       const Rc<DxvkImageView>&    imageView,
             VkOffset3D            offset,
@@ -1119,12 +1138,12 @@ namespace dxvk {
     void pauseTransformFeedback();
     
     void unbindComputePipeline();
-    void updateComputePipeline();
-    void updateComputePipelineState();
+    bool updateComputePipeline();
+    bool updateComputePipelineState();
     
     void unbindGraphicsPipeline();
-    void updateGraphicsPipeline();
-    void updateGraphicsPipelineState();
+    bool updateGraphicsPipeline();
+    bool updateGraphicsPipelineState();
     
     void updateComputeShaderResources();
     void updateComputeShaderDescriptors();
@@ -1134,9 +1153,6 @@ namespace dxvk {
 
     template<VkPipelineBindPoint BindPoint>
     bool updateShaderResources(
-      const DxvkPipelineLayout*     layout);
-    
-    VkDescriptorSet updateShaderDescriptors(
       const DxvkPipelineLayout*     layout);
     
     template<VkPipelineBindPoint BindPoint>
@@ -1159,20 +1175,29 @@ namespace dxvk {
     template<VkPipelineBindPoint BindPoint>
     void updatePushConstants();
     
-    void commitComputeState();
+    bool commitComputeState();
     
-    template<bool Indexed>
-    void commitGraphicsState();
+    template<bool Indexed, bool Indirect>
+    bool commitGraphicsState();
     
     void commitComputeInitBarriers();
     void commitComputePostBarriers();
     
-    void commitGraphicsPostBarriers();
+    template<bool Indexed, bool Indirect>
+    void commitGraphicsBarriers();
 
-    template<bool Indirect>
-    void finalizeDraw();
+    DxvkAccessFlags checkGfxBufferBarrier(
+      const DxvkBufferSlice&          slice,
+            VkPipelineStageFlags      stages,
+            VkAccessFlags             access);
+
+    DxvkAccessFlags checkGfxImageBarrier(
+      const Rc<DxvkImageView>&        imageView,
+            VkPipelineStageFlags      stages,
+            VkAccessFlags             access);
 
     void emitMemoryBarrier(
+            VkDependencyFlags         flags,
             VkPipelineStageFlags      srcStages,
             VkAccessFlags             srcAccess,
             VkPipelineStageFlags      dstStages,

@@ -21,22 +21,7 @@ namespace dxvk {
     m_csFlags   (CsFlags),
     m_csChunk   (AllocCsChunk()),
     m_cmdData   (nullptr) {
-    // Create default state objects. We won't ever return them
-    // to the application, but we'll use them to apply state.
-    Com<ID3D11BlendState>         defaultBlendState;
-    Com<ID3D11DepthStencilState>  defaultDepthStencilState;
-    Com<ID3D11RasterizerState>    defaultRasterizerState;
-    
-    if (FAILED(m_parent->CreateBlendState       (nullptr, &defaultBlendState))
-     || FAILED(m_parent->CreateDepthStencilState(nullptr, &defaultDepthStencilState))
-     || FAILED(m_parent->CreateRasterizerState  (nullptr, &defaultRasterizerState)))
-      throw DxvkError("D3D11DeviceContext: Failed to create default state objects");
-    
-    // Apply default state to the context. This is required
-    // in order to initialize the DXVK contex properly.
-    m_defaultBlendState        = static_cast<D3D11BlendState*>       (defaultBlendState.ptr());
-    m_defaultDepthStencilState = static_cast<D3D11DepthStencilState*>(defaultDepthStencilState.ptr());
-    m_defaultRasterizerState   = static_cast<D3D11RasterizerState*>  (defaultRasterizerState.ptr());
+
   }
   
   
@@ -254,7 +239,7 @@ namespace dxvk {
     m_state.pr.predicateValue  = FALSE;
     
     // Make sure to apply all state
-    RestoreState();
+    ResetState();
   }
   
   
@@ -1918,7 +1903,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.vs.samplers[StartSlot + i].ref();
+      ppSamplers[i] = ref(m_state.vs.samplers[StartSlot + i]);
   }
   
   
@@ -2060,7 +2045,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.hs.samplers[StartSlot + i].ref();
+      ppSamplers[i] = ref(m_state.hs.samplers[StartSlot + i]);
   }
   
   
@@ -2202,7 +2187,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.ds.samplers[StartSlot + i].ref();
+      ppSamplers[i] = ref(m_state.ds.samplers[StartSlot + i]);
   }
   
   
@@ -2344,7 +2329,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.gs.samplers[StartSlot + i].ref();
+      ppSamplers[i] = ref(m_state.gs.samplers[StartSlot + i]);
   }
   
   
@@ -2486,7 +2471,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.ps.samplers[StartSlot + i].ref();
+      ppSamplers[i] = ref(m_state.ps.samplers[StartSlot + i]);
   }
   
   
@@ -2684,7 +2669,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = m_state.cs.samplers[StartSlot + i].ref();
+      ppSamplers[i] = ref(m_state.cs.samplers[StartSlot + i]);
   }
   
   
@@ -2723,7 +2708,6 @@ namespace dxvk {
       return;
     
     bool needsUpdate = false;
-    bool needsSpill  = false;
 
     if (likely(NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)) {
       // Native D3D11 does not change the render targets if
@@ -2785,15 +2769,13 @@ namespace dxvk {
 
             if (NumRTVs == D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
               needsUpdate |= ResolveOmRtvHazards(uav);
-
-            needsSpill = true;
           }
         }
       }
     }
 
-    if (needsUpdate || needsSpill)
-      BindFramebuffer(needsSpill);
+    if (needsUpdate)
+      BindFramebuffer();
   }
   
   
@@ -2882,7 +2864,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     if (ppBlendState != nullptr)
-      *ppBlendState = m_state.om.cbState.ref();
+      *ppBlendState = ref(m_state.om.cbState);
     
     if (BlendFactor != nullptr)
       std::memcpy(BlendFactor, m_state.om.blendFactor, sizeof(FLOAT) * 4);
@@ -2898,7 +2880,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     if (ppDepthStencilState != nullptr)
-      *ppDepthStencilState = m_state.om.dsState.ref();
+      *ppDepthStencilState = ref(m_state.om.dsState);
     
     if (pStencilRef != nullptr)
       *pStencilRef = m_state.om.stencilRef;
@@ -3000,7 +2982,7 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     if (ppRasterizerState != nullptr)
-      *ppRasterizerState = m_state.rs.state.ref();
+      *ppRasterizerState = ref(m_state.rs.state);
   }
   
   
@@ -3229,17 +3211,29 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyBlendState() {
-    auto cbState = m_state.om.cbState.prvRef();
+    if (m_state.om.cbState != nullptr) {
+      EmitCs([
+        cBlendState = m_state.om.cbState,
+        cSampleMask = m_state.om.sampleMask
+      ] (DxvkContext* ctx) {
+        cBlendState->BindToContext(ctx, cSampleMask);
+      });
+    } else {
+      EmitCs([
+        cSampleMask = m_state.om.sampleMask
+      ] (DxvkContext* ctx) {
+        DxvkBlendMode cbState;
+        DxvkLogicOpState loState;
+        DxvkMultisampleState msState;
+        InitDefaultBlendState(&cbState, &loState, &msState, cSampleMask);
 
-    if (unlikely(cbState == nullptr))
-      cbState = m_defaultBlendState.prvRef();
+        for (uint32_t i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
+          ctx->setBlendMode(i, cbState);
 
-    EmitCs([
-      cBlendState = std::move(cbState),
-      cSampleMask = m_state.om.sampleMask
-    ] (DxvkContext* ctx) {
-      cBlendState->BindToContext(ctx, cSampleMask);
-    });
+        ctx->setLogicOpState(loState);
+        ctx->setMultisampleState(msState);
+      });
+    }
   }
   
   
@@ -3255,16 +3249,20 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyDepthStencilState() {
-    auto dsState = m_state.om.dsState.prvRef();
+    if (m_state.om.dsState != nullptr) {
+      EmitCs([
+        cDepthStencilState = m_state.om.dsState
+      ] (DxvkContext* ctx) {
+        cDepthStencilState->BindToContext(ctx);
+      });
+    } else {
+      EmitCs([] (DxvkContext* ctx) {
+        DxvkDepthStencilState dsState;
+        InitDefaultDepthStencilState(&dsState);
 
-    if (unlikely(dsState == nullptr))
-      dsState = m_defaultDepthStencilState.prvRef();
-
-    EmitCs([
-      cDepthStencilState = std::move(dsState)
-    ] (DxvkContext* ctx) {
-      cDepthStencilState->BindToContext(ctx);
-    });
+        ctx->setDepthStencilState(dsState);
+      });
+    }
   }
   
   
@@ -3278,16 +3276,20 @@ namespace dxvk {
   
   
   void D3D11DeviceContext::ApplyRasterizerState() {
-    auto rsState = m_state.rs.state.prvRef();
+    if (m_state.rs.state != nullptr) {
+      EmitCs([
+        cRasterizerState = m_state.rs.state
+      ] (DxvkContext* ctx) {
+        cRasterizerState->BindToContext(ctx);
+      });
+    } else {
+      EmitCs([] (DxvkContext* ctx) {
+        DxvkRasterizerState rsState;
+        InitDefaultRasterizerState(&rsState);
 
-    if (unlikely(rsState == nullptr))
-      rsState = m_defaultRasterizerState.prvRef();
-
-    EmitCs([
-      cRasterizerState = std::move(rsState)
-    ] (DxvkContext* ctx) {
-      cRasterizerState->BindToContext(ctx);
-    });
+        ctx->setRasterizerState(rsState);
+      });
+    }
   }
   
   
@@ -3407,7 +3409,7 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::BindFramebuffer(BOOL Spill) {
+  void D3D11DeviceContext::BindFramebuffer() {
     DxvkRenderTargets attachments;
     
     // D3D11 doesn't have the concept of a framebuffer object,
@@ -3429,10 +3431,9 @@ namespace dxvk {
     
     // Create and bind the framebuffer object to the context
     EmitCs([
-      cAttachments = std::move(attachments),
-      cSpill       = Spill
+      cAttachments = std::move(attachments)
     ] (DxvkContext* ctx) {
-      ctx->bindRenderTargets(cAttachments, cSpill);
+      ctx->bindRenderTargets(cAttachments);
     });
   }
   
@@ -3779,8 +3780,105 @@ namespace dxvk {
   }
   
   
+  void D3D11DeviceContext::ResetState() {
+    EmitCs([] (DxvkContext* ctx) {
+      // Reset render targets
+      ctx->bindRenderTargets(DxvkRenderTargets());
+
+      // Reset vertex input state
+      ctx->setInputLayout(0, nullptr, 0, nullptr);
+
+      // Reset render states
+      DxvkInputAssemblyState iaState;
+      InitDefaultPrimitiveTopology(&iaState);
+
+      DxvkDepthStencilState dsState;
+      InitDefaultDepthStencilState(&dsState);
+
+      DxvkRasterizerState rsState;
+      InitDefaultRasterizerState(&rsState);
+
+      DxvkBlendMode cbState;
+      DxvkLogicOpState loState;
+      DxvkMultisampleState msState;
+      InitDefaultBlendState(&cbState, &loState, &msState, D3D11_DEFAULT_SAMPLE_MASK);
+
+      ctx->setInputAssemblyState(iaState);
+      ctx->setDepthStencilState(dsState);
+      ctx->setRasterizerState(rsState);
+      ctx->setLogicOpState(loState);
+      ctx->setMultisampleState(msState);
+
+      for (uint32_t i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
+        ctx->setBlendMode(i, cbState);
+
+      // Reset dynamic states
+      ctx->setBlendConstants(DxvkBlendConstants { 1.0f, 1.0f, 1.0f, 1.0f });
+      ctx->setStencilReference(D3D11_DEFAULT_STENCIL_REFERENCE);
+
+      // Reset viewports
+      auto viewport = VkViewport();
+      auto scissor  = VkRect2D();
+
+      ctx->setViewports(1, &viewport, &scissor);
+
+      // Reset predication
+      ctx->setPredicate(DxvkBufferSlice(), 0);
+
+      // Unbind indirect draw buffer
+      ctx->bindDrawBuffers(DxvkBufferSlice(), DxvkBufferSlice());
+
+      // Unbind index and vertex buffers
+      ctx->bindIndexBuffer(DxvkBufferSlice(), VK_INDEX_TYPE_UINT32);
+
+      for (uint32_t i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++)
+        ctx->bindVertexBuffer(i, DxvkBufferSlice(), 0);
+
+      // Unbind transform feedback buffers
+      for (uint32_t i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
+        ctx->bindXfbBuffer(i, DxvkBufferSlice(), DxvkBufferSlice());
+
+      // Unbind per-shader stage resources
+      for (uint32_t i = 0; i < 6; i++) {
+        auto programType = DxbcProgramType(i);
+        ctx->bindShader(GetShaderStage(programType), nullptr);
+
+        // Unbind constant buffers, including the shader's ICB
+        auto cbSlotId = computeConstantBufferBinding(programType, 0);
+
+        for (uint32_t j = 0; j <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; j++)
+          ctx->bindResourceBuffer(cbSlotId + j, DxvkBufferSlice());
+
+        // Unbind shader resource views
+        auto srvSlotId = computeSrvBinding(programType, 0);
+
+        for (uint32_t j = 0; j < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; j++)
+          ctx->bindResourceView(srvSlotId + j, nullptr, nullptr);
+
+        // Unbind texture samplers
+        auto samplerSlotId = computeSamplerBinding(programType, 0);
+
+        for (uint32_t j = 0; j < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; j++)
+          ctx->bindResourceSampler(samplerSlotId + j, nullptr);
+
+        // Unbind UAVs for supported stages
+        if (programType == DxbcProgramType::PixelShader
+         || programType == DxbcProgramType::ComputeShader) {
+          auto uavSlotId = computeUavBinding(programType, 0);
+          auto ctrSlotId = computeUavCounterBinding(programType, 0);
+
+          for (uint32_t j = 0; j < D3D11_1_UAV_SLOT_COUNT; j++) {
+            ctx->bindResourceView   (uavSlotId, nullptr, nullptr);
+            ctx->bindResourceBuffer (ctrSlotId, DxvkBufferSlice());
+          }
+        }
+      }
+    });
+  }
+
+
   void D3D11DeviceContext::RestoreState() {
-    BindFramebuffer(m_state.om.maxUav > 0);
+    BindFramebuffer();
     
     BindShader<DxbcProgramType::VertexShader>   (GetCommonShader(m_state.vs.shader.ptr()));
     BindShader<DxbcProgramType::HullShader>     (GetCommonShader(m_state.hs.shader.ptr()));
@@ -3861,7 +3959,7 @@ namespace dxvk {
     uint32_t slotId = computeSamplerBinding(Stage, 0);
     
     for (uint32_t i = 0; i < Bindings.size(); i++)
-      BindSampler(slotId + i, Bindings[i].ptr());
+      BindSampler(slotId + i, Bindings[i]);
   }
   
   
@@ -4176,4 +4274,66 @@ namespace dxvk {
     return m_parent->AllocCsChunk(m_csFlags);
   }
   
+
+  void D3D11DeviceContext::InitDefaultPrimitiveTopology(
+          DxvkInputAssemblyState*           pIaState) {
+    pIaState->primitiveTopology = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+    pIaState->primitiveRestart  = VK_FALSE;
+    pIaState->patchVertexCount  = 0;
+  }
+
+
+  void D3D11DeviceContext::InitDefaultRasterizerState(
+          DxvkRasterizerState*              pRsState) {
+    pRsState->polygonMode     = VK_POLYGON_MODE_FILL;
+    pRsState->cullMode        = VK_CULL_MODE_BACK_BIT;
+    pRsState->frontFace       = VK_FRONT_FACE_CLOCKWISE;
+    pRsState->depthClipEnable = VK_TRUE;
+    pRsState->depthBiasEnable = VK_FALSE;
+    pRsState->sampleCount     = 0;
+  }
+
+
+  void D3D11DeviceContext::InitDefaultDepthStencilState(
+          DxvkDepthStencilState*            pDsState) {
+    VkStencilOpState stencilOp;
+    stencilOp.failOp            = VK_STENCIL_OP_KEEP;
+    stencilOp.passOp            = VK_STENCIL_OP_KEEP;
+    stencilOp.depthFailOp       = VK_STENCIL_OP_KEEP;
+    stencilOp.compareOp         = VK_COMPARE_OP_ALWAYS;
+    stencilOp.compareMask       = D3D11_DEFAULT_STENCIL_READ_MASK;
+    stencilOp.writeMask         = D3D11_DEFAULT_STENCIL_WRITE_MASK;
+    stencilOp.reference         = 0;
+
+    pDsState->enableDepthTest   = VK_TRUE;
+    pDsState->enableDepthWrite  = VK_TRUE;
+    pDsState->enableStencilTest = VK_FALSE;
+    pDsState->depthCompareOp    = VK_COMPARE_OP_LESS;
+    pDsState->stencilOpFront    = stencilOp;
+    pDsState->stencilOpBack     = stencilOp;
+  }
+
+  
+  void D3D11DeviceContext::InitDefaultBlendState(
+          DxvkBlendMode*                    pCbState,
+          DxvkLogicOpState*                 pLoState,
+          DxvkMultisampleState*             pMsState,
+          UINT                              SampleMask) {
+    pCbState->enableBlending    = VK_FALSE;
+    pCbState->colorSrcFactor    = VK_BLEND_FACTOR_ONE;
+    pCbState->colorDstFactor    = VK_BLEND_FACTOR_ZERO;
+    pCbState->colorBlendOp      = VK_BLEND_OP_ADD;
+    pCbState->alphaSrcFactor    = VK_BLEND_FACTOR_ONE;
+    pCbState->alphaDstFactor    = VK_BLEND_FACTOR_ZERO;
+    pCbState->alphaBlendOp      = VK_BLEND_OP_ADD;
+    pCbState->writeMask         = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    pLoState->enableLogicOp     = VK_FALSE;
+    pLoState->logicOp           = VK_LOGIC_OP_NO_OP;
+
+    pMsState->sampleMask            = SampleMask;
+    pMsState->enableAlphaToCoverage = VK_FALSE;
+  }
+
 }

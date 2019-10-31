@@ -10,7 +10,7 @@ namespace dxvk {
   
   class D3D11Device;
   
-  class D3D11RasterizerState : public D3D11DeviceChild<ID3D11RasterizerState2> {
+  class D3D11RasterizerState : public D3D11DeviceChild<ID3D11RasterizerState2, NoWrapper> {
     
   public:
     
@@ -20,7 +20,11 @@ namespace dxvk {
             D3D11Device*                    device,
       const D3D11_RASTERIZER_DESC2&         desc);
     ~D3D11RasterizerState();
-    
+
+    ULONG STDMETHODCALLTYPE AddRef() final;
+
+    ULONG STDMETHODCALLTYPE Release() final;
+
     HRESULT STDMETHODCALLTYPE QueryInterface(
             REFIID  riid,
             void**  ppvObject) final;
@@ -48,8 +52,6 @@ namespace dxvk {
       return &m_d3d10;
     }
     
-    static D3D11_RASTERIZER_DESC2 DefaultDesc();
-    
     static D3D11_RASTERIZER_DESC2 PromoteDesc(
       const D3D11_RASTERIZER_DESC*  pDesc);
     
@@ -66,6 +68,8 @@ namespace dxvk {
     DxvkRasterizerState    m_state;
     DxvkDepthBias          m_depthBias;
     D3D10RasterizerState   m_d3d10;
+
+    std::atomic<uint32_t> m_refCount = { 0u };
     
   };
   

@@ -7,6 +7,79 @@ namespace dxvk {
   static const Sha1Hash       g_nullHash      = Sha1Hash::compute(nullptr, 0);
   static const DxvkShaderKey  g_nullShaderKey = DxvkShaderKey();
 
+
+  /**
+   * \brief Packed entry header
+   */
+  struct DxvkStateCacheEntryHeader {
+    uint32_t stageMask : 8;
+    uint32_t entrySize : 24;
+  };
+
+  
+  /**
+   * \brief State cache entry data
+   *
+   * Stores data for a single cache entry and
+   * provides convenience methods to access it.
+   */
+  class DxvkStateCacheEntryData {
+    constexpr static size_t MaxSize = 1024;
+  public:
+
+    size_t size() const {
+      return m_size;
+    }
+
+    const char* data() const {
+      return m_data;
+    }
+
+    Sha1Hash computeHash() const {
+      return Sha1Hash::compute(m_data, m_size);
+    }
+
+    template<typename T>
+    bool read(T& data) {
+      if (m_read + sizeof(T) > m_size)
+        return false;
+      
+      std::memcpy(&data, &m_data[m_read], sizeof(T));
+      m_read += sizeof(T);
+      return true;
+    }
+
+    template<typename T>
+    bool write(const T& data) {
+      if (m_size + sizeof(T) > MaxSize)
+        return false;
+      
+      std::memcpy(&m_data[m_size], &data, sizeof(T));
+      m_size += sizeof(T);
+      return true;
+    }
+
+    bool readFromStream(std::istream& stream, size_t size) {
+      if (size > MaxSize)
+        return false;
+
+      if (!stream.read(m_data, size))
+        return false;
+
+      m_size = size;
+      m_read = 0;
+      return true;
+    }
+
+  private:
+
+    size_t m_size = 0;
+    size_t m_read = 0;
+    char   m_data[MaxSize];
+
+  };
+
+
   template<typename T>
   bool readCacheEntryTyped(std::istream& stream, T& entry) {
     auto data = reinterpret_cast<char*>(&entry);
@@ -302,6 +375,10 @@ namespace dxvk {
       expectedSize = sizeof(DxvkStateCacheEntryV4);
     else if (curHeader.version <= 5)
       expectedSize = sizeof(DxvkStateCacheEntryV5);
+    else if (curHeader.version <= 6)
+      expectedSize = sizeof(DxvkStateCacheEntryV6);
+    else if (curHeader.version <= 7)
+      expectedSize = sizeof(DxvkStateCacheEntry);
 
     if (curHeader.entrySize != expectedSize) {
       Logger::warn("DXVK: State cache entry size changed");
@@ -379,42 +456,251 @@ namespace dxvk {
   }
 
 
-  bool DxvkStateCache::readCacheEntry(
+  bool DxvkStateCache::readCacheEntryV7(
           uint32_t                  version,
           std::istream&             stream, 
           DxvkStateCacheEntry&      entry) const {
-    if (version <= 4) {
-      DxvkStateCacheEntryV4 v4;
+    if (version <= 6) {
+      DxvkStateCacheEntryV6 v6;
 
-      if (!readCacheEntryTyped(stream, v4))
-        return false;
-      
-      if (version == 2)
-        convertEntryV2(v4);
-      
-      return convertEntryV4(v4, entry);
-    } else if (version <= 5) {
-      DxvkStateCacheEntryV5 v5;
+      if (version <= 4) {
+        DxvkStateCacheEntryV4 v4;
 
-      if (!readCacheEntryTyped(stream, v5))
-        return false;
+        if (!readCacheEntryTyped(stream, v4))
+          return false;
 
-      return convertEntryV5(v5, entry);
+        if (version == 2)
+          convertEntryV2(v4);
+
+        if (!convertEntryV4(v4, v6))
+          return false;
+      } else if (version <= 5) {
+        DxvkStateCacheEntryV5 v5;
+
+        if (!readCacheEntryTyped(stream, v5))
+          return false;
+
+        if (!convertEntryV5(v5, v6))
+          return false;
+      } else {
+        if (!readCacheEntryTyped(stream, v6))
+          return false;
+      }
+
+      return convertEntryV6(v6, entry);
     } else {
       return readCacheEntryTyped(stream, entry);
     }
   }
 
 
+  bool DxvkStateCache::readCacheEntry(
+          uint32_t                  version,
+          std::istream&             stream, 
+          DxvkStateCacheEntry&      entry) const {
+    if (version < 8)
+      return readCacheEntryV7(version, stream, entry);
+
+    // Read entry metadata and actual data
+    DxvkStateCacheEntryHeader header;
+    DxvkStateCacheEntryData data;
+    Sha1Hash hash;
+  
+    if (!stream.read(reinterpret_cast<char*>(&header), sizeof(header))
+     || !stream.read(reinterpret_cast<char*>(&hash), sizeof(hash))
+     || !data.readFromStream(stream, header.entrySize))
+      return false;
+
+    // Validate hash, skip entry if invalid
+    if (hash != data.computeHash())
+      return false;
+
+    // Read shader hashes
+    VkShaderStageFlags stageMask = VkShaderStageFlags(header.stageMask);
+    auto keys = &entry.shaders.vs;
+
+    for (uint32_t i = 0; i < 6; i++) {
+      if (stageMask & VkShaderStageFlagBits(1 << i))
+        data.read(keys[i]);
+      else
+        keys[i] = g_nullShaderKey;
+    }
+
+    if (stageMask & VK_SHADER_STAGE_COMPUTE_BIT) {
+      if (!data.read(entry.cpState.bsBindingMask))
+        return false;
+    } else {
+      // Read packed render pass format
+      uint8_t sampleCount = 0;
+      uint8_t imageFormat = 0;
+      uint8_t imageLayout = 0;
+
+      if (!data.read(sampleCount)
+       || !data.read(imageFormat)
+       || !data.read(imageLayout))
+        return false;
+
+      entry.format.sampleCount = VkSampleCountFlagBits(sampleCount);
+      entry.format.depth.format = VkFormat(imageFormat);
+      entry.format.depth.layout = unpackImageLayout(imageLayout);
+
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+        if (!data.read(imageFormat)
+         || !data.read(imageLayout))
+          return false;
+
+        entry.format.color[i].format = VkFormat(imageFormat);
+        entry.format.color[i].layout = unpackImageLayout(imageLayout);
+      }
+
+      if (!validateRenderPassFormat(entry.format))
+        return false;
+
+      // Read common pipeline state
+      if (!data.read(entry.gpState.bsBindingMask)
+       || !data.read(entry.gpState.ia)
+       || !data.read(entry.gpState.il)
+       || !data.read(entry.gpState.rs)
+       || !data.read(entry.gpState.ms)
+       || !data.read(entry.gpState.ds)
+       || !data.read(entry.gpState.om)
+       || !data.read(entry.gpState.dsFront)
+       || !data.read(entry.gpState.dsBack))
+        return false;
+
+      if (entry.gpState.il.attributeCount() > MaxNumVertexAttributes
+       || entry.gpState.il.bindingCount() > MaxNumVertexBindings)
+        return false;
+
+      // Read render target swizzles
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+        if (!data.read(entry.gpState.omSwizzle[i]))
+          return false;
+      }
+
+      // Read render target blend info
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+        if (!data.read(entry.gpState.omBlend[i]))
+          return false;
+      }
+
+      // Read defined vertex attributes
+      for (uint32_t i = 0; i < entry.gpState.il.attributeCount(); i++) {
+        if (!data.read(entry.gpState.ilAttributes[i]))
+          return false;
+      }
+
+      // Read defined vertex bindings
+      for (uint32_t i = 0; i < entry.gpState.il.bindingCount(); i++) {
+        if (!data.read(entry.gpState.ilBindings[i]))
+          return false;
+      }
+    }
+
+    // Read non-zero spec constants
+    auto& sc = (stageMask & VK_SHADER_STAGE_COMPUTE_BIT)
+      ? entry.cpState.sc
+      : entry.gpState.sc;
+
+    uint32_t specConstantMask = 0;
+
+    if (!data.read(specConstantMask))
+      return false;
+
+    for (uint32_t i = 0; i < MaxNumSpecConstants; i++) {
+      if (specConstantMask & (1 << i)) {
+        if (!data.read(sc.specConstants[i]))
+          return false;
+      }
+    }
+
+    return true;
+  }
+
+
   void DxvkStateCache::writeCacheEntry(
           std::ostream&             stream, 
           DxvkStateCacheEntry&      entry) const {
-    entry.hash = Sha1Hash::compute(entry);
+    DxvkStateCacheEntryData data;
+    VkShaderStageFlags stageMask = 0;
 
-    auto data = reinterpret_cast<const char*>(&entry);
-    auto size = sizeof(DxvkStateCacheEntry);
+    // Write shader hashes
+    auto keys = &entry.shaders.vs;
 
-    stream.write(data, size);
+    for (uint32_t i = 0; i < 6; i++) {
+      if (!keys[i].eq(g_nullShaderKey)) {
+        stageMask |= VkShaderStageFlagBits(1 << i);
+        data.write(keys[i]);
+      }
+    }
+
+    if (stageMask & VK_SHADER_STAGE_COMPUTE_BIT) {
+      // Nothing else here to write out
+      data.write(entry.cpState.bsBindingMask);
+    } else {
+      // Pack render pass format
+      data.write(uint8_t(entry.format.sampleCount));
+      data.write(uint8_t(entry.format.depth.format));
+      data.write(packImageLayout(entry.format.depth.layout));
+
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+        data.write(uint8_t(entry.format.color[i].format));
+        data.write(packImageLayout(entry.format.color[i].layout));
+      }
+
+      // Write out common pipeline state
+      data.write(entry.gpState.bsBindingMask);
+      data.write(entry.gpState.ia);
+      data.write(entry.gpState.il);
+      data.write(entry.gpState.rs);
+      data.write(entry.gpState.ms);
+      data.write(entry.gpState.ds);
+      data.write(entry.gpState.om);
+      data.write(entry.gpState.dsFront);
+      data.write(entry.gpState.dsBack);
+
+      // Write out render target swizzles and blend info
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++)
+        data.write(entry.gpState.omSwizzle[i]);
+
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++)
+        data.write(entry.gpState.omBlend[i]);
+
+      // Write out input layout for defined attributes
+      for (uint32_t i = 0; i < entry.gpState.il.attributeCount(); i++)
+        data.write(entry.gpState.ilAttributes[i]);
+
+      for (uint32_t i = 0; i < entry.gpState.il.bindingCount(); i++)
+        data.write(entry.gpState.ilBindings[i]);
+    }
+
+    // Write out all non-zero spec constants
+    auto& sc = (stageMask & VK_SHADER_STAGE_COMPUTE_BIT)
+      ? entry.cpState.sc
+      : entry.gpState.sc;
+
+    uint32_t specConstantMask = 0;
+
+    for (uint32_t i = 0; i < MaxNumSpecConstants; i++)
+      specConstantMask |= sc.specConstants[i] ? (1 << i) : 0;
+
+    data.write(specConstantMask);
+
+    for (uint32_t i = 0; i < MaxNumSpecConstants; i++) {
+      if (specConstantMask & (1 << i))
+        data.write(sc.specConstants[i]);
+    }
+
+    // General layout: header -> hash -> data
+    DxvkStateCacheEntryHeader header;
+    header.stageMask = uint8_t(stageMask);
+    header.entrySize = data.size();
+
+    Sha1Hash hash = data.computeHash();
+
+    stream.write(reinterpret_cast<char*>(&header), sizeof(header));
+    stream.write(reinterpret_cast<char*>(&hash), sizeof(hash));
+    stream.write(data.data(), data.size());
     stream.flush();
   }
 
@@ -435,7 +721,7 @@ namespace dxvk {
 
   bool DxvkStateCache::convertEntryV4(
     const DxvkStateCacheEntryV4&    in,
-          DxvkStateCacheEntry&      out) const {
+          DxvkStateCacheEntryV6&    out) const {
     out.shaders = in.shaders;
     out.format  = in.format;
     out.hash    = in.hash;
@@ -480,7 +766,7 @@ namespace dxvk {
     out.gpState.omEnableLogicOp         = in.gpState.omEnableLogicOp;
     out.gpState.omLogicOp               = in.gpState.omLogicOp;
 
-    for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+    for (uint32_t i = 0; i < 8; i++) {
       out.gpState.omBlendAttachments[i] = in.gpState.omBlendAttachments[i];
       out.gpState.omComponentMapping[i] = in.gpState.omComponentMapping[i];
     }
@@ -491,13 +777,108 @@ namespace dxvk {
 
   bool DxvkStateCache::convertEntryV5(
     const DxvkStateCacheEntryV5&    in,
-          DxvkStateCacheEntry&      out) const {
+          DxvkStateCacheEntryV6&    out) const {
     out.shaders = in.shaders;
     out.gpState = in.gpState;
     out.format  = in.format;
     out.hash    = in.hash;
 
     out.cpState.bsBindingMask = in.cpState.bsBindingMask;
+    return true;
+  }
+
+
+  bool DxvkStateCache::convertEntryV6(
+    const DxvkStateCacheEntryV6&    in,
+          DxvkStateCacheEntry&      out) const {
+    out.shaders = in.shaders;
+    out.format  = in.format;
+    out.hash    = in.hash;
+
+    if (in.shaders.cs.eq(g_nullShaderKey)) {
+      // Binding mask
+      out.gpState.bsBindingMask = in.gpState.bsBindingMask;
+
+      // Graphics state
+      out.gpState.ia = DxvkIaInfo(
+        in.gpState.iaPrimitiveTopology,
+        in.gpState.iaPrimitiveRestart,
+        in.gpState.iaPatchVertexCount);
+      
+      out.gpState.il = DxvkIlInfo(
+        in.gpState.ilAttributeCount,
+        in.gpState.ilBindingCount);
+      
+      for (uint32_t i = 0; i < in.gpState.ilAttributeCount; i++) {
+        out.gpState.ilAttributes[i] = DxvkIlAttribute(
+          in.gpState.ilAttributes[i].location,
+          in.gpState.ilAttributes[i].binding,
+          in.gpState.ilAttributes[i].format,
+          in.gpState.ilAttributes[i].offset);
+      }
+      
+      for (uint32_t i = 0; i < in.gpState.ilBindingCount; i++) {
+        out.gpState.ilBindings[i] = DxvkIlBinding(
+          in.gpState.ilBindings[i].binding,
+          in.gpState.ilBindings[i].stride,
+          in.gpState.ilBindings[i].inputRate,
+          in.gpState.ilDivisors[i]);
+      }
+      
+      out.gpState.rs = DxvkRsInfo(
+        in.gpState.rsDepthClipEnable,
+        in.gpState.rsDepthBiasEnable,
+        in.gpState.rsPolygonMode,
+        in.gpState.rsCullMode,
+        in.gpState.rsFrontFace,
+        in.gpState.rsViewportCount,
+        in.gpState.rsSampleCount);
+
+      out.gpState.ms = DxvkMsInfo(
+        in.gpState.msSampleCount,
+        in.gpState.msSampleMask,
+        in.gpState.msEnableAlphaToCoverage);
+      
+      out.gpState.ds = DxvkDsInfo(
+        in.gpState.dsEnableDepthTest,
+        in.gpState.dsEnableDepthWrite,
+        in.gpState.dsEnableDepthBoundsTest,
+        in.gpState.dsEnableStencilTest,
+        in.gpState.dsDepthCompareOp);
+      
+      out.gpState.dsFront = DxvkDsStencilOp(in.gpState.dsStencilOpFront);
+      out.gpState.dsBack  = DxvkDsStencilOp(in.gpState.dsStencilOpBack);
+
+      out.gpState.om = DxvkOmInfo(
+        in.gpState.omEnableLogicOp,
+        in.gpState.omLogicOp);
+      
+      for (uint32_t i = 0; i < 8 && i < MaxNumRenderTargets; i++) {
+        out.gpState.omBlend[i] = DxvkOmAttachmentBlend(
+          in.gpState.omBlendAttachments[i].blendEnable,
+          in.gpState.omBlendAttachments[i].srcColorBlendFactor,
+          in.gpState.omBlendAttachments[i].dstColorBlendFactor,
+          in.gpState.omBlendAttachments[i].colorBlendOp,
+          in.gpState.omBlendAttachments[i].srcAlphaBlendFactor,
+          in.gpState.omBlendAttachments[i].dstAlphaBlendFactor,
+          in.gpState.omBlendAttachments[i].alphaBlendOp,
+          in.gpState.omBlendAttachments[i].colorWriteMask);
+        
+        out.gpState.omSwizzle[i] = DxvkOmAttachmentSwizzle(
+          in.gpState.omComponentMapping[i]);
+      }
+
+      // Specialization constants
+      for (uint32_t i = 0; i < 8 && i < MaxNumSpecConstants; i++)
+        out.cpState.sc.specConstants[i] = in.cpState.scSpecConstants[i];
+    } else {
+      // Binding mask
+      out.cpState.bsBindingMask = in.cpState.bsBindingMask;
+
+      for (uint32_t i = 0; i < 8 && i < MaxNumSpecConstants; i++)
+        out.gpState.sc.specConstants[i] = in.gpState.scSpecConstants[i];
+    }
+
     return true;
   }
 
@@ -585,6 +966,49 @@ namespace dxvk {
 
   std::string DxvkStateCache::getCacheDir() const {
     return env::getEnvVar("DXVK_STATE_CACHE_PATH");
+  }
+
+
+  uint8_t DxvkStateCache::packImageLayout(
+          VkImageLayout             layout) {
+    switch (layout) {
+      case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL: return 0x80;
+      case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL: return 0x81;
+      default: return uint8_t(layout);
+    }
+  }
+
+
+  VkImageLayout DxvkStateCache::unpackImageLayout(
+          uint8_t                   layout) {
+    switch (layout) {
+      case 0x80: return VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL;
+      case 0x81: return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL;
+      default: return VkImageLayout(layout);
+    }
+  }
+
+
+  bool DxvkStateCache::validateRenderPassFormat(
+    const DxvkRenderPassFormat&     format) {
+    bool valid = true;
+
+    if (format.depth.format) {
+      valid &= format.depth.layout == VK_IMAGE_LAYOUT_GENERAL
+            || format.depth.layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            || format.depth.layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+            || format.depth.layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL
+            || format.depth.layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL;
+    }
+
+    for (uint32_t i = 0; i < MaxNumRenderTargets && valid; i++) {
+      if (format.color[i].format) {
+        valid &= format.color[i].layout == VK_IMAGE_LAYOUT_GENERAL
+              || format.color[i].layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      }
+    }
+
+    return valid;
   }
 
 }

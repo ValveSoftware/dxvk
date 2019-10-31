@@ -717,10 +717,6 @@ namespace dxvk {
     DxvkCsChunkFlags            m_csFlags;
     DxvkCsChunkRef              m_csChunk;
     
-    Com<D3D11BlendState>        m_defaultBlendState;
-    Com<D3D11DepthStencilState> m_defaultDepthStencilState;
-    Com<D3D11RasterizerState>   m_defaultRasterizerState;
-    
     D3D11ContextState           m_state;
     D3D11CmdData*               m_cmdData;
     
@@ -744,8 +740,7 @@ namespace dxvk {
     void BindShader(
       const D3D11CommonShader*                pShaderModule);
     
-    void BindFramebuffer(
-            BOOL                              Spill);
+    void BindFramebuffer();
     
     void BindDrawBuffers(
             D3D11Buffer*                      pBufferForArgs,
@@ -839,6 +834,8 @@ namespace dxvk {
             UINT*                             pFirstConstant, 
             UINT*                             pNumConstants);
     
+    void ResetState();
+
     void RestoreState();
     
     template<DxbcProgramType Stage>
@@ -903,6 +900,21 @@ namespace dxvk {
     
     DxvkCsChunkRef AllocCsChunk();
     
+    static void InitDefaultPrimitiveTopology(
+            DxvkInputAssemblyState*           pIaState);
+
+    static void InitDefaultRasterizerState(
+            DxvkRasterizerState*              pRsState);
+
+    static void InitDefaultDepthStencilState(
+            DxvkDepthStencilState*            pDsState);
+
+    static void InitDefaultBlendState(
+            DxvkBlendMode*                    pCbState,
+            DxvkLogicOpState*                 pLoState,
+            DxvkMultisampleState*             pMsState,
+            UINT                              SampleMask);
+
     template<typename T>
     const D3D11CommonShader* GetCommonShader(T* pShader) const {
       return pShader != nullptr ? pShader->GetCommonShader() : nullptr;

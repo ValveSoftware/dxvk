@@ -43,10 +43,6 @@ namespace dxvk {
     m_initializer = new D3D11Initializer(this);
     m_context     = new D3D11ImmediateContext(this, m_dxvkDevice);
     m_d3d10Device = new D3D10Device(this, m_context);
-
-    m_uavCounters = CreateUAVCounterBuffer();
-    m_xfbCounters = CreateXFBCounterBuffer();
-    m_predicates  = CreatePredicateBuffer();
   }
   
   
@@ -81,7 +77,8 @@ namespace dxvk {
     if (!pDesc)
       return E_INVALIDARG;
     
-    HRESULT hr = D3D11Buffer::ValidateBufferProperties(pDesc);
+    D3D11_BUFFER_DESC desc = *pDesc;
+    HRESULT hr = D3D11Buffer::NormalizeBufferProperties(&desc);
 
     if (FAILED(hr))
       return hr;
@@ -90,9 +87,7 @@ namespace dxvk {
       return S_FALSE;
     
     try {
-      const Com<D3D11Buffer> buffer
-        = new D3D11Buffer(this, pDesc);
-      
+      const Com<D3D11Buffer> buffer = new D3D11Buffer(this, &desc);
       m_initializer->InitBuffer(buffer.ptr(), pInitialData);
       *ppBuffer = buffer.ref();
       return S_OK;
@@ -722,13 +717,15 @@ namespace dxvk {
     Sha1Hash hash = Sha1Hash::compute(
       pShaderBytecode, BytecodeLength);
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_VERTEX_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage,
-        &moduleInfo)))
-      return E_INVALIDARG;
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_VERTEX_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage,
+      &moduleInfo);
     
-    if (ppVertexShader == nullptr)
+    if (FAILED(hr))
+      return hr;
+    
+    if (!ppVertexShader)
       return S_FALSE;
     
     *ppVertexShader = ref(new D3D11VertexShader(this, module));
@@ -752,13 +749,15 @@ namespace dxvk {
     Sha1Hash hash = Sha1Hash::compute(
       pShaderBytecode, BytecodeLength);
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_GEOMETRY_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage,
-        &moduleInfo)))
-      return E_INVALIDARG;
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_GEOMETRY_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage,
+      &moduleInfo);
+
+    if (FAILED(hr))
+      return hr;
     
-    if (ppGeometryShader == nullptr)
+    if (!ppGeometryShader)
       return S_FALSE;
     
     *ppGeometryShader = ref(new D3D11GeometryShader(this, module));
@@ -852,13 +851,15 @@ namespace dxvk {
     moduleInfo.tess    = nullptr;
     moduleInfo.xfb     = &xfb;
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_GEOMETRY_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage,
-        &moduleInfo)))
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_GEOMETRY_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage,
+      &moduleInfo);
+
+    if (FAILED(hr))
       return E_INVALIDARG;
     
-    if (ppGeometryShader == nullptr)
+    if (!ppGeometryShader)
       return S_FALSE;
     
     *ppGeometryShader = ref(new D3D11GeometryShader(this, module));
@@ -882,13 +883,16 @@ namespace dxvk {
     Sha1Hash hash = Sha1Hash::compute(
       pShaderBytecode, BytecodeLength);
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_FRAGMENT_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage,
-        &moduleInfo)))
-      return E_INVALIDARG;
+
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_FRAGMENT_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage,
+      &moduleInfo);
+
+    if (FAILED(hr))
+      return hr;
     
-    if (ppPixelShader == nullptr)
+    if (!ppPixelShader)
       return S_FALSE;
     
     *ppPixelShader = ref(new D3D11PixelShader(this, module));
@@ -918,12 +922,14 @@ namespace dxvk {
     Sha1Hash hash = Sha1Hash::compute(
       pShaderBytecode, BytecodeLength);
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage, &moduleInfo)))
-      return E_INVALIDARG;
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage, &moduleInfo);
+
+    if (FAILED(hr))
+      return hr;
     
-    if (ppHullShader == nullptr)
+    if (!ppHullShader)
       return S_FALSE;
     
     *ppHullShader = ref(new D3D11HullShader(this, module));
@@ -947,10 +953,12 @@ namespace dxvk {
     Sha1Hash hash = Sha1Hash::compute(
       pShaderBytecode, BytecodeLength);
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage, &moduleInfo)))
-      return E_INVALIDARG;
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage, &moduleInfo);
+
+    if (FAILED(hr))
+      return hr;
     
     if (ppDomainShader == nullptr)
       return S_FALSE;
@@ -976,13 +984,15 @@ namespace dxvk {
     Sha1Hash hash = Sha1Hash::compute(
       pShaderBytecode, BytecodeLength);
     
-    if (FAILED(this->CreateShaderModule(&module,
-        DxvkShaderKey(VK_SHADER_STAGE_COMPUTE_BIT, hash),
-        pShaderBytecode, BytecodeLength, pClassLinkage,
-        &moduleInfo)))
-      return E_INVALIDARG;
+    HRESULT hr = CreateShaderModule(&module,
+      DxvkShaderKey(VK_SHADER_STAGE_COMPUTE_BIT, hash),
+      pShaderBytecode, BytecodeLength, pClassLinkage,
+      &moduleInfo);
+
+    if (FAILED(hr))
+      return hr;
     
-    if (ppComputeShader == nullptr)
+    if (!ppComputeShader)
       return S_FALSE;
     
     *ppComputeShader = ref(new D3D11ComputeShader(this, module));
@@ -1000,10 +1010,11 @@ namespace dxvk {
     const D3D11_BLEND_DESC*           pBlendStateDesc,
           ID3D11BlendState**          ppBlendState) {
     InitReturnPtr(ppBlendState);
+
+    if (!pBlendStateDesc)
+      return E_INVALIDARG;
     
-    D3D11_BLEND_DESC1 desc = pBlendStateDesc != nullptr
-      ? D3D11BlendState::PromoteDesc(pBlendStateDesc)
-      : D3D11BlendState::DefaultDesc();
+    D3D11_BLEND_DESC1 desc = D3D11BlendState::PromoteDesc(pBlendStateDesc);
     
     if (FAILED(D3D11BlendState::NormalizeDesc(&desc)))
       return E_INVALIDARG;
@@ -1020,9 +1031,10 @@ namespace dxvk {
           ID3D11BlendState1**         ppBlendState) {
     InitReturnPtr(ppBlendState);
     
-    D3D11_BLEND_DESC1 desc = pBlendStateDesc != nullptr
-      ? *pBlendStateDesc
-      : D3D11BlendState::DefaultDesc();
+    if (!pBlendStateDesc)
+      return E_INVALIDARG;
+
+    D3D11_BLEND_DESC1 desc = *pBlendStateDesc;
     
     if (FAILED(D3D11BlendState::NormalizeDesc(&desc)))
       return E_INVALIDARG;
@@ -1039,9 +1051,10 @@ namespace dxvk {
           ID3D11DepthStencilState**   ppDepthStencilState) {
     InitReturnPtr(ppDepthStencilState);
     
-    D3D11_DEPTH_STENCIL_DESC desc = pDepthStencilDesc != nullptr
-      ? *pDepthStencilDesc
-      : D3D11DepthStencilState::DefaultDesc();
+    if (!pDepthStencilDesc)
+      return E_INVALIDARG;
+
+    D3D11_DEPTH_STENCIL_DESC desc = *pDepthStencilDesc;
     
     if (FAILED(D3D11DepthStencilState::NormalizeDesc(&desc)))
       return E_INVALIDARG;
@@ -1057,10 +1070,11 @@ namespace dxvk {
     const D3D11_RASTERIZER_DESC*      pRasterizerDesc,
           ID3D11RasterizerState**     ppRasterizerState) {
     InitReturnPtr(ppRasterizerState);
-    
-    D3D11_RASTERIZER_DESC2 desc = pRasterizerDesc
-      ? D3D11RasterizerState::PromoteDesc(pRasterizerDesc)
-      : D3D11RasterizerState::DefaultDesc();
+
+    if (!pRasterizerDesc)
+      return E_INVALIDARG;
+
+    D3D11_RASTERIZER_DESC2 desc = D3D11RasterizerState::PromoteDesc(pRasterizerDesc);
     
     if (FAILED(D3D11RasterizerState::NormalizeDesc(&desc)))
       return E_INVALIDARG;
@@ -1078,9 +1092,10 @@ namespace dxvk {
           ID3D11RasterizerState1**    ppRasterizerState) {
     InitReturnPtr(ppRasterizerState);
     
-    D3D11_RASTERIZER_DESC2 desc = pRasterizerDesc
-      ? D3D11RasterizerState::PromoteDesc(pRasterizerDesc)
-      : D3D11RasterizerState::DefaultDesc();
+    if (!pRasterizerDesc)
+      return E_INVALIDARG;
+
+    D3D11_RASTERIZER_DESC2 desc = D3D11RasterizerState::PromoteDesc(pRasterizerDesc);
     
     if (FAILED(D3D11RasterizerState::NormalizeDesc(&desc)))
       return E_INVALIDARG;
@@ -1098,9 +1113,10 @@ namespace dxvk {
           ID3D11RasterizerState2**    ppRasterizerState) {
     InitReturnPtr(ppRasterizerState);
     
-    D3D11_RASTERIZER_DESC2 desc = pRasterizerDesc
-      ? *pRasterizerDesc
-      : D3D11RasterizerState::DefaultDesc();
+    if (!pRasterizerDesc)
+      return E_INVALIDARG;
+
+    D3D11_RASTERIZER_DESC2 desc = *pRasterizerDesc;
     
     if (FAILED(D3D11RasterizerState::NormalizeDesc(&desc)))
       return E_INVALIDARG;
@@ -1949,67 +1965,6 @@ namespace dxvk {
   }
   
   
-  Rc<D3D11CounterBuffer> D3D11Device::CreateUAVCounterBuffer() {
-    // UAV counters are going to be used as raw storage buffers, so
-    // we need to align them to the minimum SSBO offset alignment
-    const auto& devInfo = m_dxvkAdapter->deviceProperties();
-
-    VkDeviceSize uavCounterSliceLength = align<VkDeviceSize>(
-      sizeof(uint32_t), devInfo.limits.minStorageBufferOffsetAlignment);
-
-    DxvkBufferCreateInfo uavCounterInfo;
-    uavCounterInfo.size   = 4096 * uavCounterSliceLength;
-    uavCounterInfo.usage  = VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                          | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-                          | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    uavCounterInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
-                          | GetEnabledShaderStages();
-    uavCounterInfo.access = VK_ACCESS_TRANSFER_READ_BIT
-                          | VK_ACCESS_TRANSFER_WRITE_BIT
-                          | VK_ACCESS_SHADER_READ_BIT
-                          | VK_ACCESS_SHADER_WRITE_BIT;
-    
-    return new D3D11CounterBuffer(m_dxvkDevice,
-      uavCounterInfo, uavCounterSliceLength);
-  }
-
-
-  Rc<D3D11CounterBuffer> D3D11Device::CreateXFBCounterBuffer() {
-    DxvkBufferCreateInfo xfbCounterInfo;
-    xfbCounterInfo.size   = 4096 * sizeof(D3D11SOCounter);
-    xfbCounterInfo.usage  = VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                          | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-                          | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT
-                          | VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT;
-    xfbCounterInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
-                          | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT
-                          | VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT;
-    xfbCounterInfo.access = VK_ACCESS_TRANSFER_READ_BIT
-                          | VK_ACCESS_TRANSFER_WRITE_BIT
-                          | VK_ACCESS_INDIRECT_COMMAND_READ_BIT
-                          | VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_READ_BIT_EXT
-                          | VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT;
-    
-    return new D3D11CounterBuffer(m_dxvkDevice,
-      xfbCounterInfo, sizeof(D3D11SOCounter));
-  }
-  
-  
-  Rc<D3D11CounterBuffer> D3D11Device::CreatePredicateBuffer() {
-    DxvkBufferCreateInfo predCounterInfo;
-    predCounterInfo.size   = 4096 * sizeof(uint32_t);
-    predCounterInfo.usage  = VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                           | VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
-    predCounterInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
-                           | VK_PIPELINE_STAGE_CONDITIONAL_RENDERING_BIT_EXT;
-    predCounterInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT
-                           | VK_ACCESS_CONDITIONAL_RENDERING_READ_BIT_EXT;
-    
-    return new D3D11CounterBuffer(m_dxvkDevice,
-      predCounterInfo, sizeof(uint32_t));
-  }
-  
-  
   HRESULT D3D11Device::CreateShaderModule(
           D3D11CommonShader*      pShaderModule,
           DxvkShaderKey           ShaderKey,
@@ -2019,15 +1974,28 @@ namespace dxvk {
     const DxbcModuleInfo*         pModuleInfo) {
     if (pClassLinkage != nullptr)
       Logger::warn("D3D11Device::CreateShaderModule: Class linkage not supported");
-    
-    try {
-      *pShaderModule = m_shaderModules.GetShaderModule(this,
-        &ShaderKey, pModuleInfo, pShaderBytecode, BytecodeLength);
-      return S_OK;
-    } catch (const DxvkError& e) {
-      Logger::err(e.message());
+
+    D3D11CommonShader commonShader;
+
+    HRESULT hr = m_shaderModules.GetShaderModule(this,
+      &ShaderKey, pModuleInfo, pShaderBytecode, BytecodeLength,
+      &commonShader);
+
+    if (FAILED(hr))
+      return hr;
+
+    auto shader = commonShader.GetShader();
+
+    if (shader->hasCapability(spv::CapabilityStencilExportEXT)
+     && !m_dxvkDevice->extensions().extShaderStencilExport)
       return E_INVALIDARG;
-    }
+
+    if (shader->hasCapability(spv::CapabilityShaderViewportIndexLayerEXT)
+     && !m_dxvkDevice->extensions().extShaderViewportIndexLayer)
+      return E_INVALIDARG;
+
+    *pShaderModule = std::move(commonShader);
+    return S_OK;
   }
 
 

@@ -50,6 +50,22 @@ namespace dxvk {
   }
   
   
+  ULONG STDMETHODCALLTYPE D3D11RasterizerState::AddRef() {
+    ULONG refCount = m_refCount++;
+    if (!refCount)
+      m_device->AddRef();
+    return refCount + 1;
+  }
+
+
+  ULONG STDMETHODCALLTYPE D3D11RasterizerState::Release() {
+    ULONG refCount = --m_refCount;
+    if (!refCount)
+      m_device->Release();
+    return refCount;
+  }
+
+
   HRESULT STDMETHODCALLTYPE D3D11RasterizerState::QueryInterface(REFIID riid, void** ppvObject) {
     if (ppvObject == nullptr)
       return E_POINTER;
@@ -121,24 +137,6 @@ namespace dxvk {
     
     if (m_state.depthBiasEnable)
       ctx->setDepthBias(m_depthBias);
-  }
-  
-  
-  D3D11_RASTERIZER_DESC2 D3D11RasterizerState::DefaultDesc() {
-    D3D11_RASTERIZER_DESC2 dstDesc;
-    dstDesc.FillMode              = D3D11_FILL_SOLID;
-    dstDesc.CullMode              = D3D11_CULL_BACK;
-    dstDesc.FrontCounterClockwise = FALSE;
-    dstDesc.DepthBias             = 0;
-    dstDesc.SlopeScaledDepthBias  = 0.0f;
-    dstDesc.DepthBiasClamp        = 0.0f;
-    dstDesc.DepthClipEnable       = TRUE;
-    dstDesc.ScissorEnable         = FALSE;
-    dstDesc.MultisampleEnable     = FALSE;
-    dstDesc.AntialiasedLineEnable = FALSE;
-    dstDesc.ForcedSampleCount     = 0;
-    dstDesc.ConservativeRaster    = D3D11_CONSERVATIVE_RASTERIZATION_MODE_OFF;
-    return dstDesc;
   }
   
   

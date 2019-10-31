@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cstring>
 
 #include "dxvk_device.h"
 #include "dxvk_graphics.h"
@@ -8,35 +7,7 @@
 #include "dxvk_state_cache.h"
 
 namespace dxvk {
-  
-  DxvkGraphicsPipelineStateInfo::DxvkGraphicsPipelineStateInfo() {
-    std::memset(this, 0, sizeof(DxvkGraphicsPipelineStateInfo));
-  }
-  
-  
-  DxvkGraphicsPipelineStateInfo::DxvkGraphicsPipelineStateInfo(
-    const DxvkGraphicsPipelineStateInfo& other) {
-    std::memcpy(this, &other, sizeof(DxvkGraphicsPipelineStateInfo));
-  }
-  
-  
-  DxvkGraphicsPipelineStateInfo& DxvkGraphicsPipelineStateInfo::operator = (
-    const DxvkGraphicsPipelineStateInfo& other) {
-    std::memcpy(this, &other, sizeof(DxvkGraphicsPipelineStateInfo));
-    return *this;
-  }
-  
-  
-  bool DxvkGraphicsPipelineStateInfo::operator == (const DxvkGraphicsPipelineStateInfo& other) const {
-    return std::memcmp(this, &other, sizeof(DxvkGraphicsPipelineStateInfo)) == 0;
-  }
-  
-  
-  bool DxvkGraphicsPipelineStateInfo::operator != (const DxvkGraphicsPipelineStateInfo& other) const {
-    return std::memcmp(this, &other, sizeof(DxvkGraphicsPipelineStateInfo)) != 0;
-  }
-  
-  
+
   DxvkGraphicsPipeline::DxvkGraphicsPipeline(
           DxvkPipelineManager*        pipeMgr,
           DxvkGraphicsPipelineShaders shaders)
@@ -61,13 +32,8 @@ namespace dxvk {
     if (m_shaders.gs != nullptr && m_shaders.gs->hasCapability(spv::CapabilityTransformFeedback))
       m_flags.set(DxvkGraphicsPipelineFlag::HasTransformFeedback);
     
-    VkShaderStageFlags stoStages = m_layout->getStorageDescriptorStages();
-
-    if (stoStages & VK_SHADER_STAGE_FRAGMENT_BIT)
-      m_flags.set(DxvkGraphicsPipelineFlag::HasFsStorageDescriptors);
-    
-    if (stoStages & ~VK_SHADER_STAGE_FRAGMENT_BIT)
-      m_flags.set(DxvkGraphicsPipelineFlag::HasVsStorageDescriptors);
+    if (m_layout->getStorageDescriptorStages())
+      m_flags.set(DxvkGraphicsPipelineFlag::HasStorageDescriptors);
     
     m_common.msSampleShadingEnable = m_shaders.fs != nullptr && m_shaders.fs->hasCapability(spv::CapabilitySampleRateShading);
     m_common.msSampleShadingFactor = 1.0f;
@@ -187,10 +153,10 @@ namespace dxvk {
     // Figure out the actual sample count to use
     VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
 
-    if (state.msSampleCount)
-      sampleCount = VkSampleCountFlagBits(state.msSampleCount);
-    else if (state.rsSampleCount)
-      sampleCount = VkSampleCountFlagBits(state.rsSampleCount);
+    if (state.ms.sampleCount())
+      sampleCount = VkSampleCountFlagBits(state.ms.sampleCount());
+    else if (state.rs.sampleCount())
+      sampleCount = VkSampleCountFlagBits(state.rs.sampleCount());
     
     // Set up some specialization constants
     DxvkSpecConstants specData;
@@ -202,24 +168,24 @@ namespace dxvk {
     for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
       if ((m_fsOut & (1 << i)) != 0) {
         uint32_t specId = uint32_t(DxvkSpecConstantId::ColorComponentMappings) + 4 * i;
-        specData.set(specId + 0, util::getComponentIndex(state.omComponentMapping[i].r, 0), 0u);
-        specData.set(specId + 1, util::getComponentIndex(state.omComponentMapping[i].g, 1), 1u);
-        specData.set(specId + 2, util::getComponentIndex(state.omComponentMapping[i].b, 2), 2u);
-        specData.set(specId + 3, util::getComponentIndex(state.omComponentMapping[i].a, 3), 3u);
+        specData.set(specId + 0, state.omSwizzle[i].rIndex(), 0u);
+        specData.set(specId + 1, state.omSwizzle[i].gIndex(), 1u);
+        specData.set(specId + 2, state.omSwizzle[i].bIndex(), 2u);
+        specData.set(specId + 3, state.omSwizzle[i].aIndex(), 3u);
       }
     }
 
     for (uint32_t i = 0; i < MaxNumSpecConstants; i++)
-      specData.set(getSpecId(i), state.scSpecConstants[i], 0u);
+      specData.set(getSpecId(i), state.sc.specConstants[i], 0u);
     
     VkSpecializationInfo specInfo = specData.getSpecInfo();
     
     DxvkShaderModuleCreateInfo moduleInfo;
-    moduleInfo.fsDualSrcBlend = state.omBlendAttachments[0].blendEnable && (
-      util::isDualSourceBlendFactor(state.omBlendAttachments[0].srcColorBlendFactor) ||
-      util::isDualSourceBlendFactor(state.omBlendAttachments[0].dstColorBlendFactor) ||
-      util::isDualSourceBlendFactor(state.omBlendAttachments[0].srcAlphaBlendFactor) ||
-      util::isDualSourceBlendFactor(state.omBlendAttachments[0].dstAlphaBlendFactor));
+    moduleInfo.fsDualSrcBlend = state.omBlend[0].blendEnable() && (
+      util::isDualSourceBlendFactor(state.omBlend[0].srcColorBlendFactor()) ||
+      util::isDualSourceBlendFactor(state.omBlend[0].dstColorBlendFactor()) ||
+      util::isDualSourceBlendFactor(state.omBlend[0].srcAlphaBlendFactor()) ||
+      util::isDualSourceBlendFactor(state.omBlend[0].dstAlphaBlendFactor()));
     
     auto vsm  = createShaderModule(m_shaders.vs,  moduleInfo);
     auto gsm  = createShaderModule(m_shaders.gs,  moduleInfo);
@@ -242,15 +208,11 @@ namespace dxvk {
       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
     for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
-      omBlendAttachments[i] = state.omBlendAttachments[i];
+      omBlendAttachments[i] = state.omBlend[i].state();
 
-      if (state.omBlendAttachments[i].colorWriteMask == fullMask) {
-        // Avoid unnecessary partial color write masks
-        omBlendAttachments[i].colorWriteMask = fullMask;
-      } else {
+      if (omBlendAttachments[i].colorWriteMask != fullMask) {
         omBlendAttachments[i].colorWriteMask = util::remapComponentMask(
-          state.omBlendAttachments[i].colorWriteMask,
-          state.omComponentMapping[i]);
+          state.omBlend[i].colorWriteMask(), state.omSwizzle[i].mapping());
       }
       
       if ((m_fsOut & (1 << i)) == 0)
@@ -260,14 +222,14 @@ namespace dxvk {
     // Generate per-instance attribute divisors
     std::array<VkVertexInputBindingDivisorDescriptionEXT, MaxNumVertexBindings> viDivisorDesc;
     uint32_t                                                                    viDivisorCount = 0;
-    
-    for (uint32_t i = 0; i < state.ilBindingCount; i++) {
-      if (state.ilBindings[i].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE
-       && state.ilDivisors[i]           != 1) {
+
+    for (uint32_t i = 0; i < state.il.bindingCount(); i++) {
+      if (state.ilBindings[i].inputRate() == VK_VERTEX_INPUT_RATE_INSTANCE
+       && state.ilBindings[i].divisor()   != 1) {
         const uint32_t id = viDivisorCount++;
         
-        viDivisorDesc[id].binding = i;
-        viDivisorDesc[id].divisor = state.ilDivisors[i];
+        viDivisorDesc[id].binding = i; /* see below */
+        viDivisorDesc[id].divisor = state.ilBindings[i].divisor();
       }
     }
 
@@ -280,15 +242,15 @@ namespace dxvk {
     std::array<VkVertexInputBindingDescription,   MaxNumVertexBindings>   viBindings;
     std::array<uint32_t,                          MaxNumVertexBindings>   viBindingMap = { };
 
-    for (uint32_t i = 0; i < state.ilBindingCount; i++) {
-      viBindings[i] = state.ilBindings[i];
+    for (uint32_t i = 0; i < state.il.bindingCount(); i++) {
+      viBindings[i] = state.ilBindings[i].description();
       viBindings[i].binding = i;
-      viBindingMap[state.ilBindings[i].binding] = i;
+      viBindingMap[state.ilBindings[i].binding()] = i;
     }
 
-    for (uint32_t i = 0; i < state.ilAttributeCount; i++) {
-      viAttribs[i] = state.ilAttributes[i];
-      viAttribs[i].binding = viBindingMap[state.ilAttributes[i].binding];
+    for (uint32_t i = 0; i < state.il.attributeCount(); i++) {
+      viAttribs[i] = state.ilAttributes[i].description();
+      viAttribs[i].binding = viBindingMap[state.ilAttributes[i].binding()];
     }
 
     VkPipelineVertexInputDivisorStateCreateInfoEXT viDivisorInfo;
@@ -301,9 +263,9 @@ namespace dxvk {
     viInfo.sType                            = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     viInfo.pNext                            = &viDivisorInfo;
     viInfo.flags                            = 0;
-    viInfo.vertexBindingDescriptionCount    = state.ilBindingCount;
+    viInfo.vertexBindingDescriptionCount    = state.il.bindingCount();
     viInfo.pVertexBindingDescriptions       = viBindings.data();
-    viInfo.vertexAttributeDescriptionCount  = state.ilAttributeCount;
+    viInfo.vertexAttributeDescriptionCount  = state.il.attributeCount();
     viInfo.pVertexAttributeDescriptions     = viAttribs.data();
     
     if (viDivisorCount == 0)
@@ -317,22 +279,22 @@ namespace dxvk {
     iaInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     iaInfo.pNext                  = nullptr;
     iaInfo.flags                  = 0;
-    iaInfo.topology               = state.iaPrimitiveTopology;
-    iaInfo.primitiveRestartEnable = state.iaPrimitiveRestart;
+    iaInfo.topology               = state.ia.primitiveTopology();
+    iaInfo.primitiveRestartEnable = state.ia.primitiveRestart();
     
     VkPipelineTessellationStateCreateInfo tsInfo;
     tsInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
     tsInfo.pNext                  = nullptr;
     tsInfo.flags                  = 0;
-    tsInfo.patchControlPoints     = state.iaPatchVertexCount;
+    tsInfo.patchControlPoints     = state.ia.patchVertexCount();
     
     VkPipelineViewportStateCreateInfo vpInfo;
     vpInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     vpInfo.pNext                  = nullptr;
     vpInfo.flags                  = 0;
-    vpInfo.viewportCount          = state.rsViewportCount;
+    vpInfo.viewportCount          = state.rs.viewportCount();
     vpInfo.pViewports             = nullptr;
-    vpInfo.scissorCount           = state.rsViewportCount;
+    vpInfo.scissorCount           = state.rs.viewportCount();
     vpInfo.pScissors              = nullptr;
     
     VkPipelineRasterizationStateStreamCreateInfoEXT xfbStreamInfo;
@@ -345,7 +307,7 @@ namespace dxvk {
     rsDepthClipInfo.sType         = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT;
     rsDepthClipInfo.pNext         = nullptr;
     rsDepthClipInfo.flags         = 0;
-    rsDepthClipInfo.depthClipEnable = state.rsDepthClipEnable;
+    rsDepthClipInfo.depthClipEnable = state.rs.depthClipEnable();
 
     VkPipelineRasterizationStateCreateInfo rsInfo;
     rsInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -353,10 +315,10 @@ namespace dxvk {
     rsInfo.flags                  = 0;
     rsInfo.depthClampEnable       = VK_TRUE;
     rsInfo.rasterizerDiscardEnable = rasterizedStream < 0;
-    rsInfo.polygonMode            = state.rsPolygonMode;
-    rsInfo.cullMode               = state.rsCullMode;
-    rsInfo.frontFace              = state.rsFrontFace;
-    rsInfo.depthBiasEnable        = state.rsDepthBiasEnable;
+    rsInfo.polygonMode            = state.rs.polygonMode();
+    rsInfo.cullMode               = state.rs.cullMode();
+    rsInfo.frontFace              = state.rs.frontFace();
+    rsInfo.depthBiasEnable        = state.rs.depthBiasEnable();
     rsInfo.depthBiasConstantFactor= 0.0f;
     rsInfo.depthBiasClamp         = 0.0f;
     rsInfo.depthBiasSlopeFactor   = 0.0f;
@@ -367,8 +329,10 @@ namespace dxvk {
     
     if (!m_pipeMgr->m_device->features().extDepthClipEnable.depthClipEnable) {
       rsInfo.pNext                = rsDepthClipInfo.pNext;
-      rsInfo.depthClampEnable     = !state.rsDepthClipEnable;
+      rsInfo.depthClampEnable     = !state.rs.depthClipEnable();
     }
+
+    uint32_t sampleMask = state.ms.sampleMask();
 
     VkPipelineMultisampleStateCreateInfo msInfo;
     msInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -377,21 +341,21 @@ namespace dxvk {
     msInfo.rasterizationSamples   = sampleCount;
     msInfo.sampleShadingEnable    = m_common.msSampleShadingEnable;
     msInfo.minSampleShading       = m_common.msSampleShadingFactor;
-    msInfo.pSampleMask            = &state.msSampleMask;
-    msInfo.alphaToCoverageEnable  = state.msEnableAlphaToCoverage;
+    msInfo.pSampleMask            = &sampleMask;
+    msInfo.alphaToCoverageEnable  = state.ms.enableAlphaToCoverage();
     msInfo.alphaToOneEnable       = VK_FALSE;
     
     VkPipelineDepthStencilStateCreateInfo dsInfo;
     dsInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     dsInfo.pNext                  = nullptr;
     dsInfo.flags                  = 0;
-    dsInfo.depthTestEnable        = state.dsEnableDepthTest;
-    dsInfo.depthWriteEnable       = state.dsEnableDepthWrite && !util::isDepthReadOnlyLayout(passFormat.depth.layout);
-    dsInfo.depthCompareOp         = state.dsDepthCompareOp;
-    dsInfo.depthBoundsTestEnable  = state.dsEnableDepthBoundsTest;
-    dsInfo.stencilTestEnable      = state.dsEnableStencilTest;
-    dsInfo.front                  = state.dsStencilOpFront;
-    dsInfo.back                   = state.dsStencilOpBack;
+    dsInfo.depthTestEnable        = state.ds.enableDepthTest();
+    dsInfo.depthWriteEnable       = state.ds.enableDepthWrite() && !util::isDepthReadOnlyLayout(passFormat.depth.layout);
+    dsInfo.depthCompareOp         = state.ds.depthCompareOp();
+    dsInfo.depthBoundsTestEnable  = state.ds.enableDepthBoundsTest();
+    dsInfo.stencilTestEnable      = state.ds.enableStencilTest();
+    dsInfo.front                  = state.dsFront.state();
+    dsInfo.back                   = state.dsBack.state();
     dsInfo.minDepthBounds         = 0.0f;
     dsInfo.maxDepthBounds         = 1.0f;
     
@@ -399,8 +363,8 @@ namespace dxvk {
     cbInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cbInfo.pNext                  = nullptr;
     cbInfo.flags                  = 0;
-    cbInfo.logicOpEnable          = state.omEnableLogicOp;
-    cbInfo.logicOp                = state.omLogicOp;
+    cbInfo.logicOpEnable          = state.om.enableLogicOp();
+    cbInfo.logicOp                = state.om.logicOp();
     cbInfo.attachmentCount        = DxvkLimits::MaxNumRenderTargets;
     cbInfo.pAttachments           = omBlendAttachments.data();
     
@@ -482,25 +446,28 @@ namespace dxvk {
     // vertex shader must be provided by the input layout.
     uint32_t providedVertexInputs = 0;
     
-    for (uint32_t i = 0; i < state.ilAttributeCount; i++)
-      providedVertexInputs |= 1u << state.ilAttributes[i].location;
+    for (uint32_t i = 0; i < state.il.attributeCount(); i++)
+      providedVertexInputs |= 1u << state.ilAttributes[i].location();
     
     if ((providedVertexInputs & m_vsIn) != m_vsIn)
       return false;
     
-    // If there are no tessellation shaders, we
-    // obviously cannot use tessellation patches.
-    if ((state.iaPrimitiveTopology == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST)
-     && (m_shaders.tcs == nullptr || m_shaders.tes == nullptr))
+    // Tessellation shaders and patches must be used together
+    bool hasPatches = state.ia.primitiveTopology() == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+
+    bool hasTcs = m_shaders.tcs != nullptr;
+    bool hasTes = m_shaders.tes != nullptr;
+
+    if (hasPatches != hasTcs || hasPatches != hasTes)
       return false;
     
     // Filter out undefined primitive topologies
-    if (state.iaPrimitiveTopology == VK_PRIMITIVE_TOPOLOGY_MAX_ENUM)
+    if (state.ia.primitiveTopology() == VK_PRIMITIVE_TOPOLOGY_MAX_ENUM)
       return false;
     
     // Prevent unintended out-of-bounds access to the IL arrays
-    if (state.ilAttributeCount > DxvkLimits::MaxNumVertexAttributes
-     || state.ilBindingCount   > DxvkLimits::MaxNumVertexBindings)
+    if (state.il.attributeCount() > DxvkLimits::MaxNumVertexAttributes
+     || state.il.bindingCount()   > DxvkLimits::MaxNumVertexBindings)
       return false;
     
     // No errors
@@ -534,13 +501,13 @@ namespace dxvk {
     if (m_shaders.gs  != nullptr) Logger::log(level, str::format("  gs  : ", m_shaders.gs ->debugName()));
     if (m_shaders.fs  != nullptr) Logger::log(level, str::format("  fs  : ", m_shaders.fs ->debugName()));
 
-    for (uint32_t i = 0; i < state.ilAttributeCount; i++) {
-      const VkVertexInputAttributeDescription& attr = state.ilAttributes[i];
-      Logger::log(level, str::format("  attr ", i, " : location ", attr.location, ", binding ", attr.binding, ", format ", attr.format, ", offset ", attr.offset));
+    for (uint32_t i = 0; i < state.il.attributeCount(); i++) {
+      const auto& attr = state.ilAttributes[i];
+      Logger::log(level, str::format("  attr ", i, " : location ", attr.location(), ", binding ", attr.binding(), ", format ", attr.format(), ", offset ", attr.offset()));
     }
-    for (uint32_t i = 0; i < state.ilBindingCount; i++) {
-      const VkVertexInputBindingDescription& bind = state.ilBindings[i];
-      Logger::log(level, str::format("  binding ", i, " : binding ", bind.binding, ", stride ", bind.stride, ", rate ", bind.inputRate, ", divisor ", state.ilDivisors[i]));
+    for (uint32_t i = 0; i < state.il.bindingCount(); i++) {
+      const auto& bind = state.ilBindings[i];
+      Logger::log(level, str::format("  binding ", i, " : binding ", bind.binding(), ", stride ", bind.stride(), ", rate ", bind.inputRate(), ", divisor ", bind.divisor()));
     }
     
     // TODO log more pipeline state

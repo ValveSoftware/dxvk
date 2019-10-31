@@ -364,24 +364,8 @@ namespace dxvk {
   void DxbcCompiler::emitDclTemps(const DxbcShaderInstruction& ins) {
     // dcl_temps has one operand:
     //    (imm0) Number of temp registers
-    const uint32_t oldCount = m_rRegs.size();
-    const uint32_t newCount = ins.imm[0].u32;
-    
-    if (newCount > oldCount) {
-      m_rRegs.resize(newCount);
-      
-      DxbcRegisterInfo info;
-      info.type.ctype   = DxbcScalarType::Float32;
-      info.type.ccount  = 4;
-      info.type.alength = 0;
-      info.sclass       = spv::StorageClassPrivate;
-      
-      for (uint32_t i = oldCount; i < newCount; i++) {
-        const uint32_t varId = this->emitNewVariable(info);
-        m_module.setDebugName(varId, str::format("r", i).c_str());
-        m_rRegs.at(i) = varId;
-      }
-    }
+
+    // Ignore this and declare temps on demand.
   }
   
   
@@ -690,9 +674,10 @@ namespace dxvk {
         m_module.enableCapability(spv::CapabilitySampleRateShading);
         m_module.decorate(varId, spv::DecorationSample);
       }
-      
+
       // Declare the input slot as defined
       m_interfaceSlots.inputSlots |= 1u << regIdx;
+      m_vArrayLength = std::max(m_vArrayLength, regIdx + 1);
     } else if (sv != DxbcSystemValue::None) {
       // Add a new system value mapping if needed
       bool skipSv = sv == DxbcSystemValue::ClipDistance
@@ -1406,6 +1391,7 @@ namespace dxvk {
     // dcl_gs_instance_count has one operand:
     //    (imm0) Number of geometry shader invocations
     m_module.setInvocations(m_entryPointId, ins.imm[0].u32);
+    m_gs.invocationCount = ins.imm[0].u32;
   }
   
   
@@ -1871,7 +1857,14 @@ namespace dxvk {
     if (componentCount > 1)
       conditionType = m_module.defVectorType(conditionType, componentCount);
     
+    bool invert = false;
+
     switch (ins.op) {
+      case DxbcOpcode::Ne:
+      case DxbcOpcode::DNe:
+        invert = true;
+        /* fall through */
+
       case DxbcOpcode::Eq:
       case DxbcOpcode::DEq:
         condition = m_module.opFOrdEqual(
@@ -1888,13 +1881,6 @@ namespace dxvk {
       case DxbcOpcode::DLt:
         condition = m_module.opFOrdLessThan(
           conditionType, src.at(0).id, src.at(1).id);
-        break;
-      
-      case DxbcOpcode::Ne:
-      case DxbcOpcode::DNe:
-        // Avoid poorly supported FUnordNotEqual
-        condition = m_module.opLogicalNot(conditionType,
-          m_module.opFOrdEqual(conditionType, src.at(0).id, src.at(1).id));
         break;
       
       case DxbcOpcode::IEq:
@@ -1952,6 +1938,9 @@ namespace dxvk {
       sTrue  = m_module.constComposite(typeId, componentCount, vTrue .data());
     }
     
+    if (invert)
+      std::swap(sFalse, sTrue);
+
     // Perform component-wise mask selection
     // based on the condition evaluated above.
     result.id = m_module.opSelect(
@@ -4681,10 +4670,29 @@ namespace dxvk {
     const DxbcRegister&           operand) {
     // r# regs are indexed as follows:
     //    (0) register index (immediate)
+    uint32_t regIdx = operand.idx[0].offset;
+
+    if (regIdx >= m_rRegs.size())
+      m_rRegs.resize(regIdx + 1, 0u);
+
+    if (!m_rRegs.at(regIdx)) {
+      DxbcRegisterInfo info;
+      info.type.ctype   = DxbcScalarType::Float32;
+      info.type.ccount  = 4;
+      info.type.alength = 0;
+      info.sclass       = spv::StorageClassPrivate;
+
+      uint32_t varId = emitNewVariable(info);
+      m_rRegs.at(regIdx) = varId;
+
+      m_module.setDebugName(varId,
+        str::format("r", regIdx).c_str());
+    }
+
     DxbcRegisterPointer result;
     result.type.ctype  = DxbcScalarType::Float32;
     result.type.ccount = 4;
-    result.id = m_rRegs.at(operand.idx[0].offset);
+    result.id = m_rRegs.at(regIdx);
     return result;
   }
   
@@ -5603,6 +5611,8 @@ namespace dxvk {
         result.type.ctype  = DxbcScalarType::Uint32;
         result.type.ccount = 1;
         result.id = m_module.constu32(reg.imm.u32_1);
+
+        result = emitRegisterExtend(result, writeMask.popCount());
       } else if (reg.componentCount == DxbcComponentCount::Component4) {
         // Create a u32 vector with as many components as needed
         std::array<uint32_t, 4> indices = { };
@@ -5674,6 +5684,8 @@ namespace dxvk {
   
   
   void DxbcCompiler::emitInputSetup() {
+    m_module.setLateConst(m_vArrayLengthId, &m_vArrayLength);
+
     // Copy all defined v# registers into the input array
     const uint32_t vecTypeId = m_module.defVectorType(m_module.defFloatType(32), 4);
     const uint32_t ptrTypeId = m_module.defPointerType(vecTypeId, spv::StorageClassPrivate);
@@ -5719,6 +5731,8 @@ namespace dxvk {
   
   
   void DxbcCompiler::emitInputSetup(uint32_t vertexCount) {
+    m_module.setLateConst(m_vArrayLengthId, &m_vArrayLength);
+
     // Copy all defined v# registers into the input array. Note
     // that the outer index of the array is the vertex index.
     const uint32_t vecTypeId    = m_module.defVectorType(m_module.defFloatType(32), 4);
@@ -6853,6 +6867,9 @@ namespace dxvk {
   
   
   void DxbcCompiler::emitGsFinalize() {
+    if (!m_gs.invocationCount)
+      m_module.setInvocations(m_entryPointId, 1);
+
     this->emitMainFunctionBegin();
     this->emitInputSetup(
       primitiveVertexCount(m_gs.inputPrimitive));
@@ -7019,18 +7036,18 @@ namespace dxvk {
   
   
   void DxbcCompiler::emitDclInputArray(uint32_t vertexCount) {
-    DxbcArrayType info;
+    DxbcVectorType info;
     info.ctype   = DxbcScalarType::Float32;
     info.ccount  = 4;
-    info.alength = m_isgn != nullptr ? m_isgn->maxRegisterCount() : 0;
 
-    if (info.alength == 0)
-      return;
-    
     // Define the array type. This will be two-dimensional
     // in some shaders, with the outer index representing
     // the vertex ID within an invocation.
-    uint32_t arrayTypeId = getArrayTypeId(info);
+    m_vArrayLength   = m_isgn != nullptr ? std::max(1u, m_isgn->maxRegisterCount()) : 1;
+    m_vArrayLengthId = m_module.lateConst32(getScalarTypeId(DxbcScalarType::Uint32));
+
+    uint32_t vectorTypeId = getVectorTypeId(info);
+    uint32_t arrayTypeId = m_module.defArrayType(vectorTypeId, m_vArrayLengthId);
     
     if (vertexCount != 0) {
       arrayTypeId = m_module.defArrayType(
@@ -7321,43 +7338,43 @@ namespace dxvk {
   uint32_t DxbcCompiler::emitSamplePosArray() {
     const std::array<uint32_t, 32> samplePosVectors = {{
       // Invalid sample count / unbound resource
-      m_module.constvec2f32(0.0f, 0.0f),
+      m_module.constvec2f32( 0.0f, 0.0f),
       // VK_SAMPLE_COUNT_1_BIT
-      m_module.constvec2f32(0.5f, 0.5f),
+      m_module.constvec2f32( 0.0f, 0.0f),
       // VK_SAMPLE_COUNT_2_BIT
-      m_module.constvec2f32(0.75f, 0.75f),
-      m_module.constvec2f32(0.25f, 0.25f),
+      m_module.constvec2f32( 0.25f, 0.25f),
+      m_module.constvec2f32(-0.25f,-0.25f),
       // VK_SAMPLE_COUNT_4_BIT
-      m_module.constvec2f32(0.375f, 0.125f),
-      m_module.constvec2f32(0.875f, 0.375f),
-      m_module.constvec2f32(0.125f, 0.625f),
-      m_module.constvec2f32(0.625f, 0.875f),
+      m_module.constvec2f32(-0.125f,-0.375f),
+      m_module.constvec2f32( 0.375f,-0.125f),
+      m_module.constvec2f32(-0.375f, 0.125f),
+      m_module.constvec2f32( 0.125f, 0.375f),
       // VK_SAMPLE_COUNT_8_BIT
-      m_module.constvec2f32(0.5625f, 0.3125f),
-      m_module.constvec2f32(0.4375f, 0.6875f),
-      m_module.constvec2f32(0.8125f, 0.5625f),
-      m_module.constvec2f32(0.3125f, 0.1875f),
-      m_module.constvec2f32(0.1875f, 0.8125f),
-      m_module.constvec2f32(0.0625f, 0.4375f),
-      m_module.constvec2f32(0.6875f, 0.9375f),
-      m_module.constvec2f32(0.9375f, 0.0625f),
+      m_module.constvec2f32( 0.0625f,-0.1875f),
+      m_module.constvec2f32(-0.0625f, 0.1875f),
+      m_module.constvec2f32( 0.3125f, 0.0625f),
+      m_module.constvec2f32(-0.1875f,-0.3125f),
+      m_module.constvec2f32(-0.3125f, 0.3125f),
+      m_module.constvec2f32(-0.4375f,-0.0625f),
+      m_module.constvec2f32( 0.1875f, 0.4375f),
+      m_module.constvec2f32( 0.4375f,-0.4375f),
       // VK_SAMPLE_COUNT_16_BIT
-      m_module.constvec2f32(0.5625f, 0.5625f),
-      m_module.constvec2f32(0.4375f, 0.3125f),
-      m_module.constvec2f32(0.3125f, 0.6250f),
-      m_module.constvec2f32(0.7500f, 0.4375f),
-      m_module.constvec2f32(0.1875f, 0.3750f),
-      m_module.constvec2f32(0.6250f, 0.8125f),
-      m_module.constvec2f32(0.8125f, 0.6875f),
-      m_module.constvec2f32(0.6875f, 0.1875f),
-      m_module.constvec2f32(0.3750f, 0.8750f),
-      m_module.constvec2f32(0.5000f, 0.0625f),
-      m_module.constvec2f32(0.2500f, 0.1250f),
-      m_module.constvec2f32(0.1250f, 0.7500f),
-      m_module.constvec2f32(0.0000f, 0.5000f),
-      m_module.constvec2f32(0.9375f, 0.2500f),
-      m_module.constvec2f32(0.8750f, 0.9375f),
-      m_module.constvec2f32(0.0625f, 0.0000f),
+      m_module.constvec2f32( 0.0625f, 0.0625f),
+      m_module.constvec2f32(-0.0625f,-0.1875f),
+      m_module.constvec2f32(-0.1875f, 0.1250f),
+      m_module.constvec2f32( 0.2500f,-0.0625f),
+      m_module.constvec2f32(-0.3125f,-0.1250f),
+      m_module.constvec2f32( 0.1250f, 0.3125f),
+      m_module.constvec2f32( 0.3125f, 0.1875f),
+      m_module.constvec2f32( 0.1875f,-0.3125f),
+      m_module.constvec2f32(-0.1250f, 0.3750f),
+      m_module.constvec2f32( 0.0000f,-0.4375f),
+      m_module.constvec2f32(-0.2500f,-0.3750f),
+      m_module.constvec2f32(-0.3750f, 0.2500f),
+      m_module.constvec2f32(-0.5000f, 0.0000f),
+      m_module.constvec2f32( 0.4375f,-0.2500f),
+      m_module.constvec2f32( 0.3750f, 0.4375f),
+      m_module.constvec2f32(-0.4375f,-0.5000f),
     }};
     
     uint32_t arrayTypeId = getArrayTypeId({
@@ -7566,7 +7583,10 @@ namespace dxvk {
       default: {
         DxbcVectorType result;
         result.ctype  = DxbcScalarType::Float32;
-        result.ccount = m_isgn->regMask(regIdx).minComponents();
+        result.ccount = 4;
+
+        if (m_isgn->findByRegister(regIdx))
+          result.ccount = m_isgn->regMask(regIdx).minComponents();
         return result;
       }
     }
@@ -7600,7 +7620,10 @@ namespace dxvk {
       default: {
         DxbcVectorType result;
         result.ctype  = DxbcScalarType::Float32;
-        result.ccount = m_osgn->regMask(regIdx).minComponents();
+        result.ccount = 4;
+
+        if (m_osgn->findByRegister(regIdx))
+          result.ccount = m_osgn->regMask(regIdx).minComponents();
         return result;
       }
     }

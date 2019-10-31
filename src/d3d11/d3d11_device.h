@@ -14,7 +14,7 @@
 
 #include "../util/com/com_private_data.h"
 
-#include "d3d11_counter_buffer.h"
+#include "d3d11_cmdlist.h"
 #include "d3d11_initializer.h"
 #include "d3d11_interfaces.h"
 #include "d3d11_interop.h"
@@ -420,14 +420,6 @@ namespace dxvk {
       return m_d3d10Device;
     }
     
-    DxvkBufferSlice AllocUavCounterSlice() { return m_uavCounters->AllocSlice(); }
-    DxvkBufferSlice AllocXfbCounterSlice() { return m_xfbCounters->AllocSlice(); }
-    DxvkBufferSlice AllocPredicateSlice () { return m_predicates ->AllocSlice(); }
-    
-    void FreeUavCounterSlice(const DxvkBufferSlice& Slice) { m_uavCounters->FreeSlice(Slice); }
-    void FreeXfbCounterSlice(const DxvkBufferSlice& Slice) { m_xfbCounters->FreeSlice(Slice); }
-    void FreePredicateSlice (const DxvkBufferSlice& Slice) { m_predicates ->FreeSlice(Slice); }
-    
     static bool CheckFeatureLevelSupport(
       const Rc<DxvkAdapter>&  adapter,
             D3D_FEATURE_LEVEL featureLevel);
@@ -456,20 +448,12 @@ namespace dxvk {
     D3D11ImmediateContext*          m_context     = nullptr;
     D3D10Device*                    m_d3d10Device = nullptr;
 
-    Rc<D3D11CounterBuffer>          m_uavCounters;
-    Rc<D3D11CounterBuffer>          m_xfbCounters;
-    Rc<D3D11CounterBuffer>          m_predicates;
-    
     D3D11StateObjectSet<D3D11BlendState>        m_bsStateObjects;
     D3D11StateObjectSet<D3D11DepthStencilState> m_dsStateObjects;
     D3D11StateObjectSet<D3D11RasterizerState>   m_rsStateObjects;
     D3D11StateObjectSet<D3D11SamplerState>      m_samplerObjects;
     D3D11ShaderModuleSet                        m_shaderModules;
     
-    Rc<D3D11CounterBuffer> CreateUAVCounterBuffer();
-    Rc<D3D11CounterBuffer> CreateXFBCounterBuffer();
-    Rc<D3D11CounterBuffer> CreatePredicateBuffer();
-
     HRESULT CreateShaderModule(
             D3D11CommonShader*      pShaderModule,
             DxvkShaderKey           ShaderKey,

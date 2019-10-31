@@ -12,10 +12,12 @@ namespace dxvk {
     m_info          (createInfo),
     m_memAlloc      (&memAlloc),
     m_memFlags      (memFlags) {
-    // Align slices to 256 bytes, which guarantees that
-    // we don't violate any Vulkan alignment requirements
+    // Align slices so that we don't violate any alignment
+    // requirements imposed by the Vulkan device/driver
+    VkDeviceSize sliceAlignment = computeSliceAlignment();
     m_physSliceLength = createInfo.size;
-    m_physSliceStride = align(createInfo.size, 256);
+    m_physSliceStride = align(createInfo.size, sliceAlignment);
+    m_physSliceCount  = std::max<VkDeviceSize>(1, 256 / m_physSliceStride);
 
     // Limit size of multi-slice buffers to reduce fragmentation
     constexpr VkDeviceSize MaxBufferSize = 4 << 20;
@@ -23,14 +25,18 @@ namespace dxvk {
     m_physSliceMaxCount = MaxBufferSize >= m_physSliceStride
       ? MaxBufferSize / m_physSliceStride
       : 1;
-    
-    // Allocate a single buffer slice
-    m_buffer = allocBuffer(1);
 
-    m_physSlice.handle = m_buffer.buffer;
-    m_physSlice.offset = 0;
-    m_physSlice.length = m_physSliceLength;
-    m_physSlice.mapPtr = m_buffer.memory.mapPtr(0);
+    // Allocate the initial set of buffer slices
+    m_buffer = allocBuffer(m_physSliceCount);
+
+    DxvkBufferSliceHandle slice;
+    slice.handle = m_buffer.buffer;
+    slice.offset = 0;
+    slice.length = m_physSliceLength;
+    slice.mapPtr = m_buffer.memory.mapPtr(0);
+
+    m_physSlice = slice;
+    m_lazyAlloc = m_physSliceCount > 1;
   }
 
 
@@ -109,6 +115,34 @@ namespace dxvk {
   }
 
 
+  VkDeviceSize DxvkBuffer::computeSliceAlignment() const {
+    const auto& devInfo = m_device->properties().core.properties;
+
+    VkDeviceSize result = sizeof(uint32_t);
+
+    if (m_info.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
+      result = std::max(result, devInfo.limits.minUniformBufferOffsetAlignment);
+
+    if (m_info.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
+      result = std::max(result, devInfo.limits.minStorageBufferOffsetAlignment);
+
+    if (m_info.usage & (VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT))
+      result = std::max(result, devInfo.limits.minTexelBufferOffsetAlignment);
+
+    if (m_info.usage & (VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+     && m_info.size > (devInfo.limits.optimalBufferCopyOffsetAlignment / 2))
+      result = std::max(result, devInfo.limits.optimalBufferCopyOffsetAlignment);
+
+    if (m_memFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+      result = std::max(result, devInfo.limits.nonCoherentAtomSize);
+      result = std::max(result, VkDeviceSize(64));
+    }
+
+    return result;
+  }
+
+
+
   
   DxvkBufferView::DxvkBufferView(
     const Rc<vk::DeviceFn>&         vkd,
@@ -179,13 +213,6 @@ namespace dxvk {
   
   DxvkBufferTracker:: DxvkBufferTracker() { }
   DxvkBufferTracker::~DxvkBufferTracker() { }
-  
-  
-  void DxvkBufferTracker::freeBufferSlice(
-    const Rc<DxvkBuffer>&         buffer,
-    const DxvkBufferSliceHandle&  slice) {
-    m_entries.push_back({ buffer, slice });
-  }
   
   
   void DxvkBufferTracker::reset() {

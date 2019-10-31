@@ -128,15 +128,8 @@ namespace dxvk {
     // to enable linear tiling, and DXVK needs to be aware that
     // the image can be accessed by the host.
     if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT) {
-      imageInfo.stages       |= VK_PIPELINE_STAGE_HOST_BIT;
       imageInfo.tiling        = VK_IMAGE_TILING_LINEAR;
       imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
-      
-      if (m_desc.CPUAccessFlags & D3D11_CPU_ACCESS_WRITE)
-        imageInfo.access |= VK_ACCESS_HOST_WRITE_BIT;
-      
-      if (m_desc.CPUAccessFlags & D3D11_CPU_ACCESS_READ)
-        imageInfo.access |= VK_ACCESS_HOST_READ_BIT;
     }
     
     // We must keep LINEAR images in GENERAL layout, but we
@@ -274,7 +267,7 @@ namespace dxvk {
   
   
   HRESULT D3D11CommonTexture::NormalizeTextureProperties(D3D11_COMMON_TEXTURE_DESC* pDesc) {
-    if (pDesc->Width == 0 || pDesc->Height == 0 || pDesc->Depth == 0)
+    if (pDesc->Width == 0 || pDesc->Height == 0 || pDesc->Depth == 0 || pDesc->ArraySize == 0)
       return E_INVALIDARG;
     
     if (FAILED(DecodeSampleCount(pDesc->SampleDesc.Count, nullptr)))
@@ -788,7 +781,7 @@ namespace dxvk {
     m_interop (this, &m_texture),
     m_surface (this, &m_texture),
     m_resource(this),
-    m_d3d10   (this, pDevice->GetD3D10Interface()) {
+    m_d3d10   (this) {
     
   }
   
@@ -890,7 +883,7 @@ namespace dxvk {
     m_interop (this, &m_texture),
     m_surface (this, &m_texture),
     m_resource(this),
-    m_d3d10   (this, pDevice->GetD3D10Interface()) {
+    m_d3d10   (this) {
     
   }
   
@@ -1015,7 +1008,7 @@ namespace dxvk {
   : m_texture (pDevice, pDesc, D3D11_RESOURCE_DIMENSION_TEXTURE3D),
     m_interop (this, &m_texture),
     m_resource(this),
-    m_d3d10   (this, pDevice->GetD3D10Interface()) {
+    m_d3d10   (this) {
     
   }
   

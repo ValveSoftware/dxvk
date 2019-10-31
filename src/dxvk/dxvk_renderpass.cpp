@@ -82,9 +82,6 @@ namespace dxvk {
     // Render passes may not require the previous
     // contents of the attachments to be preserved.
     for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
-      colorRef[i].attachment = VK_ATTACHMENT_UNUSED;
-      colorRef[i].layout     = VK_IMAGE_LAYOUT_UNDEFINED;
-      
       if (m_format.color[i].format != VK_FORMAT_UNDEFINED) {
         VkAttachmentDescription desc;
         desc.flags            = 0;
@@ -101,6 +98,9 @@ namespace dxvk {
         colorRef[i].layout     = m_format.color[i].layout;
         
         attachments.push_back(desc);
+      } else {
+        colorRef[i].attachment = VK_ATTACHMENT_UNUSED;
+        colorRef[i].layout     = VK_IMAGE_LAYOUT_UNDEFINED;
       }
     }
     
@@ -120,6 +120,9 @@ namespace dxvk {
       depthRef.layout     = m_format.depth.layout;
       
       attachments.push_back(desc);
+    } else {
+      depthRef.attachment = VK_ATTACHMENT_UNUSED;
+      depthRef.layout     = VK_IMAGE_LAYOUT_UNDEFINED;
     }
     
     VkSubpassDescription subpass;
@@ -156,10 +159,11 @@ namespace dxvk {
           VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT |
           VK_PIPELINE_STAGE_ALL_COMMANDS_BIT)) {
       subpassDeps[subpassDepCount++] = { 0, 0,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_WRITE_BIT,
-        VK_ACCESS_SHADER_READ_BIT, 0 };
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_DEPENDENCY_BY_REGION_BIT };
     }
 
     if (ops.barrier.srcStages && ops.barrier.dstStages) {

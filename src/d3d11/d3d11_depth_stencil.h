@@ -11,7 +11,7 @@ namespace dxvk {
   
   class D3D11Device;
   
-  class D3D11DepthStencilState : public D3D11DeviceChild<ID3D11DepthStencilState> {
+  class D3D11DepthStencilState : public D3D11DeviceChild<ID3D11DepthStencilState, NoWrapper> {
     
   public:
     
@@ -22,6 +22,10 @@ namespace dxvk {
       const D3D11_DEPTH_STENCIL_DESC& desc);
     ~D3D11DepthStencilState();
     
+    ULONG STDMETHODCALLTYPE AddRef() final;
+
+    ULONG STDMETHODCALLTYPE Release() final;
+
     HRESULT STDMETHODCALLTYPE QueryInterface(
             REFIID  riid,
             void**  ppvObject) final;
@@ -39,8 +43,6 @@ namespace dxvk {
       return &m_d3d10;
     }
     
-    static D3D11_DEPTH_STENCIL_DESC DefaultDesc();
-    
     static HRESULT NormalizeDesc(
             D3D11_DEPTH_STENCIL_DESC* pDesc);
     
@@ -50,6 +52,8 @@ namespace dxvk {
     D3D11_DEPTH_STENCIL_DESC  m_desc;
     DxvkDepthStencilState     m_state;
     D3D10DepthStencilState    m_d3d10;
+
+    std::atomic<uint32_t> m_refCount = { 0u };
     
     VkStencilOpState DecodeStencilOpState(
       const D3D11_DEPTH_STENCILOP_DESC& StencilDesc,
