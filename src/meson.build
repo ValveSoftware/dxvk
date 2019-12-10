@@ -2,6 +2,7 @@ subdir('util')
 subdir('spirv')
 subdir('vulkan')
 subdir('dxvk')
+subdir('dxvk_config')
 
 if get_option('enable_dxgi')
   if not get_option('enable_d3d11')
