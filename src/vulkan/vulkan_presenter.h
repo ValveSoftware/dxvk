@@ -26,6 +26,7 @@ namespace dxvk::vk {
     VkSurfaceFormatKHR  formats[4];
     uint32_t            numPresentModes;
     VkPresentModeKHR    presentModes[4];
+    VkFullScreenExclusiveEXT fullScreenExclusive;
   };
 
   /**
@@ -40,6 +41,13 @@ namespace dxvk::vk {
     VkExtent2D          imageExtent;
     uint32_t            imageCount;
   };
+
+  /**
+   * \brief Presenter features
+   */
+  struct PresenterFeatures {
+    bool                fullScreenExclusive : 1;
+  };
   
   /**
    * \brief Adapter and queue
@@ -48,6 +56,7 @@ namespace dxvk::vk {
     uint32_t            queueFamily = 0;
     VkQueue             queue       = VK_NULL_HANDLE;
     VkPhysicalDevice    adapter     = VK_NULL_HANDLE;
+    PresenterFeatures   features    = { };
   };
 
   /**
@@ -160,11 +169,25 @@ namespace dxvk::vk {
     /**
      * \brief Changes presenter properties
      * 
-     * Recreates the swap chain immediately.
+     * Recreates the swap chain immediately. Note that
+     * no swap chain resources must be in use by the
+     * GPU at the time this is called.
      * \param [in] desc Swap chain description
      */
     VkResult recreateSwapChain(
       const PresenterDesc&  desc);
+
+    /**
+     * \brief Checks whether a Vulkan swap chain exists
+     *
+     * On Windows, there are situations where we cannot create
+     * a swap chain as the surface size can reach zero, and no
+     * presentation can be performed.
+     * \returns \c true if the presenter has a swap chain.
+     */
+    bool hasSwapChain() const {
+      return m_swapchain;
+    }
 
   private:
 
@@ -185,10 +208,12 @@ namespace dxvk::vk {
     uint32_t m_frameIndex = 0;
 
     VkResult getSupportedFormats(
-            std::vector<VkSurfaceFormatKHR>& formats);
+            std::vector<VkSurfaceFormatKHR>& formats,
+      const PresenterDesc&            desc);
     
     VkResult getSupportedPresentModes(
-            std::vector<VkPresentModeKHR>& modes);
+            std::vector<VkPresentModeKHR>& modes,
+      const PresenterDesc&            desc);
     
     VkResult getSwapImages(
             std::vector<VkImage>&     images);

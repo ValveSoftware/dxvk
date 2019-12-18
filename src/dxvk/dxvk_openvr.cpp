@@ -32,10 +32,15 @@ namespace dxvk {
   };
   
   VrFunctions g_vrFunctions;
-  VrInstance  g_vrInstance;
+  VrInstance VrInstance::s_instance;
 
   VrInstance:: VrInstance() { }
   VrInstance::~VrInstance() { }
+
+
+  std::string_view VrInstance::getName() {
+    return "OpenVR";
+  }
   
   
   DxvkNameSet VrInstance::getInstanceExtensions() {

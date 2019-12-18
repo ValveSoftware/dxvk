@@ -4,6 +4,8 @@
 
 #include "../dxvk/hud/dxvk_hud.h"
 
+#include "../util/sync/sync_signal_win32.h"
+
 namespace dxvk {
   
   class D3D11Device;
@@ -21,7 +23,7 @@ namespace dxvk {
   };
 
   class D3D11SwapChain : public ComObject<IDXGIVkSwapChain> {
-
+    constexpr static uint32_t DefaultFrameLatency = 1;
   public:
 
     D3D11SwapChain(
@@ -54,6 +56,10 @@ namespace dxvk {
 
     UINT STDMETHODCALLTYPE GetImageIndex();
 
+    UINT STDMETHODCALLTYPE GetFrameLatency();
+
+    HANDLE STDMETHODCALLTYPE GetFrameLatencyEvent();
+
     HRESULT STDMETHODCALLTYPE ChangeProperties(
       const DXGI_SWAP_CHAIN_DESC1*    pDesc);
 
@@ -64,11 +70,14 @@ namespace dxvk {
             UINT                      NumControlPoints,
       const DXGI_RGB*                 pControlPoints);
 
+    HRESULT STDMETHODCALLTYPE SetFrameLatency(
+            UINT                      MaxLatency);
+
     HRESULT STDMETHODCALLTYPE Present(
             UINT                      SyncInterval,
             UINT                      PresentFlags,
       const DXGI_PRESENT_PARAMETERS*  pPresentParameters);
-    
+
   private:
 
     enum BindingIds : uint32_t {
@@ -117,17 +126,28 @@ namespace dxvk {
 
     std::vector<Rc<DxvkImageView>> m_imageViews;
 
+    uint64_t                m_frameId      = DXGI_MAX_SWAP_CHAIN_BUFFERS;
+    uint32_t                m_frameLatency = DefaultFrameLatency;
+    uint32_t                m_frameLatencyCap = 0;
+    HANDLE                  m_frameLatencyEvent = nullptr;
+    Rc<sync::Win32Fence>    m_frameLatencySignal;
+
     bool                    m_dirty = true;
     bool                    m_vsync = true;
 
-    void PresentImage(UINT SyncInterval);
+    HRESULT PresentImage(UINT SyncInterval);
+
+    void SubmitPresent(
+            D3D11ImmediateContext*  pContext,
+      const vk::PresenterSync&      Sync,
+            uint32_t                FrameId);
 
     void SynchronizePresent();
 
-    void FlushImmediateContext();
-    
     void RecreateSwapChain(
             BOOL                      Vsync);
+
+    void CreateFrameLatencyEvent();
 
     void CreatePresenter();
 
@@ -139,6 +159,8 @@ namespace dxvk {
             UINT                NumControlPoints,
       const D3D11_VK_GAMMA_CP*  pControlPoints);
     
+    void DestroyFrameLatencyEvent();
+
     void DestroyGammaTexture();
     
     void CreateHud();
@@ -148,6 +170,10 @@ namespace dxvk {
     void InitSamplers();
 
     void InitShaders();
+
+    void SignalFrameLatencyEvent();
+
+    uint32_t GetActualFrameLatency();
     
     uint32_t PickFormats(
             DXGI_FORMAT               Format,
@@ -160,6 +186,8 @@ namespace dxvk {
     uint32_t PickImageCount(
             UINT                      Preferred);
     
+    VkFullScreenExclusiveEXT PickFullscreenMode();
+
   };
 
 }

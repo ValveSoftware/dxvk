@@ -5,12 +5,14 @@ namespace dxvk {
   
   DxvkDevice::DxvkDevice(
           std::string               clientApi,
+    const Rc<DxvkInstance>&         instance,
     const Rc<DxvkAdapter>&          adapter,
     const Rc<vk::DeviceFn>&         vkd,
     const DxvkDeviceExtensions&     extensions,
     const DxvkDeviceFeatures&       features)
   : m_clientApi         (clientApi),
-    m_options           (adapter->instance()->options()),
+    m_options           (instance->options()),
+    m_instance          (instance),
     m_adapter           (adapter),
     m_vkd               (vkd),
     m_extensions        (extensions),
@@ -28,7 +30,7 @@ namespace dxvk {
   DxvkDevice::~DxvkDevice() {
     // Wait for all pending Vulkan commands to be
     // executed before we destroy any resources.
-    m_vkd->vkDeviceWaitIdle(m_vkd->device());
+    this->waitForIdle();
   }
 
 
@@ -158,12 +160,9 @@ namespace dxvk {
   
   
   DxvkStatCounters DxvkDevice::getStatCounters() {
-    DxvkMemoryStats mem = m_objects.memoryManager().getMemoryStats();
     DxvkPipelineCount pipe = m_objects.pipelineManager().getPipelineCount();
     
     DxvkStatCounters result;
-    result.setCtr(DxvkStatCounter::MemoryAllocated,   mem.memoryAllocated);
-    result.setCtr(DxvkStatCounter::MemoryUsed,        mem.memoryUsed);
     result.setCtr(DxvkStatCounter::PipeCountGraphics, pipe.numGraphicsPipelines);
     result.setCtr(DxvkStatCounter::PipeCountCompute,  pipe.numComputePipelines);
     result.setCtr(DxvkStatCounter::PipeCompilerBusy,  m_objects.pipelineManager().isCompilingShaders());
@@ -172,6 +171,11 @@ namespace dxvk {
     std::lock_guard<sync::Spinlock> lock(m_statLock);
     result.merge(m_statCounters);
     return result;
+  }
+  
+  
+  DxvkMemoryStats DxvkDevice::getMemoryStats(uint32_t heap) {
+    return m_objects.memoryManager().getMemoryStats(heap);
   }
 
 
@@ -235,17 +239,19 @@ namespace dxvk {
   
   
   void DxvkDevice::waitForIdle() {
-    m_submissionQueue.synchronize();
-
+    this->lockSubmission();
     if (m_vkd->vkDeviceWaitIdle(m_vkd->device()) != VK_SUCCESS)
       Logger::err("DxvkDevice: waitForIdle: Operation failed");
+    this->unlockSubmission();
   }
   
   
   DxvkDevicePerfHints DxvkDevice::getPerfHints() {
     DxvkDevicePerfHints hints;
     hints.preferFbDepthStencilCopy = m_extensions.extShaderStencilExport
-      && m_adapter->matchesDriver(DxvkGpuVendor::Amd, VK_DRIVER_ID_MESA_RADV_KHR, 0, 0);
+      && (m_adapter->matchesDriver(DxvkGpuVendor::Amd, VK_DRIVER_ID_MESA_RADV_KHR, 0, 0)
+       || m_adapter->matchesDriver(DxvkGpuVendor::Amd, VK_DRIVER_ID_AMD_OPEN_SOURCE_KHR, 0, 0)
+       || m_adapter->matchesDriver(DxvkGpuVendor::Amd, VK_DRIVER_ID_AMD_PROPRIETARY_KHR, 0, 0));
     return hints;
   }
 

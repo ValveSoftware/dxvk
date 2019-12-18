@@ -29,27 +29,98 @@ namespace dxvk {
           void*                             pData,
           UINT                              DataSize,
           UINT                              GetDataFlags) {
-    Logger::err("D3D11: GetData called on a deferred context");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11: GetData called on a deferred context");
+
     return DXGI_ERROR_INVALID_CALL;
   }
 
 
+  void STDMETHODCALLTYPE D3D11DeferredContext::Begin(
+          ID3D11Asynchronous*         pAsync) {
+    D3D10DeviceLock lock = LockContext();
+
+    if (unlikely(!pAsync))
+      return;
+
+    Com<D3D11Query, false> query(static_cast<D3D11Query*>(pAsync));
+
+    if (unlikely(!query->IsScoped()))
+      return;
+
+    auto entry = std::find(
+      m_queriesBegun.begin(),
+      m_queriesBegun.end(), query);
+
+    if (unlikely(entry != m_queriesBegun.end()))
+      return;
+
+    EmitCs([cQuery = query]
+    (DxvkContext* ctx) {
+      cQuery->Begin(ctx);
+    });
+
+    m_queriesBegun.push_back(std::move(query));
+  }
+
+
+  void STDMETHODCALLTYPE D3D11DeferredContext::End(
+          ID3D11Asynchronous*         pAsync) {
+    D3D10DeviceLock lock = LockContext();
+
+    if (unlikely(!pAsync))
+      return;
+
+    Com<D3D11Query, false> query(static_cast<D3D11Query*>(pAsync));
+
+    if (query->IsScoped()) {
+      auto entry = std::find(
+        m_queriesBegun.begin(),
+        m_queriesBegun.end(), query);
+
+      if (unlikely(entry == m_queriesBegun.end()))
+        return;
+
+      m_queriesBegun.erase(entry);
+    }
+
+    m_commandList->AddQuery(query.ptr());
+
+    EmitCs([cQuery = std::move(query)]
+    (DxvkContext* ctx) {
+      cQuery->End(ctx);
+    });
+  }
+
+
   void STDMETHODCALLTYPE D3D11DeferredContext::Flush() {
-    Logger::err("D3D11: Flush called on a deferred context");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11: Flush called on a deferred context");
   }
 
 
   void STDMETHODCALLTYPE D3D11DeferredContext::Flush1(
           D3D11_CONTEXT_TYPE          ContextType,
           HANDLE                      hEvent) {
-    Logger::err("D3D11: Flush1 called on a deferred context");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11: Flush1 called on a deferred context");
   }
   
   
   HRESULT STDMETHODCALLTYPE D3D11DeferredContext::Signal(
           ID3D11Fence*                pFence,
           UINT64                      Value) {
-    Logger::err("D3D11: Signal called on a deferred context");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11: Signal called on a deferred context");
+
     return DXGI_ERROR_INVALID_CALL;
   }
 
@@ -57,7 +128,11 @@ namespace dxvk {
   HRESULT STDMETHODCALLTYPE D3D11DeferredContext::Wait(
           ID3D11Fence*                pFence,
           UINT64                      Value) {
-    Logger::err("D3D11: Wait called on a deferred context");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11: Wait called on a deferred context");
+
     return DXGI_ERROR_INVALID_CALL;
   }
 
@@ -83,6 +158,7 @@ namespace dxvk {
           ID3D11CommandList   **ppCommandList) {
     D3D10DeviceLock lock = LockContext();
 
+    FinalizeQueries();
     FlushCsChunk();
     
     if (ppCommandList != nullptr)
@@ -128,7 +204,7 @@ namespace dxvk {
       // Adding a new map entry actually overrides the
       // old one in practice because the lookup function
       // scans the array in reverse order
-      m_mappedResources.push_back(entry);
+      m_mappedResources.push_back(std::move(entry));
       
       // Fill mapped resource structure
       pMappedResource->pData      = entry.MapPointer;
@@ -170,7 +246,10 @@ namespace dxvk {
   void STDMETHODCALLTYPE D3D11DeferredContext::SwapDeviceContextState(
           ID3DDeviceContextState*           pState,
           ID3DDeviceContextState**          ppPreviousState) {
-    Logger::err("D3D11: SwapDeviceContextState called on a deferred context");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D11: SwapDeviceContextState called on a deferred context");
   }
 
 
@@ -196,24 +275,24 @@ namespace dxvk {
       // For resources that cannot be written by the GPU,
       // we may write to the buffer resource directly and
       // just swap in the buffer slice as needed.
-      pMapEntry->BufferSlice = pBuffer->AllocSlice();
-      pMapEntry->MapPointer  = pMapEntry->BufferSlice.mapPtr;
+      auto bufferSlice = pBuffer->AllocSlice();
+      pMapEntry->MapPointer = bufferSlice.mapPtr;
 
       EmitCs([
         cDstBuffer = pBuffer->GetBuffer(),
-        cPhysSlice = pMapEntry->BufferSlice
+        cPhysSlice = bufferSlice
       ] (DxvkContext* ctx) {
         ctx->invalidateBuffer(cDstBuffer, cPhysSlice);
       });
     } else {
       // For GPU-writable resources, we need a data slice
       // to perform the update operation at execution time.
-      pMapEntry->DataSlice   = AllocUpdateBufferSlice(pBuffer->Desc()->ByteWidth);
-      pMapEntry->MapPointer  = pMapEntry->DataSlice.ptr();
+      auto dataSlice = AllocUpdateBufferSlice(pBuffer->Desc()->ByteWidth);
+      pMapEntry->MapPointer = dataSlice.ptr();
 
       EmitCs([
         cDstBuffer = pBuffer->GetBuffer(),
-        cDataSlice = pMapEntry->DataSlice
+        cDataSlice = dataSlice
       ] (DxvkContext* ctx) {
         DxvkBufferSliceHandle slice = cDstBuffer->allocSlice();
         std::memcpy(slice.mapPtr, cDataSlice.ptr(), cDataSlice.length());
@@ -257,20 +336,21 @@ namespace dxvk {
     VkDeviceSize xSize = blockCount.width  * eSize;
     VkDeviceSize ySize = blockCount.height * xSize;
     VkDeviceSize zSize = blockCount.depth  * ySize;
+
+    auto dataSlice = AllocUpdateBufferSlice(zSize);
     
     pMapEntry->pResource    = pResource;
     pMapEntry->Subresource  = Subresource;
     pMapEntry->MapType      = D3D11_MAP_WRITE_DISCARD;
     pMapEntry->RowPitch     = xSize;
     pMapEntry->DepthPitch   = ySize;
-    pMapEntry->DataSlice    = AllocUpdateBufferSlice(zSize);
-    pMapEntry->MapPointer   = pMapEntry->DataSlice.ptr();
+    pMapEntry->MapPointer   = dataSlice.ptr();
 
     EmitCs([
       cImage              = pTexture->GetImage(),
       cSubresource        = pTexture->GetSubresourceFromIndex(
         VK_IMAGE_ASPECT_COLOR_BIT, Subresource),
-      cDataSlice          = pMapEntry->DataSlice,
+      cDataSlice          = dataSlice,
       cDataPitchPerRow    = pMapEntry->RowPitch,
       cDataPitchPerLayer  = pMapEntry->DepthPitch,
       cPackedFormat       = GetPackedDepthStencilFormat(pTexture->Desc()->Format)
@@ -308,6 +388,20 @@ namespace dxvk {
   }
   
   
+  void D3D11DeferredContext::FinalizeQueries() {
+    for (auto& query : m_queriesBegun) {
+      m_commandList->AddQuery(query.ptr());
+
+      EmitCs([cQuery = std::move(query)]
+      (DxvkContext* ctx) {
+        cQuery->End(ctx);
+      });
+    }
+
+    m_queriesBegun.clear();
+  }
+
+
   Com<D3D11CommandList> D3D11DeferredContext::CreateCommandList() {
     return new D3D11CommandList(m_parent, m_contextFlags);
   }

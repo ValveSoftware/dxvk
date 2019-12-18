@@ -41,7 +41,7 @@ namespace dxvk {
           VkInstance*               pInstance,
           VkPhysicalDevice*         pPhysDev) {
     auto adapter  = m_adapter->GetDXVKAdapter();
-    auto instance = adapter->instance();
+    auto instance = m_adapter->GetDXVKInstance();
 
     if (pInstance)
       *pInstance = instance->handle();
@@ -223,8 +223,7 @@ namespace dxvk {
     
     // Convert device name
     std::memset(pDesc->Description, 0, sizeof(pDesc->Description));
-    ::MultiByteToWideChar(CP_UTF8, 0, deviceProp.deviceName, -1,
-        pDesc->Description, sizeof(pDesc->Description) / sizeof(*pDesc->Description));
+    str::tows(deviceProp.deviceName, pDesc->Description);
     
     // Get amount of video memory
     // based on the Vulkan heaps
@@ -369,6 +368,11 @@ namespace dxvk {
 
   Rc<DxvkAdapter> STDMETHODCALLTYPE DxgiAdapter::GetDXVKAdapter() {
     return m_adapter;
+  }
+
+
+  Rc<DxvkInstance> STDMETHODCALLTYPE DxgiAdapter::GetDXVKInstance() {
+    return m_factory->GetDXVKInstance();
   }
   
 }

@@ -3,9 +3,9 @@
 #include "../util/config/config.h"
 
 #include "dxvk_adapter.h"
-#include "dxvk_device.h"
 #include "dxvk_device_filter.h"
-#include "dxvk_openvr.h"
+#include "dxvk_extension_provider.h"
+#include "dxvk_options.h"
 
 namespace dxvk {
   
@@ -51,6 +51,8 @@ namespace dxvk {
     /**
      * \brief Retrieves an adapter
      * 
+     * Note that the adapter does not hold
+     * a hard reference to the instance.
      * \param [in] index Adapter index
      * \returns The adapter, or \c nullptr.
      */
@@ -104,6 +106,7 @@ namespace dxvk {
     Rc<vk::LibraryFn>   m_vkl;
     Rc<vk::InstanceFn>  m_vki;
 
+    std::vector<DxvkExtensionProvider*> m_extProviders;
     std::vector<Rc<DxvkAdapter>> m_adapters;
     
     VkInstance createInstance();

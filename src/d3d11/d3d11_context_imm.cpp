@@ -77,10 +77,6 @@ namespace dxvk {
     // DataSize is 0, but we should ignore that pointer
     pData = DataSize ? pData : nullptr;
 
-    // Ensure that all query commands actually get
-    // executed before trying to access the query
-    SynchronizeCsThread();
-
     // Get query status directly from the query object
     auto query = static_cast<D3D11Query*>(pAsync);
     HRESULT hr = query->GetData(pData, GetDataFlags);
@@ -102,11 +98,41 @@ namespace dxvk {
   }
   
   
-  void STDMETHODCALLTYPE D3D11ImmediateContext::End(ID3D11Asynchronous* pAsync) {
-    D3D11DeviceContext::End(pAsync);
+  void STDMETHODCALLTYPE D3D11ImmediateContext::Begin(ID3D11Asynchronous* pAsync) {
+    D3D10DeviceLock lock = LockContext();
 
+    if (unlikely(!pAsync))
+      return;
+    
     auto query = static_cast<D3D11Query*>(pAsync);
-    if (unlikely(query && query->IsEvent())) {
+
+    if (unlikely(!query->DoBegin()))
+      return;
+
+    EmitCs([cQuery = Com<D3D11Query, false>(query)]
+    (DxvkContext* ctx) {
+      cQuery->Begin(ctx);
+    });
+  }
+
+
+  void STDMETHODCALLTYPE D3D11ImmediateContext::End(ID3D11Asynchronous* pAsync) {
+    D3D10DeviceLock lock = LockContext();
+
+    if (unlikely(!pAsync))
+      return;
+    
+    auto query = static_cast<D3D11Query*>(pAsync);
+
+    if (unlikely(!query->DoEnd()))
+      return;
+
+    EmitCs([cQuery = Com<D3D11Query, false>(query)]
+    (DxvkContext* ctx) {
+      cQuery->End(ctx);
+    });
+
+    if (unlikely(query->IsEvent())) {
       query->NotifyEnd();
       query->IsStalling()
         ? Flush()
@@ -140,7 +166,7 @@ namespace dxvk {
       FlushCsChunk();
       
       // Reset flush timer used for implicit flushes
-      m_lastFlush = std::chrono::high_resolution_clock::now();
+      m_lastFlush = dxvk::high_resolution_clock::now();
       m_csIsBusy  = false;
     }
   }
@@ -562,11 +588,6 @@ namespace dxvk {
     const Rc<DxvkResource>&                 Resource,
           D3D11_MAP                         MapType,
           UINT                              MapFlags) {
-    // Some games might not work correctly when a map
-    // fails with D3D11_MAP_FLAG_DO_NOT_WAIT set
-    if (!m_parent->GetOptions()->allowMapFlagNoWait)
-      MapFlags &= ~D3D11_MAP_FLAG_DO_NOT_WAIT;
-
     // Determine access type to wait for based on map mode
     DxvkAccess access = MapType == D3D11_MAP_READ
       ? DxvkAccess::Write
@@ -612,7 +633,7 @@ namespace dxvk {
     uint32_t pending = m_device->pendingSubmissions();
 
     if (StrongHint || pending <= MaxPendingSubmits) {
-      auto now = std::chrono::high_resolution_clock::now();
+      auto now = dxvk::high_resolution_clock::now();
 
       uint32_t delay = MinFlushIntervalUs
                      + IncFlushIntervalUs * pending;

@@ -37,6 +37,9 @@ namespace dxvk {
       info.usage  |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
       info.stages |= m_device->GetEnabledShaderStages();
       info.access |= VK_ACCESS_UNIFORM_READ_BIT;
+
+      if (m_device->GetOptions()->constantBufferRangeCheck)
+        info.usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     }
     
     if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) {

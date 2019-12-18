@@ -1,6 +1,6 @@
 #pragma once
 
-#include <chrono>
+#include "../util/util_time.h"
 
 #include "d3d11_context.h"
 #include "d3d11_state_object.h"
@@ -11,6 +11,7 @@ namespace dxvk {
   class D3D11CommonTexture;
   
   class D3D11ImmediateContext : public D3D11DeviceContext {
+    friend class D3D11SwapChain;
   public:
     
     D3D11ImmediateContext(
@@ -27,12 +28,16 @@ namespace dxvk {
     UINT STDMETHODCALLTYPE GetContextFlags();
     
     HRESULT STDMETHODCALLTYPE GetData(
-            ID3D11Asynchronous*               pAsync,
-            void*                             pData,
-            UINT                              DataSize,
-            UINT                              GetDataFlags);
+            ID3D11Asynchronous*         pAsync,
+            void*                       pData,
+            UINT                        DataSize,
+            UINT                        GetDataFlags);
     
-    void STDMETHODCALLTYPE End(ID3D11Asynchronous *pAsync);
+    void STDMETHODCALLTYPE Begin(
+            ID3D11Asynchronous*         pAsync);
+    
+    void STDMETHODCALLTYPE End(
+            ID3D11Asynchronous*         pAsync);
     
     void STDMETHODCALLTYPE Flush();
     
@@ -111,8 +116,8 @@ namespace dxvk {
 
     std::atomic<uint32_t> m_refCount = { 0 };
 
-    std::chrono::high_resolution_clock::time_point m_lastFlush
-      = std::chrono::high_resolution_clock::now();
+    dxvk::high_resolution_clock::time_point m_lastFlush
+      = dxvk::high_resolution_clock::now();
     
     Com<D3D11DeviceContextState> m_stateObject;
     

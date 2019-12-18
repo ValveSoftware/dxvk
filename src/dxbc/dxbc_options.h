@@ -32,12 +32,12 @@ namespace dxvk {
     /// dword offsets. Fixes RE2 and DMC5 on Nvidia drivers.
     bool useSdivForBufferIndex = false;
 
-    /// Enables sm4-compliant division-by-zero behaviour
-    bool strictDivision = false;
+    /// Enables NaN fixup for render target outputs
+    bool enableRtOutputNanFixup = false;
 
-    // Enables range checking for constant buffers.
-    // Fixes issues in some games, breaks others.
-    bool constantBufferRangeCheck = false;
+    /// Implement dynamically indexed uniform buffers
+    /// with storage buffers for tight bounds checking
+    bool dynamicIndexedConstantBufferAsSsbo = false;
 
     /// Clear thread-group shared memory to zero
     bool zeroInitWorkgroupMemory = false;

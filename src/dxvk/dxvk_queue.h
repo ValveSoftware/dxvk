@@ -167,7 +167,6 @@ namespace dxvk {
   private:
 
     DxvkDevice*             m_device;
-    bool                    m_asyncPresent;
 
     std::atomic<VkResult>   m_lastError = { VK_SUCCESS };
     

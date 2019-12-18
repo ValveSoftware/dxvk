@@ -40,6 +40,16 @@ namespace dxvk {
   }
   
   
+  uint32_t SpirvCodeBuffer::allocId() {
+    constexpr size_t BoundIdsOffset = 3;
+
+    if (m_code.size() <= BoundIdsOffset)
+      return 0;
+
+    return m_code[BoundIdsOffset]++;
+  }
+
+
   void SpirvCodeBuffer::append(const SpirvCodeBuffer& other) {
     if (other.size() != 0) {
       const size_t size = m_code.size();
@@ -122,6 +132,13 @@ namespace dxvk {
   }
   
   
+  void SpirvCodeBuffer::erase(size_t size) {
+    m_code.erase(
+      m_code.begin() + m_ptr,
+      m_code.begin() + m_ptr + size);
+  }
+
+
   uint32_t SpirvCodeBuffer::strLen(const char* str) {
     // Null-termination plus padding
     return (std::strlen(str) + 4) / 4;

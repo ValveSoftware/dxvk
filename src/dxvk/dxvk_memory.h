@@ -123,6 +123,15 @@ namespace dxvk {
     }
 
     /**
+     * \brief Returns length of memory allocated
+     * 
+     * \returns Memory size
+     */
+    VkDeviceSize length() const {
+      return m_length;
+    }
+
+    /**
      * \brief Checks whether the memory slice is defined
      * 
      * \returns \c true if this slice points to actual device
@@ -256,11 +265,14 @@ namespace dxvk {
     /**
      * \brief Queries memory stats
      * 
-     * Returns the total amount of device memory
-     * allocated and used by all available heaps.
-     * \returns Global memory stats
+     * Returns the total amount of memory
+     * allocated and used for a given heap.
+     * \param [in] heap Heap index
+     * \returns Memory stats for this heap
      */
-    DxvkMemoryStats getMemoryStats();
+    DxvkMemoryStats getMemoryStats(uint32_t heap) const {
+      return m_memHeaps[heap].stats;
+    }
     
   private:
 

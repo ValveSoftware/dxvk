@@ -992,9 +992,11 @@ namespace dxvk {
      * previously submitted commands have
      * finished execution on the GPU.
      * \param [in] signal The signal
+     * \param [in] value Signal value
      */
-    void queueSignal(
-      const Rc<sync::Signal>&   signal);
+    void signal(
+      const Rc<sync::Signal>&   signal,
+            uint64_t            value);
     
     /**
      * \brief Trims staging buffers
@@ -1130,7 +1132,7 @@ namespace dxvk {
     void resetRenderPassOps(
       const DxvkRenderTargets&    renderTargets,
             DxvkRenderPassOps&    renderPassOps);
-    
+
     void startConditionalRendering();
     void pauseConditionalRendering();
     
@@ -1146,13 +1148,10 @@ namespace dxvk {
     bool updateGraphicsPipelineState();
     
     void updateComputeShaderResources();
-    void updateComputeShaderDescriptors();
-    
     void updateGraphicsShaderResources();
-    void updateGraphicsShaderDescriptors();
 
     template<VkPipelineBindPoint BindPoint>
-    bool updateShaderResources(
+    void updateShaderResources(
       const DxvkPipelineLayout*     layout);
     
     template<VkPipelineBindPoint BindPoint>
@@ -1183,18 +1182,22 @@ namespace dxvk {
     void commitComputeInitBarriers();
     void commitComputePostBarriers();
     
-    template<bool Indexed, bool Indirect>
+    template<bool Indexed, bool Indirect, bool DoEmit>
     void commitGraphicsBarriers();
 
+    template<bool DoEmit>
     DxvkAccessFlags checkGfxBufferBarrier(
       const DxvkBufferSlice&          slice,
             VkPipelineStageFlags      stages,
             VkAccessFlags             access);
 
+    template<bool DoEmit>
     DxvkAccessFlags checkGfxImageBarrier(
       const Rc<DxvkImageView>&        imageView,
             VkPipelineStageFlags      stages,
             VkAccessFlags             access);
+
+    DxvkAccessFlags checkFramebufferBarrier();
 
     void emitMemoryBarrier(
             VkDependencyFlags         flags,

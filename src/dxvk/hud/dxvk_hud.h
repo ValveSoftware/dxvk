@@ -2,13 +2,8 @@
 
 #include "../dxvk_device.h"
 
-#include "../util/util_env.h"
-
-#include "dxvk_hud_config.h"
-#include "dxvk_hud_devinfo.h"
-#include "dxvk_hud_fps.h"
+#include "dxvk_hud_item.h"
 #include "dxvk_hud_renderer.h"
-#include "dxvk_hud_stats.h"
 
 namespace dxvk::hud {
   
@@ -30,9 +25,7 @@ namespace dxvk::hud {
     
   public:
     
-    Hud(
-      const Rc<DxvkDevice>& device,
-      const HudConfig&      config);
+    Hud(const Rc<DxvkDevice>& device);
     
     ~Hud();
     
@@ -52,8 +45,21 @@ namespace dxvk::hud {
      * \param [in] surfaceSize Image size, in pixels
      */
     void render(
-      const Rc<DxvkContext>& ctx,
-            VkExtent2D       surfaceSize);
+      const Rc<DxvkContext>&  ctx,
+            VkSurfaceFormatKHR surfaceFormat,
+            VkExtent2D        surfaceSize);
+
+    /**
+     * \brief Adds a HUD item if enabled
+     *
+     * \tparam T The HUD item type
+     * \param [in] name HUD item name
+     * \param [in] args Constructor arguments
+     */
+    template<typename T, typename... Args>
+    void addItem(const char* name, Args... args) {
+      m_hudItems.add<T>(name, std::forward<Args>(args)...);
+    }
     
     /**
      * \brief Creates the HUD
@@ -68,31 +74,25 @@ namespace dxvk::hud {
     
   private:
     
-    const HudConfig       m_config;
     const Rc<DxvkDevice>  m_device;
     
-    Rc<DxvkBuffer>        m_uniformBuffer;
-
     DxvkRasterizerState   m_rsState;
     DxvkBlendMode         m_blendMode;
 
     HudUniformData        m_uniformData;
     HudRenderer           m_renderer;
-    HudDeviceInfo         m_hudDeviceInfo;
-    HudFps                m_hudFramerate;
-    HudStats              m_hudStats;
+    HudItemSet            m_hudItems;
 
     void setupRendererState(
+      const Rc<DxvkContext>&  ctx,
+            VkSurfaceFormatKHR surfaceFormat,
+            VkExtent2D        surfaceSize);
+
+    void resetRendererState(
       const Rc<DxvkContext>&  ctx);
 
     void renderHudElements(
       const Rc<DxvkContext>&  ctx);
-
-    void updateUniformBuffer(
-      const Rc<DxvkContext>&  ctx,
-      const HudUniformData&   data);
-    
-    Rc<DxvkBuffer> createUniformBuffer();
     
   };
   

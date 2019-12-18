@@ -755,16 +755,20 @@ namespace dxvk {
     //    (1) Number of constants in the buffer
     const uint32_t bufferId     = ins.dst[0].idx[0].offset;
     const uint32_t elementCount = ins.dst[0].idx[1].offset;
+
+    bool asSsbo = m_moduleInfo.options.dynamicIndexedConstantBufferAsSsbo
+      && ins.controls.accessType() == DxbcConstantBufferAccessType::DynamicallyIndexed;
     
     this->emitDclConstantBufferVar(bufferId, elementCount,
-      str::format("cb", bufferId).c_str());
+      str::format("cb", bufferId).c_str(), asSsbo);
   }
   
   
   void DxbcCompiler::emitDclConstantBufferVar(
           uint32_t                regIdx,
           uint32_t                numConstants,
-    const char*                   name) {
+    const char*                   name,
+          bool                    asSsbo) {
     // Uniform buffer data is stored as a fixed-size array
     // of 4x32-bit vectors. SPIR-V requires explicit strides.
     const uint32_t arrayType = m_module.defArrayTypeUnique(
@@ -776,7 +780,9 @@ namespace dxvk {
     // struct and decorate that struct as a block.
     const uint32_t structType = m_module.defStructTypeUnique(1, &arrayType);
     
-    m_module.decorateBlock       (structType);
+    m_module.decorate(structType, asSsbo
+      ? spv::DecorationBufferBlock
+      : spv::DecorationBlock);
     m_module.memberDecorateOffset(structType, 0, 0);
     
     m_module.setDebugName        (structType, str::format(name, "_t").c_str());
@@ -796,7 +802,10 @@ namespace dxvk {
     
     m_module.decorateDescriptorSet(varId, 0);
     m_module.decorateBinding(varId, bindingId);
-    
+
+    if (asSsbo)
+      m_module.decorate(varId, spv::DecorationNonWritable);
+
     // Declare a specialization constant which will
     // store whether or not the resource is bound.
     const uint32_t specConstId = m_module.specConstBool(true);
@@ -806,14 +815,15 @@ namespace dxvk {
     
     DxbcConstantBuffer buf;
     buf.varId  = varId;
-    buf.specId = specConstId;
     buf.size   = numConstants;
     m_constantBuffers.at(regIdx) = buf;
     
     // Store descriptor info for the shader interface
     DxvkResourceSlot resource;
     resource.slot = bindingId;
-    resource.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    resource.type = asSsbo
+      ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+      : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     resource.view = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
     resource.access = VK_ACCESS_UNIFORM_READ_BIT;
     m_resourceSlots.push_back(resource);
@@ -1505,7 +1515,8 @@ namespace dxvk {
   void DxbcCompiler::emitDclImmediateConstantBufferUbo(
           uint32_t                dwordCount,
     const uint32_t*               dwordArray) {
-    this->emitDclConstantBufferVar(Icb_BindingSlotId, dwordCount / 4, "icb");
+    this->emitDclConstantBufferVar(Icb_BindingSlotId, dwordCount / 4, "icb",
+      m_moduleInfo.options.dynamicIndexedConstantBufferAsSsbo);
     m_immConstData = DxvkShaderConstData(dwordCount, dwordArray);
   }
 
@@ -1555,21 +1566,6 @@ namespace dxvk {
         break;
         
       case DxbcOpcode::Div:
-        dst.id = m_module.opFDiv(typeId,
-          src.at(0).id, src.at(1).id);
-        
-        if (m_moduleInfo.options.strictDivision) {
-          uint32_t boolType = dst.type.ccount > 1
-            ? m_module.defVectorType(m_module.defBoolType(), dst.type.ccount)
-            : m_module.defBoolType();
-          
-          dst.id = m_module.opSelect(typeId,
-            m_module.opFOrdNotEqual(boolType, src.at(1).id,
-              emitBuildConstVecf32(0.0f, 0.0f, 0.0f, 0.0f, ins.dst[0].mask).id),
-            dst.id, src.at(0).id);
-        }
-        break;
-
       case DxbcOpcode::DDiv:
         dst.id = m_module.opFDiv(typeId,
           src.at(0).id, src.at(1).id);
@@ -5566,32 +5562,6 @@ namespace dxvk {
         scount, scomps.data());
     }
 
-    // HACK: If requested, use the constant buffer size to perform a range
-    // check. This does NOT match the API behaviour, but is needed for some
-    // games since out-of-bounds access is undefined behaviour.
-    if (m_moduleInfo.options.constantBufferRangeCheck && reg.idx[1].relReg) {
-      uint32_t zero = m_module.constf32(0.0f);
-      uint32_t cond = m_module.opULessThan(
-        m_module.defBoolType(), constId.id,
-        m_module.consti32(m_constantBuffers[regId].size));
-
-      if (scount > 1) {
-        std::array<uint32_t, 4> zeroes = {{ zero, zero, zero, zero }};
-        std::array<uint32_t, 4> conds  = {{ cond, cond, cond, cond }};
-
-        zero = m_module.opCompositeConstruct(
-          getVectorTypeId(result.type),
-          scount, zeroes.data());
-        cond = m_module.opCompositeConstruct(
-          m_module.defVectorType(m_module.defBoolType(), scount),
-          scount, conds.data());
-      }
-
-      result.id = m_module.opSelect(
-        getVectorTypeId(result.type), cond,
-        result.id, zero);
-    }
-
     // Apply any post-processing that might be necessary
     result = emitRegisterBitcast(result, reg.dataType);
     result = emitSrcOperandModifiers(result, reg.modifiers);
@@ -5849,10 +5819,21 @@ namespace dxvk {
         scalars[c] = m_module.opVectorExtractDynamic(compTypeId, vector.id, specId);
       }
 
-      vector.id = m_module.opCompositeConstruct(
-        getVectorTypeId(vector.type),
-        vector.type.ccount,
-        scalars.data());
+      uint32_t typeId = getVectorTypeId(vector.type);
+      vector.id = m_module.opCompositeConstruct(typeId, vector.type.ccount, scalars.data());
+
+      // Replace NaN by zero if requested
+      if (m_moduleInfo.options.enableRtOutputNanFixup && vector.type.ctype == DxbcScalarType::Float32) {
+        uint32_t boolType = m_module.defBoolType();
+
+        if (vector.type.ccount > 1)
+          boolType = m_module.defVectorType(boolType, vector.type.ccount);
+
+        uint32_t zero = emitBuildConstVecf32(0.0f, 0.0f, 0.0f, 0.0f,
+          DxbcRegMask((1u << vector.type.ccount) - 1)).id;
+        uint32_t isNan = m_module.opIsNan(boolType, vector.id);
+        vector.id = m_module.opSelect(typeId, isNan, zero, vector.id);
+      }
       
       emitValueStore(m_oRegs[i], vector,
         DxbcRegMask::firstN(vector.type.ccount));

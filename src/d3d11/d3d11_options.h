@@ -4,19 +4,14 @@
 
 #include "../dxgi/dxgi_options.h"
 
+#include "../dxvk/dxvk_device.h"
+
 #include "d3d11_include.h"
 
 namespace dxvk {
   
   struct D3D11Options {
-    D3D11Options(const Config& config);
-    /// Handle D3D11_MAP_FLAG_DO_NOT_WAIT properly.
-    /// 
-    /// This can offer substantial speedups, but some games
-    /// (The Witcher 3, Elder Scrolls Online, possibly others)
-    /// seem to make incorrect assumptions about when a map
-    /// operation succeeds when that flag is set.
-    bool allowMapFlagNoWait;
+    D3D11Options(const Config& config, const Rc<DxvkDevice>& device);
 
     /// Enables speed hack for mapping on deferred contexts
     ///
@@ -25,10 +20,9 @@ namespace dxvk {
     /// than once.
     bool dcSingleUseMode;
 
-    /// Enables sm4-compliant division-by-zero behaviour
-    /// Windows drivers don't normally do this, but some
-    /// games may expect correct behaviour.
-    bool strictDivision;
+    /// Enables workaround to replace NaN render target
+    /// outputs with zero
+    bool enableRtOutputNanFixup;
 
     /// Enables out-of-bounds access check for constant
     /// buffers. Workaround for a few broken games that

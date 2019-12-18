@@ -263,6 +263,15 @@ namespace dxvk {
         result |= m_viewFormats[i] == format;
       return result;
     }
+
+    /**
+     * \brief Memory size
+     * 
+     * \returns The memory size of the image
+     */
+    VkDeviceSize memSize() const {
+      return m_memory.length();
+    }
     
   private:
     
@@ -312,6 +321,8 @@ namespace dxvk {
      * \returns The image view handle
      */
     VkImageView handle(VkImageViewType viewType) const {
+      if (unlikely(viewType == VK_IMAGE_VIEW_TYPE_MAX_ENUM))
+        viewType = m_info.type;
       return m_views[viewType];
     }
     

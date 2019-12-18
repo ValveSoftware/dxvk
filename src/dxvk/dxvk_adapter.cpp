@@ -8,10 +8,9 @@
 namespace dxvk {
   
   DxvkAdapter::DxvkAdapter(
-          DxvkInstance*       instance,
+    const Rc<vk::InstanceFn>& vki,
           VkPhysicalDevice    handle)
-  : m_instance      (instance),
-    m_vki           (instance->vki()),
+  : m_vki           (vki),
     m_handle        (handle) {
     this->initHeapAllocInfo();
     this->queryExtensions();
@@ -25,11 +24,6 @@ namespace dxvk {
   
   DxvkAdapter::~DxvkAdapter() {
     
-  }
-  
-  
-  Rc<DxvkInstance> DxvkAdapter::instance() const {
-    return m_instance;
   }
   
   
@@ -98,8 +92,7 @@ namespace dxvk {
       VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
       VK_QUEUE_TRANSFER_BIT);
     
-    if (transferQueue == VK_QUEUE_FAMILY_IGNORED
-     || !m_instance->options().enableTransferQueue)
+    if (transferQueue == VK_QUEUE_FAMILY_IGNORED)
       transferQueue = graphicsQueue;
     
     DxvkAdapterQueueIndices queues;
@@ -242,14 +235,18 @@ namespace dxvk {
   }
 
 
-  Rc<DxvkDevice> DxvkAdapter::createDevice(std::string clientApi, DxvkDeviceFeatures enabledFeatures) {
+  Rc<DxvkDevice> DxvkAdapter::createDevice(
+    const Rc<DxvkInstance>&   instance,
+          std::string         clientApi,
+          DxvkDeviceFeatures  enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
-    std::array<DxvkExt*, 25> devExtensionList = {{
+    std::array<DxvkExt*, 26> devExtensionList = {{
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.amdShaderFragmentMask,
       &devExtensions.extConditionalRendering,
       &devExtensions.extDepthClipEnable,
+      &devExtensions.extFullScreenExclusive,
       &devExtensions.extHostQueryReset,
       &devExtensions.extMemoryBudget,
       &devExtensions.extMemoryPriority,
@@ -390,7 +387,7 @@ namespace dxvk {
     if (m_vki->vkCreateDevice(m_handle, &info, nullptr, &device) != VK_SUCCESS)
       throw DxvkError("DxvkAdapter: Failed to create device");
     
-    Rc<DxvkDevice> result = new DxvkDevice(clientApi, this,
+    Rc<DxvkDevice> result = new DxvkDevice(clientApi, instance, this,
       new vk::DeviceFn(true, m_vki->instance(), device),
       devExtensions, enabledFeatures);
     result->initResources();

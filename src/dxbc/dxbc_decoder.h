@@ -36,7 +36,6 @@ namespace dxvk {
    */
   struct DxbcConstantBuffer {
     uint32_t varId  = 0;
-    uint32_t specId = 0;
     uint32_t size   = 0;
   };
   
@@ -326,6 +325,10 @@ namespace dxvk {
     
     DxbcUavFlags uavFlags() const {
       return DxbcUavFlags(bit::extract(m_bits, 16, 16));
+    }
+
+    DxbcConstantBufferAccessType accessType() const {
+      return DxbcConstantBufferAccessType(bit::extract(m_bits, 11, 11));
     }
     
     uint32_t controlPointCount() const {

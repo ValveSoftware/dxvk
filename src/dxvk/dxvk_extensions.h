@@ -260,8 +260,9 @@ namespace dxvk {
   struct DxvkDeviceExtensions {
     DxvkExt amdMemoryOverallocationBehaviour  = { VK_AMD_MEMORY_OVERALLOCATION_BEHAVIOR_EXTENSION_NAME,     DxvkExtMode::Optional };
     DxvkExt amdShaderFragmentMask             = { VK_AMD_SHADER_FRAGMENT_MASK_EXTENSION_NAME,               DxvkExtMode::Optional };
-    DxvkExt extConditionalRendering           = { VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME,              DxvkExtMode::Optional };
+    DxvkExt extConditionalRendering           = { VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME,              DxvkExtMode::Disabled };
     DxvkExt extDepthClipEnable                = { VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME,                  DxvkExtMode::Optional };
+    DxvkExt extFullScreenExclusive            = { VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME,              DxvkExtMode::Optional };
     DxvkExt extHostQueryReset                 = { VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,                   DxvkExtMode::Optional };
     DxvkExt extMemoryBudget                   = { VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,                      DxvkExtMode::Passive  };
     DxvkExt extMemoryPriority                 = { VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME,                    DxvkExtMode::Optional };
@@ -293,8 +294,8 @@ namespace dxvk {
    */
   struct DxvkInstanceExtensions {
     DxvkExt khrGetPhysicalDeviceProperties2 = { VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, DxvkExtMode::Required };
+    DxvkExt khrGetSurfaceCapabilities2      = { VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,       DxvkExtMode::Optional };
     DxvkExt khrSurface                      = { VK_KHR_SURFACE_EXTENSION_NAME,                          DxvkExtMode::Required };
-    DxvkExt khrWin32Surface                 = { VK_KHR_WIN32_SURFACE_EXTENSION_NAME,                    DxvkExtMode::Required };
   };
   
 }

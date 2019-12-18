@@ -56,6 +56,10 @@ IDXGIVkSwapChain : public IUnknown {
 
   virtual UINT STDMETHODCALLTYPE GetImageIndex() = 0;
 
+  virtual UINT STDMETHODCALLTYPE GetFrameLatency() = 0;
+
+  virtual HANDLE STDMETHODCALLTYPE GetFrameLatencyEvent() = 0;
+
   virtual HRESULT STDMETHODCALLTYPE ChangeProperties(
     const DXGI_SWAP_CHAIN_DESC1*    pDesc) = 0;
 
@@ -65,6 +69,9 @@ IDXGIVkSwapChain : public IUnknown {
   virtual HRESULT STDMETHODCALLTYPE SetGammaControl(
           UINT                      NumControlPoints,
     const DXGI_RGB*                 pControlPoints) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetFrameLatency(
+          UINT                      MaxLatency) = 0;
 
   virtual HRESULT STDMETHODCALLTYPE Present(
           UINT                      SyncInterval,
@@ -85,7 +92,9 @@ IDXGIDXVKAdapter : public IDXGIAdapter3 {
   static const GUID guid;
   
   virtual dxvk::Rc<dxvk::DxvkAdapter> STDMETHODCALLTYPE GetDXVKAdapter() = 0;
-  
+
+  virtual dxvk::Rc<dxvk::DxvkInstance> STDMETHODCALLTYPE GetDXVKInstance() = 0;
+
 };
 
 

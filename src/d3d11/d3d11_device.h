@@ -421,6 +421,7 @@ namespace dxvk {
     }
     
     static bool CheckFeatureLevelSupport(
+      const Rc<DxvkInstance>& instance,
       const Rc<DxvkAdapter>&  adapter,
             D3D_FEATURE_LEVEL featureLevel);
     
@@ -483,7 +484,7 @@ namespace dxvk {
     BOOL IsUnifiedMemoryArch();
 
     static D3D_FEATURE_LEVEL GetMaxFeatureLevel(
-      const Rc<DxvkAdapter>&        Adapter);
+      const Rc<DxvkInstance>&           pInstance);
     
   };
   
@@ -564,10 +565,11 @@ namespace dxvk {
   public:
     
     D3D11DXGIDevice(
-          IDXGIAdapter*       pAdapter,
-          DxvkAdapter*        pDxvkAdapter,
-          D3D_FEATURE_LEVEL   FeatureLevel,
-          UINT                FeatureFlags);
+            IDXGIAdapter*       pAdapter,
+      const Rc<DxvkInstance>&   pDxvkInstance,
+      const Rc<DxvkAdapter>&    pDxvkAdapter,
+            D3D_FEATURE_LEVEL   FeatureLevel,
+            UINT                FeatureFlags);
     
     ~D3D11DXGIDevice();
     
@@ -632,15 +634,13 @@ namespace dxvk {
     
     void STDMETHODCALLTYPE Trim() final;
     
-    Rc<sync::Signal> STDMETHODCALLTYPE GetFrameSyncEvent(
-            UINT                  BufferCount);
-
     Rc<DxvkDevice> STDMETHODCALLTYPE GetDXVKDevice();
 
   private:
 
     Com<IDXGIAdapter>   m_dxgiAdapter;
 
+    Rc<DxvkInstance>    m_dxvkInstance;
     Rc<DxvkAdapter>     m_dxvkAdapter;
     Rc<DxvkDevice>      m_dxvkDevice;
 
@@ -650,11 +650,7 @@ namespace dxvk {
     
     WineDXGISwapChainFactory m_wineFactory;
     
-    uint32_t m_frameLatencyCap = 0;
-    uint32_t m_frameLatency    = DefaultFrameLatency;
-    uint32_t m_frameId         = 0;
-
-    std::array<Rc<sync::Signal>, 16> m_frameEvents;
+    uint32_t m_frameLatency = DefaultFrameLatency;
 
     Rc<DxvkDevice> CreateDevice(D3D_FEATURE_LEVEL FeatureLevel);
 

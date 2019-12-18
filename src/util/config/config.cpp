@@ -74,7 +74,7 @@ namespace dxvk {
     }} },
     /* Final Fantasy XIV: Fix random black blocks */
     { R"(\\ffxiv_dx11\.exe$)", {{
-      { "d3d11.strictDivision",             "True" },
+      { "d3d11.enableRtOutputNanFixup",     "True" },
     }} },
     /* Resident Evil 2: Improve GPU performance   */
     { R"(\\re2\.exe$)", {{
@@ -124,13 +124,6 @@ namespace dxvk {
     { R"(\\vr\.exe$)", {{
       { "d3d11.dcSingleUseMode",            "False" },
     }} },
-    /* Overwatch                                  *
-     * Broken for at least one user for unknown   *
-     * reasons, seems to work for others. Just    *
-     * disable DO_NOT_WAIT to be on the safe side */
-     { R"(\\Overwatch\.exe$)", {{
-      { "d3d11.allowMapFlagNoWait",         "False" },
-     }} },
     /* Hitman 2 - requires AGS library            */
     { R"(\\HITMAN2\.exe$)", {{
       { "dxgi.customVendorId",              "10de" },
@@ -150,6 +143,138 @@ namespace dxvk {
     /* Saints Row: The Third                      */
     { R"(\\SaintsRowTheThird_DX11\.exe$)", {{
       { "d3d11.constantBufferRangeCheck",   "True" },
+    }} },
+    /* Metal Gear Solid 5                         */
+    { R"(\\mgsvtpp\.exe$)", {{
+      { "dxvk.enableOpenVR",                "False" },
+    }} },
+    /* Crysis 3 - slow if it notices AMD card     */
+    { R"(\\Crysis3\.exe$)", {{
+      { "dxgi.customVendorId",              "10de" },
+    }} },
+    /* Atelier Ryza - tries to render video with  *
+     * a D3D9 swap chain over the DXGI swap chain */
+    { R"(\\Atelier_Ryza\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
+
+    /**********************************************/
+    /* D3D9 GAMES                                 */
+    /**********************************************/
+
+    /* A Hat in Time                              */
+    { R"(\\HatinTimeGame\.exe$)", {{
+      { "d3d9.strictPow",                   "False" },
+      { "d3d9.lenientClear",                "True" },
+    }} },
+    /* Borderlands: The Pre Sequel!               */
+    { R"(\\BorderlandsPreSequel\.exe$)", {{
+      { "d3d9.lenientClear",                "True" },
+    }} },
+    /* Borderlands 2                              */
+    { R"(\\Borderlands2\.exe$)", {{
+      { "d3d9.lenientClear",                "True" },
+    }} },
+    /* Borderlands                                */
+    { R"(\\Borderlands\.exe$)", {{
+      { "d3d9.lenientClear",                "True" },
+    }} },
+    /* Gothic 3                                   */
+    { R"(\\Gothic3\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+    }} },
+    /* Gothic 3 Forsaken Gods                     */
+    { R"(\\Gothic III Forsaken Gods\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+    }} },
+    /* Risen                                      */
+    { R"(\\Risen\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+      { "d3d9.invariantPosition",           "True" },
+    }} },
+    /* Risen 2                                    */
+    { R"(\\Risen2\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+      { "d3d9.invariantPosition",           "True" },
+    }} },
+    /* Risen 3                                    */
+    { R"(\\Risen3\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+      { "d3d9.invariantPosition",           "True" },
+    }} },
+    /* Nostale                                    */
+    { R"(\\NostaleClientX\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+    }} },
+    /* Sonic Adventure 2                          */
+    { R"(\\Sonic Adventure 2\\(launcher|sonic2app)\.exe$)", {{
+      { "d3d9.floatEmulation",              "False" },
+    }} },
+    /* The Sims 2,
+       Body Shop,
+       The Sims Life Stories,
+       The Sims Pet Stories,
+       and The Sims Castaway Stories             */
+    { R"(\\(Sims2.*|TS2BodyShop|SimsLS|SimsPS|SimsCS)\.exe$)", {{
+      { "d3d9.customVendorId",              "10de" },
+      { "d3d9.customDeviceId",              "0091" },
+      { "d3d9.customDeviceDesc",            "GeForce 7800 GTX" },
+      { "d3d9.disableA8RT",                 "True" },
+      { "d3d9.supportX4R4G4B4",             "False" },
+      { "d3d9.maxAvailableMemory",          "2048" },
+      { "d3d9.memoryTrackTest",             "True" },
+       // The Sims 2 will try to upload 1024 constants
+       // every frame otherwise, which it never uses
+       // causing a massive discard + upload.
+      { "d3d9.swvpFloatCount",              "384" },
+      { "d3d9.swvpIntCount",                "16" },
+      { "d3d9.swvpBoolCount",               "16" },
+    }} },
+    /* Dead Space uses the a NULL render target instead
+       of a 1x1 one if DF24 is NOT supported      */
+    { R"(\\Dead Space\.exe$)", {{
+      { "d3d9.supportDFFormats",                 "False" },
+    }} },
+    /* Burnout Paradise                           */
+    { R"(\\BurnoutParadise\.exe$)", {{
+      { "d3d9.allowLockFlagReadonly",       "False" },
+    }} },
+    /* Halo 2                                     */
+    { R"(\\halo2\.exe$)", {{
+      { "d3d9.invariantPosition",           "True" },
+    }} },
+    /* Halo CE/HaloPC                             */
+    { R"(\\halo(ce)?\.exe$)", {{
+      // Game enables minor decal layering fixes
+      // specifically when it detects AMD.
+      // Avoids chip being detected as unsupported
+      // when on intel. Avoids possible path towards
+      // invalid texture addressing methods.
+      { "d3d9.customVendorId",              "1002" },
+      // Avoids card not recognized error.
+      // Keeps game's rendering methods consistent
+      // for optimal compatibility.
+      { "d3d9.customDeviceId",              "4172" },
+    }} },
+    /* Counter Strike: Global Offensive
+       Needs NVAPI to avoid a forced AO + Smoke
+       exploit so we must force AMD vendor ID.    */
+    { R"(\\csgo\.exe$)", {{
+      { "d3d9.customVendorId",              "1002" },
+    }} },
+    /* Vampire - The Masquerade Bloodlines        */
+    { R"(\\vampire\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+      { "d3d9.memoryTrackTest",             "True" },
+      { "d3d9.maxAvailableMemory",          "1024" },
+    }} },
+    /* Senran Kagura Shinovi Versus               */
+    { R"(\\SKShinoviVersus\.exe$)", {{
+      { "d3d9.forceAspectRatio",            "16:9" },
+    }} },
+    /* Metal Slug X                               */
+    { R"(\\mslugx\.exe$)", {{
+      { "d3d9.supportD32",                  "False" },
     }} },
   }};
 

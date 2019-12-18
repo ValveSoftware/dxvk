@@ -2,6 +2,7 @@
 
 #include "dxvk_instance.h"
 #include "dxvk_openvr.h"
+#include "dxvk_platform_exts.h"
 
 #include <algorithm>
 
@@ -15,20 +16,34 @@ namespace dxvk {
     m_config.merge(Config::getAppConfig(env::getExePath()));
     m_config.logOptions();
 
-    g_vrInstance.initInstanceExtensions();
+    m_options = DxvkOptions(m_config);
+
+    m_extProviders.push_back(&DxvkPlatformExts::s_instance);
+
+    if (m_options.enableOpenVR)
+      m_extProviders.push_back(&VrInstance::s_instance);
+
+    Logger::info("Built-in extension providers:");
+    for (const auto& provider : m_extProviders)
+      Logger::info(str::format("  ", provider->getName()));
+
+    for (const auto& provider : m_extProviders)
+      provider->initInstanceExtensions();
 
     m_vkl = new vk::LibraryFn();
     m_vki = new vk::InstanceFn(true, this->createInstance());
 
     m_adapters = this->queryAdapters();
-    g_vrInstance.initDeviceExtensions(this);
+
+    for (const auto& provider : m_extProviders)
+      provider->initDeviceExtensions(this);
 
     for (uint32_t i = 0; i < m_adapters.size(); i++) {
-      m_adapters[i]->enableExtensions(
-        g_vrInstance.getDeviceExtensions(i));
+      for (const auto& provider : m_extProviders) {
+        m_adapters[i]->enableExtensions(
+          provider->getDeviceExtensions(i));
+      }
     }
-
-    m_options = DxvkOptions(m_config);
   }
   
   
@@ -74,8 +89,8 @@ namespace dxvk {
 
     std::array<DxvkExt*, 3> insExtensionList = {{
       &insExtensions.khrGetPhysicalDeviceProperties2,
+      &insExtensions.khrGetSurfaceCapabilities2,
       &insExtensions.khrSurface,
-      &insExtensions.khrWin32Surface,
     }};
 
     DxvkNameSet extensionsEnabled;
@@ -86,9 +101,11 @@ namespace dxvk {
           insExtensionList.data(),
           extensionsEnabled))
       throw DxvkError("DxvkInstance: Failed to create instance");
-    
+
     // Enable additional extensions if necessary
-    extensionsEnabled.merge(g_vrInstance.getInstanceExtensions());
+    for (const auto& provider : m_extProviders)
+      extensionsEnabled.merge(provider->getInstanceExtensions());
+
     DxvkNameList extensionNameList = extensionsEnabled.toNameList();
     
     Logger::info("Enabled instance extensions:");
@@ -102,7 +119,7 @@ namespace dxvk {
     appInfo.pApplicationName      = appName.c_str();
     appInfo.applicationVersion    = 0;
     appInfo.pEngineName           = "DXVK";
-    appInfo.engineVersion         = VK_MAKE_VERSION(1, 4, 4);
+    appInfo.engineVersion         = VK_MAKE_VERSION(1, 5, 0);
     appInfo.apiVersion            = VK_MAKE_VERSION(1, 1, 0);
     
     VkInstanceCreateInfo info;
@@ -144,7 +161,7 @@ namespace dxvk {
     
     std::vector<Rc<DxvkAdapter>> result;
     for (uint32_t i = 0; i < numAdapters; i++) {
-      Rc<DxvkAdapter> adapter = new DxvkAdapter(this, adapters[i]);
+      Rc<DxvkAdapter> adapter = new DxvkAdapter(m_vki, adapters[i]);
       
       if (filter.testAdapter(adapter))
         result.push_back(adapter);

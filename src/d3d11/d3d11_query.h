@@ -38,16 +38,30 @@ namespace dxvk {
     void STDMETHODCALLTYPE GetDesc(D3D11_QUERY_DESC* pDesc) final;
 
     void STDMETHODCALLTYPE GetDesc1(D3D11_QUERY_DESC1* pDesc) final;
-    
+
     void Begin(DxvkContext* ctx);
     
     void End(DxvkContext* ctx);
     
+    bool STDMETHODCALLTYPE DoBegin();
+
+    bool STDMETHODCALLTYPE DoEnd();
+
     HRESULT STDMETHODCALLTYPE GetData(
             void*                             pData,
             UINT                              GetDataFlags);
     
     DxvkBufferSlice GetPredicate(DxvkContext* ctx);
+
+    void DoDeferredEnd() {
+      m_state = D3D11_VK_QUERY_ENDED;
+      m_resetCtr.fetch_add(1, std::memory_order_acquire);
+    }
+
+    bool IsScoped() const {
+      return m_desc.Query != D3D11_QUERY_EVENT
+          && m_desc.Query != D3D11_QUERY_TIMESTAMP;
+    }
 
     bool IsEvent() const {
       return m_desc.Query == D3D11_QUERY_EVENT;
@@ -99,6 +113,8 @@ namespace dxvk {
 
     uint32_t m_stallMask = 0;
     bool     m_stallFlag = false;
+
+    std::atomic<uint32_t> m_resetCtr = { 0u };
 
     UINT64 GetTimestampQueryFrequency() const;
 

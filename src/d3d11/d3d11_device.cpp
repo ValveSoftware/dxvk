@@ -38,7 +38,7 @@ namespace dxvk {
     m_dxvkDevice    (pContainer->GetDXVKDevice()),
     m_dxvkAdapter   (m_dxvkDevice->adapter()),
     m_d3d11Formats  (m_dxvkAdapter),
-    m_d3d11Options  (m_dxvkAdapter->instance()->config()),
+    m_d3d11Options  (m_dxvkDevice->instance()->config(), m_dxvkDevice),
     m_dxbcOptions   (m_dxvkDevice, m_d3d11Options) {
     m_initializer = new D3D11Initializer(this);
     m_context     = new D3D11ImmediateContext(this, m_dxvkDevice);
@@ -427,7 +427,9 @@ namespace dxvk {
       return S_FALSE;
     
     try {
-      *ppUAView = ref(new D3D11UnorderedAccessView(this, pResource, &desc));
+      auto uav = new D3D11UnorderedAccessView(this, pResource, &desc);
+      m_initializer->InitUavCounter(uav);
+      *ppUAView = ref(uav);
       return S_OK;
     } catch (const DxvkError& e) {
       Logger::err(e.message());
@@ -1300,7 +1302,7 @@ namespace dxvk {
     
     UINT flId;
     for (flId = 0; flId < FeatureLevels; flId++) {
-      if (CheckFeatureLevelSupport(m_dxvkAdapter, pFeatureLevels[flId]))
+      if (CheckFeatureLevelSupport(m_dxvkDevice->instance(), m_dxvkAdapter, pFeatureLevels[flId]))
         break;
     }
 
@@ -1871,9 +1873,10 @@ namespace dxvk {
   
   
   bool D3D11Device::CheckFeatureLevelSupport(
+    const Rc<DxvkInstance>& instance,
     const Rc<DxvkAdapter>&  adapter,
           D3D_FEATURE_LEVEL featureLevel) {
-    if (featureLevel > GetMaxFeatureLevel(adapter))
+    if (featureLevel > GetMaxFeatureLevel(instance))
       return false;
     
     // Check whether all features are supported
@@ -1986,11 +1989,11 @@ namespace dxvk {
 
     auto shader = commonShader.GetShader();
 
-    if (shader->hasCapability(spv::CapabilityStencilExportEXT)
+    if (shader->flags().test(DxvkShaderFlag::ExportsStencilRef)
      && !m_dxvkDevice->extensions().extShaderStencilExport)
       return E_INVALIDARG;
 
-    if (shader->hasCapability(spv::CapabilityShaderViewportIndexLayerEXT)
+    if (shader->flags().test(DxvkShaderFlag::ExportsViewportIndexLayerFromVertexStage)
      && !m_dxvkDevice->extensions().extShaderViewportIndexLayer)
       return E_INVALIDARG;
 
@@ -2302,7 +2305,7 @@ namespace dxvk {
   }
 
 
-  D3D_FEATURE_LEVEL D3D11Device::GetMaxFeatureLevel(const Rc<DxvkAdapter>& Adapter) {
+  D3D_FEATURE_LEVEL D3D11Device::GetMaxFeatureLevel(const Rc<DxvkInstance>& pInstance) {
     static const std::array<std::pair<std::string, D3D_FEATURE_LEVEL>, 9> s_featureLevels = {{
       { "12_1", D3D_FEATURE_LEVEL_12_1 },
       { "12_0", D3D_FEATURE_LEVEL_12_0 },
@@ -2315,7 +2318,7 @@ namespace dxvk {
       { "9_1",  D3D_FEATURE_LEVEL_9_1  },
     }};
     
-    const std::string maxLevel = Adapter->instance()->config()
+    const std::string maxLevel = pInstance->config()
       .getOption<std::string>("d3d11.maxFeatureLevel");
     
     auto entry = std::find_if(s_featureLevels.begin(), s_featureLevels.end(),
@@ -2460,19 +2463,19 @@ namespace dxvk {
   
   D3D11DXGIDevice::D3D11DXGIDevice(
           IDXGIAdapter*       pAdapter,
-          DxvkAdapter*        pDxvkAdapter,
+    const Rc<DxvkInstance>&   pDxvkInstance,
+    const Rc<DxvkAdapter>&    pDxvkAdapter,
           D3D_FEATURE_LEVEL   FeatureLevel,
           UINT                FeatureFlags)
   : m_dxgiAdapter   (pAdapter),
+    m_dxvkInstance  (pDxvkInstance),
     m_dxvkAdapter   (pDxvkAdapter),
     m_dxvkDevice    (CreateDevice(FeatureLevel)),
     m_d3d11Device   (this, FeatureLevel, FeatureFlags),
     m_d3d11DeviceExt(this, &m_d3d11Device),
     m_d3d11Interop  (this, &m_d3d11Device),
-    m_wineFactory   (this, &m_d3d11Device),
-    m_frameLatencyCap(m_d3d11Device.GetOptions()->maxFrameLatency) {
-    for (uint32_t i = 0; i < m_frameEvents.size(); i++)
-      m_frameEvents[i] = new sync::Signal(true);
+    m_wineFactory   (this, &m_d3d11Device) {
+
   }
   
   
@@ -2707,7 +2710,7 @@ namespace dxvk {
     if (MaxLatency == 0)
       MaxLatency = DefaultFrameLatency;
     
-    if (MaxLatency > m_frameEvents.size())
+    if (MaxLatency > DXGI_MAX_SWAP_CHAIN_BUFFERS)
       return DXGI_ERROR_INVALID_CALL;
     
     m_frameLatency = MaxLatency;
@@ -2785,22 +2788,6 @@ namespace dxvk {
   }
   
   
-  Rc<sync::Signal> STDMETHODCALLTYPE D3D11DXGIDevice::GetFrameSyncEvent(UINT BufferCount) {
-    uint32_t frameLatency = m_frameLatency;
-    
-    if (BufferCount != 0
-     && BufferCount <= frameLatency)
-      frameLatency = BufferCount;
-
-    if (m_frameLatencyCap != 0
-     && m_frameLatencyCap <= frameLatency)
-      frameLatency = m_frameLatencyCap;
-
-    uint32_t frameId = m_frameId++ % frameLatency;
-    return m_frameEvents[frameId];
-  }
-
-
   Rc<DxvkDevice> STDMETHODCALLTYPE D3D11DXGIDevice::GetDXVKDevice() {
     return m_dxvkDevice;
   }
@@ -2813,7 +2800,7 @@ namespace dxvk {
     uint32_t flLo = (uint32_t(FeatureLevel) >> 8) & 0x7;
 
     std::string apiName = str::format("D3D11 FL ", flHi, "_", flLo);
-    return m_dxvkAdapter->createDevice(apiName, deviceFeatures);
+    return m_dxvkAdapter->createDevice(m_dxvkInstance, apiName, deviceFeatures);
   }
 
 }

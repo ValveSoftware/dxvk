@@ -182,9 +182,6 @@ namespace dxvk {
   
   
   void D3D11Query::Begin(DxvkContext* ctx) {
-    if (unlikely(m_state == D3D11_VK_QUERY_BEGUN))
-      return;
-    
     switch (m_desc.Query) {
       case D3D11_QUERY_EVENT:
       case D3D11_QUERY_TIMESTAMP:
@@ -197,8 +194,6 @@ namespace dxvk {
       default:
         ctx->beginQuery(m_query[0]);
     }
-
-    m_state = D3D11_VK_QUERY_BEGUN;
   }
   
   
@@ -214,22 +209,43 @@ namespace dxvk {
         break;
       
       default:
-        if (unlikely(m_state != D3D11_VK_QUERY_BEGUN))
-          return;
-        
         ctx->endQuery(m_query[0]);
     }
 
     if (unlikely(m_predicate != nullptr))
       ctx->writePredicate(DxvkBufferSlice(m_predicate), m_query[0]);
-    
-    m_state = D3D11_VK_QUERY_ENDED;
+
+    m_resetCtr.fetch_sub(1, std::memory_order_release);
   }
   
   
+  bool STDMETHODCALLTYPE D3D11Query::DoBegin() {
+    if (!IsScoped() || m_state == D3D11_VK_QUERY_BEGUN)
+      return false;
+
+    m_state = D3D11_VK_QUERY_BEGUN;
+    return true;
+  }
+
+  bool STDMETHODCALLTYPE D3D11Query::DoEnd() {
+    if (IsScoped() && m_state != D3D11_VK_QUERY_BEGUN)
+      return false;
+
+    m_state = D3D11_VK_QUERY_ENDED;
+    m_resetCtr.fetch_add(1, std::memory_order_acquire);
+    return true;
+  }
+
+
   HRESULT STDMETHODCALLTYPE D3D11Query::GetData(
           void*                             pData,
           UINT                              GetDataFlags) {
+    if (m_state != D3D11_VK_QUERY_ENDED)
+      return DXGI_ERROR_INVALID_CALL;
+
+    if (m_resetCtr != 0u)
+      return S_FALSE;
+
     if (m_desc.Query == D3D11_QUERY_EVENT) {
       DxvkGpuEventStatus status = m_event[0]->test();
 
@@ -325,9 +341,6 @@ namespace dxvk {
     std::lock_guard<sync::Spinlock> lock(m_predicateLock);
 
     if (unlikely(m_desc.Query != D3D11_QUERY_OCCLUSION_PREDICATE))
-      return DxvkBufferSlice();
-
-    if (unlikely(m_state != D3D11_VK_QUERY_ENDED))
       return DxvkBufferSlice();
 
     if (unlikely(m_predicate != nullptr)) {

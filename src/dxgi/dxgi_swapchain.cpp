@@ -258,9 +258,6 @@ namespace dxvk {
     if (SyncInterval > 4)
       return DXGI_ERROR_INVALID_CALL;
 
-    if (PresentFlags & DXGI_PRESENT_TEST)
-      return S_OK;
-    
     std::lock_guard<std::recursive_mutex> lockWin(m_lockWindow);
     std::lock_guard<std::mutex> lockBuf(m_lockBuffer);
 
@@ -280,6 +277,11 @@ namespace dxvk {
           DXGI_FORMAT NewFormat,
           UINT        SwapChainFlags) {
     if (!IsWindow(m_window))
+      return DXGI_ERROR_INVALID_CALL;
+
+    constexpr UINT PreserveFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+    if ((m_desc.Flags & PreserveFlags) != (SwapChainFlags & PreserveFlags))
       return DXGI_ERROR_INVALID_CALL;
     
     std::lock_guard<std::mutex> lock(m_lockBuffer);
@@ -406,8 +408,10 @@ namespace dxvk {
   
   
   HANDLE STDMETHODCALLTYPE DxgiSwapChain::GetFrameLatencyWaitableObject() {
-    Logger::err("DxgiSwapChain::GetFrameLatencyWaitableObject: Not implemented");
-    return nullptr;
+    if (!(m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT))
+      return nullptr;
+
+    return m_presenter->GetFrameLatencyEvent();
   }
 
 
@@ -421,8 +425,12 @@ namespace dxvk {
   
   HRESULT STDMETHODCALLTYPE DxgiSwapChain::GetMaximumFrameLatency(
           UINT*                     pMaxLatency) {
-    Logger::err("DxgiSwapChain::GetMaximumFrameLatency: Not implemented");
-    return DXGI_ERROR_INVALID_CALL;
+    if (!(m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT))
+      return DXGI_ERROR_INVALID_CALL;
+
+    std::lock_guard<std::recursive_mutex> lock(m_lockWindow);
+    *pMaxLatency = m_presenter->GetFrameLatency();
+    return S_OK;
   }
 
   
@@ -446,8 +454,11 @@ namespace dxvk {
   
   HRESULT STDMETHODCALLTYPE DxgiSwapChain::SetMaximumFrameLatency(
           UINT                      MaxLatency) {
-    Logger::err("DxgiSwapChain::SetMaximumFrameLatency: Not implemented");
-    return DXGI_ERROR_INVALID_CALL;
+    if (!(m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT))
+      return DXGI_ERROR_INVALID_CALL;
+
+    std::lock_guard<std::recursive_mutex> lock(m_lockWindow);
+    return m_presenter->SetFrameLatency(MaxLatency);
   }
 
 

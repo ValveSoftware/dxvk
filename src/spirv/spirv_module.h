@@ -139,6 +139,12 @@ namespace dxvk {
             int32_t                 y,
             int32_t                 z,
             int32_t                 w);
+
+    uint32_t constvec4b32(
+            bool                    x,
+            bool                    y,
+            bool                    z,
+            bool                    w);
     
     uint32_t constvec4u32(
             uint32_t                x,
@@ -160,6 +166,14 @@ namespace dxvk {
             float                   y,
             float                   z,
             float                   w);
+
+    uint32_t constfReplicant(
+            float                   replicant,
+            uint32_t                count);
+
+    uint32_t constbReplicant(
+            bool                    replicant,
+            uint32_t                count);
     
     uint32_t constComposite(
             uint32_t                typeId,
@@ -703,6 +717,14 @@ namespace dxvk {
             uint32_t                resultType,
             uint32_t                vector,
             uint32_t                matrix);
+
+    uint32_t opTranspose(
+            uint32_t                resultType,
+            uint32_t                matrix);
+
+    uint32_t opInverse(
+            uint32_t                resultType,
+            uint32_t                matrix);
     
     uint32_t opFFma(
             uint32_t                resultType,
@@ -886,8 +908,25 @@ namespace dxvk {
     uint32_t opInverseSqrt(
             uint32_t                resultType,
             uint32_t                operand);
+
+    uint32_t opNormalize(
+            uint32_t                resultType,
+            uint32_t                operand);
+
+    uint32_t opReflect(
+            uint32_t                resultType,
+            uint32_t                incident,
+            uint32_t                normal);
+
+    uint32_t opLength(
+            uint32_t                resultType,
+            uint32_t                operand);
     
     uint32_t opExp2(
+            uint32_t                resultType,
+            uint32_t                operand);
+
+    uint32_t opExp(
             uint32_t                resultType,
             uint32_t                operand);
     
@@ -941,6 +980,10 @@ namespace dxvk {
             uint32_t                condition,
             uint32_t                operand1,
             uint32_t                operand2);
+
+    uint32_t opIsNan(
+            uint32_t                resultType,
+            uint32_t                operand);
     
     uint32_t opFunctionCall(
             uint32_t                resultType,
