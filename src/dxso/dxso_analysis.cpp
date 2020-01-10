@@ -10,6 +10,14 @@ namespace dxvk {
     const DxsoInstructionContext& ctx) {
     DxsoOpcode opcode = ctx.instruction.opcode;
 
+    // Co-issued CNDs are issued before their parents,
+    // except when the parent is a CND.
+    if (opcode == DxsoOpcode::Cnd &&
+        m_parentOpcode != DxsoOpcode::Cnd &&
+        ctx.instruction.coissue) {
+      m_analysis->coissues.push_back(ctx);
+    }
+
     if (opcode == DxsoOpcode::TexKill)
       m_analysis->usesKill = true;
 
@@ -38,6 +46,8 @@ namespace dxvk {
      //|| opcode == DxsoOpcode::TexLdl
      || opcode == DxsoOpcode::TexDepth)
       m_analysis->usesDerivatives = true;
+
+    m_parentOpcode = ctx.instruction.opcode;
   }
 
   void DxsoAnalyzer::finalize(size_t tokenCount) {

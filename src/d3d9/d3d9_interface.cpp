@@ -75,10 +75,23 @@ namespace dxvk {
 
 
   HRESULT STDMETHODCALLTYPE D3D9InterfaceEx::GetAdapterDisplayMode(UINT Adapter, D3DDISPLAYMODE* pMode) {
-    constexpr D3DFORMAT format = D3DFMT_X8R8G8B8;
-    const UINT mode = GetAdapterModeCount(Adapter, format) - 1;
+    if (auto* adapter = GetAdapter(Adapter)) {
+      D3DDISPLAYMODEEX modeEx = { };
+      modeEx.Size = sizeof(D3DDISPLAYMODEEX);
+      HRESULT hr = adapter->GetAdapterDisplayModeEx(&modeEx, nullptr);
 
-    return this->EnumAdapterModes(Adapter, format, mode, pMode);
+      if (FAILED(hr))
+        return hr;
+
+      pMode->Width       = modeEx.Width;
+      pMode->Height      = modeEx.Height;
+      pMode->RefreshRate = modeEx.RefreshRate;
+      pMode->Format      = modeEx.Format;
+
+      return D3D_OK;
+    }
+
+    return D3DERR_INVALIDCALL;
   }
 
 
@@ -212,7 +225,8 @@ namespace dxvk {
     filter.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
     filter.Size             = sizeof(D3DDISPLAYMODEFILTER);
 
-    D3DDISPLAYMODEEX modeEx;
+    D3DDISPLAYMODEEX modeEx = { };
+    modeEx.Size = sizeof(D3DDISPLAYMODEEX);
     HRESULT hr = this->EnumAdapterModesEx(Adapter, &filter, Mode, &modeEx);
 
     if (FAILED(hr))
@@ -287,15 +301,20 @@ namespace dxvk {
     try {
       auto dxvkDevice = dxvkAdapter->createDevice(m_instance, clientApi, D3D9DeviceEx::GetDeviceFeatures(dxvkAdapter));
 
-      *ppReturnedDeviceInterface = ref(new D3D9DeviceEx(
+      auto* device = new D3D9DeviceEx(
         this,
         adapter,
         DeviceType,
         hFocusWindow,
         BehaviorFlags,
-        pPresentationParameters,
-        pFullscreenDisplayMode,
-        dxvkDevice));
+        dxvkDevice);
+
+      HRESULT hr = device->InitialReset(pPresentationParameters, pFullscreenDisplayMode);
+
+      if (FAILED(hr))
+        return hr;
+
+      *ppReturnedDeviceInterface = ref(device);
     }
     catch (const DxvkError& e) {
       Logger::err(e.message());

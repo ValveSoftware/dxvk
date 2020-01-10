@@ -175,10 +175,14 @@ namespace dxvk {
   bool DxsoDecodeContext::decodeInstruction(DxsoCodeIter& iter) {
     uint32_t token = iter.read();
 
+    m_ctx.instructionIdx++;
+
     m_ctx.instruction.opcode = static_cast<DxsoOpcode>(
       token & 0x0000ffff);
 
     m_ctx.instruction.predicated = token & (1 << 28);
+
+    m_ctx.instruction.coissue    = token & 0x40000000;
 
     m_ctx.instruction.specificData.uint32 =
       (token & 0x00ff0000) >> 16;

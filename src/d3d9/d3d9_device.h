@@ -48,6 +48,7 @@ namespace dxvk {
     DirtyDepthStencilState,
     DirtyBlendState,
     DirtyRasterizerState,
+    DirtyDepthBias,
     DirtyAlphaTestState,
     DirtyInputLayout,
     DirtyViewportScissor,
@@ -110,8 +111,6 @@ namespace dxvk {
             D3DDEVTYPE             DeviceType,
             HWND                   hFocusWindow,
             DWORD                  BehaviorFlags,
-            D3DPRESENT_PARAMETERS* pPresentationParameters,
-            D3DDISPLAYMODEEX*      pDisplayMode,
             Rc<DxvkDevice>         dxvkDevice);
 
     ~D3D9DeviceEx();
@@ -755,6 +754,15 @@ namespace dxvk {
       return m_amdATOC || (m_nvATOC && alphaTest);
     }
 
+    inline bool IsDepthBiasEnabled() {
+      const auto& rs = m_state.renderStates;
+
+      float depthBias            = bit::cast<float>(rs[D3DRS_DEPTHBIAS]);
+      float slopeScaledDepthBias = bit::cast<float>(rs[D3DRS_SLOPESCALEDEPTHBIAS]);
+
+      return depthBias != 0.0f || slopeScaledDepthBias != 0.0f;
+    }
+
     inline bool IsAlphaTestEnabled() {
       return m_state.renderStates[D3DRS_ALPHATESTENABLE] && !IsAlphaToCoverageEnabled();
     }
@@ -774,6 +782,8 @@ namespace dxvk {
     void BindDepthStencilRefrence();
 
     void BindRasterizerState();
+
+    void BindDepthBias();
 
     void BindAlphaTestState();
 
@@ -853,9 +863,9 @@ namespace dxvk {
       if (IsExtended())
         return true;
 
-      m_availableMemory += delta;
+      int64_t availableMemory = m_availableMemory.fetch_add(delta);
 
-      return !m_d3d9Options.memoryTrackTest || m_availableMemory > 0;
+      return !m_d3d9Options.memoryTrackTest || availableMemory >= delta;
     }
 
     void ResolveZ();
@@ -1014,6 +1024,8 @@ namespace dxvk {
     bool                            m_amdATOC         = false;
     bool                            m_nvATOC          = false;
     bool                            m_ffZTest         = false;
+
+    float                           m_depthBiasScale  = 0.0f;
 
     D3D9ConstantLayout              m_vsLayout;
     D3D9ConstantLayout              m_psLayout;

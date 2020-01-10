@@ -24,7 +24,8 @@ namespace dxvk {
     : m_moduleInfo ( moduleInfo )
     , m_programInfo( programInfo )
     , m_analysis   ( &analysis )
-    , m_layout     ( &layout ) {
+    , m_layout     ( &layout )
+    , m_module     ( spvVersion(1, 3) ) {
     // Declare an entry point ID. We'll need it during the
     // initialization phase where the execution mode is set.
     m_entryPointId = m_module.allocateId();
@@ -73,8 +74,18 @@ namespace dxvk {
 
 
   void DxsoCompiler::processInstruction(
-    const DxsoInstructionContext& ctx) {
+    const DxsoInstructionContext& ctx,
+          uint32_t                currentCoissueIdx) {
     const DxsoOpcode opcode = ctx.instruction.opcode;
+
+    for (const auto& coissue : m_analysis->coissues) {
+      if (coissue.instructionIdx == ctx.instructionIdx &&
+          coissue.instructionIdx != currentCoissueIdx)
+        return;
+
+      if (coissue.instructionIdx == ctx.instructionIdx + 1)
+        processInstruction(coissue, coissue.instructionIdx);
+    }
 
     switch (opcode) {
     case DxsoOpcode::Nop:
@@ -427,14 +438,16 @@ namespace dxvk {
     m_ps.functionId = m_module.allocateId();
     m_module.setDebugName(m_ps.functionId, "ps_main");
 
-    if (m_programInfo.majorVersion() < 2) {
+    if (m_programInfo.majorVersion() < 2 || m_moduleInfo.options.forceSamplerTypeSpecConstants) {
       m_ps.samplerTypeSpec = m_module.specConst32(m_module.defIntType(32, 0), 0);
       m_module.decorateSpecId(m_ps.samplerTypeSpec, getSpecId(D3D9SpecConstantId::SamplerType));
       m_module.setDebugName(m_ps.samplerTypeSpec, "s_sampler_types");
 
-      m_ps.projectionSpec = m_module.specConst32(m_module.defIntType(32, 0), 0);
-      m_module.decorateSpecId(m_ps.projectionSpec, getSpecId(D3D9SpecConstantId::ProjectionType));
-      m_module.setDebugName(m_ps.projectionSpec, "s_projections");
+      if (m_programInfo.majorVersion() < 2) {
+        m_ps.projectionSpec = m_module.specConst32(m_module.defIntType(32, 0), 0);
+        m_module.decorateSpecId(m_ps.projectionSpec, getSpecId(D3D9SpecConstantId::ProjectionType));
+        m_module.setDebugName(m_ps.projectionSpec, "s_projections");
+      }
     }
 
     this->setupRenderStateInfo();
@@ -712,7 +725,7 @@ namespace dxvk {
       m_resourceSlots.push_back(resource);
     };
 
-    if (m_programInfo.majorVersion() >= 2) {
+    if (m_programInfo.majorVersion() >= 2 && !m_moduleInfo.options.forceSamplerTypeSpecConstants) {
       DxsoSamplerType samplerType = 
         SamplerTypeFromTextureType(type);
 
@@ -2520,7 +2533,10 @@ void DxsoCompiler::emitControlFlowGenericLoop(
         else
           eyeRay = emitRegisterLoad(ctx.src[1], vec3Mask).id;
 
+        eyeRay = m_module.opNormalize(vec3Type, eyeRay);
+        normal = m_module.opNormalize(vec3Type, normal);
         uint32_t reflection = m_module.opReflect(vec3Type, eyeRay, normal);
+        reflection = m_module.opFNegate(vec3Type, reflection);
 
         for (uint32_t i = 0; i < 3; i++)
           indices[i] = m_module.opCompositeExtract(m_module.defFloatType(32), reflection, 1, &i);
@@ -2758,7 +2774,7 @@ void DxsoCompiler::emitControlFlowGenericLoop(
         SampleImage(texcoordVar, sampler.color[samplerType], false, samplerType);
     };
 
-    if (m_programInfo.majorVersion() >= 2) {
+    if (m_programInfo.majorVersion() >= 2 && !m_moduleInfo.options.forceSamplerTypeSpecConstants) {
       DxsoSamplerType samplerType =
         SamplerTypeFromTextureType(sampler.type);
 

@@ -10,6 +10,8 @@ namespace dxvk {
 
     bool usesDerivatives = false;
     bool usesKill        = false;
+
+    std::vector<DxsoInstructionContext> coissues;
   };
 
   class DxsoAnalyzer {
@@ -31,6 +33,8 @@ namespace dxvk {
   private:
 
     DxsoAnalysisInfo* m_analysis = nullptr;
+
+    DxsoOpcode m_parentOpcode;
 
   };
 

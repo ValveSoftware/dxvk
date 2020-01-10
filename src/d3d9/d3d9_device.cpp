@@ -37,8 +37,6 @@ namespace dxvk {
           D3DDEVTYPE             DeviceType,
           HWND                   hFocusWindow,
           DWORD                  BehaviorFlags,
-          D3DPRESENT_PARAMETERS* pPresentationParameters,
-          D3DDISPLAYMODEEX*      pDisplayMode,
           Rc<DxvkDevice>         dxvkDevice)
     : m_adapter        ( pAdapter )
     , m_dxvkDevice     ( dxvkDevice )
@@ -81,10 +79,6 @@ namespace dxvk {
       SetupFPU();
 
     m_availableMemory = DetermineInitialTextureMemory();
-
-    HRESULT hr = InitialReset(pPresentationParameters, pDisplayMode);
-    if (FAILED(hr))
-      throw DxvkError("D3D9DeviceEx: Initial device reset failed.");
   }
 
 
@@ -1132,9 +1126,42 @@ namespace dxvk {
       return D3DERR_INVALIDCALL;
 
     D3D9Surface* rt = static_cast<D3D9Surface*>(pRenderTarget);
+    const auto* desc = rt != nullptr
+      ? rt->GetCommonTexture()->Desc()
+      : nullptr;
 
-    if (unlikely(rt && !(rt->GetCommonTexture()->Desc()->Usage & D3DUSAGE_RENDERTARGET)))
+    if (unlikely(desc && !(desc->Usage & D3DUSAGE_RENDERTARGET)))
       return D3DERR_INVALIDCALL;
+
+    if (RenderTargetIndex == 0) {
+      auto rtSize = rt->GetSurfaceExtent();
+
+      D3DVIEWPORT9 viewport;
+      viewport.X       = 0;
+      viewport.Y       = 0;
+      viewport.Width   = rtSize.width;
+      viewport.Height  = rtSize.height;
+      viewport.MinZ    = 0.0f;
+      viewport.MaxZ    = 1.0f;
+
+      RECT scissorRect;
+      scissorRect.left    = 0;
+      scissorRect.top     = 0;
+      scissorRect.right   = rtSize.width;
+      scissorRect.bottom  = rtSize.height;
+
+      if (m_state.viewport != viewport) {
+        m_flags.set(D3D9DeviceFlag::DirtyFFViewport);
+        m_flags.set(D3D9DeviceFlag::DirtyPointScale);
+        m_flags.set(D3D9DeviceFlag::DirtyViewportScissor);
+        m_state.viewport = viewport;
+      }
+
+      if (m_state.scissorRect != scissorRect) {
+        m_flags.set(D3D9DeviceFlag::DirtyViewportScissor);
+        m_state.scissorRect = scissorRect;
+      }
+    }
 
     if (m_state.renderTargets[RenderTargetIndex] == rt)
       return D3D_OK;
@@ -1158,8 +1185,6 @@ namespace dxvk {
       m_flags.set(D3D9DeviceFlag::DirtyBlendState);
 
     if (RenderTargetIndex == 0) {
-      const auto* desc = m_state.renderTargets[0]->GetCommonTexture()->Desc();
-
       bool validSampleMask = desc->MultiSample > D3DMULTISAMPLE_NONMASKABLE;
 
       if (validSampleMask != m_flags.test(D3D9DeviceFlag::ValidSampleMask)) {
@@ -1169,26 +1194,6 @@ namespace dxvk {
 
         m_flags.set(D3D9DeviceFlag::DirtyMultiSampleState);
       }
-
-      D3DVIEWPORT9 viewport;
-      viewport.X       = 0;
-      viewport.Y       = 0;
-      viewport.Width   = desc->Width;
-      viewport.Height  = desc->Height;
-      viewport.MinZ    = 0.0f;
-      viewport.MaxZ    = 1.0f;
-      m_state.viewport = viewport;
-
-      RECT scissorRect;
-      scissorRect.left    = 0;
-      scissorRect.top     = 0;
-      scissorRect.right   = desc->Width;
-      scissorRect.bottom  = desc->Height;
-      m_state.scissorRect = scissorRect;
-
-      m_flags.set(D3D9DeviceFlag::DirtyViewportScissor);
-      m_flags.set(D3D9DeviceFlag::DirtyFFViewport);
-      m_flags.set(D3D9DeviceFlag::DirtyPointScale);
     }
 
     return D3D_OK;
@@ -1227,6 +1232,14 @@ namespace dxvk {
 
     FlushImplicit(FALSE);
     m_flags.set(D3D9DeviceFlag::DirtyFramebuffer);
+
+    if (ds != nullptr) {
+      float rValue = GetDepthBufferRValue(ds->GetCommonTexture()->GetFormatMapping().FormatColor);
+      if (m_depthBiasScale != rValue) {
+        m_depthBiasScale = rValue;
+        m_flags.set(D3D9DeviceFlag::DirtyDepthBias);
+      }
+    }
 
     m_state.depthStencil = ds;
 
@@ -1302,9 +1315,6 @@ namespace dxvk {
     }
 
     // Here, Count of 0 will denote whether or not to care about user rects.
-
-    auto* rt0Desc = m_state.renderTargets[0]->GetCommonTexture()->Desc();
-
     VkClearValue clearValueDepth;
     clearValueDepth.depthStencil.depth   = Z;
     clearValueDepth.depthStencil.stencil = Stencil;
@@ -1384,8 +1394,10 @@ namespace dxvk {
     // This works around that.
     uint32_t alignment = m_d3d9Options.lenientClear ? 8 : 1;
 
-    bool extentMatches = align(extent.width,  alignment) == align(rt0Desc->Width,  alignment)
-                      && align(extent.height, alignment) == align(rt0Desc->Height, alignment);
+    auto rtSize = m_state.renderTargets[0]->GetSurfaceExtent();
+
+    bool extentMatches = align(extent.width,  alignment) == align(rtSize.width,  alignment)
+                      && align(extent.height, alignment) == align(rtSize.height, alignment);
 
     bool rtSizeMatchesClearSize = offset.x == 0 && offset.y == 0 && extentMatches;
 
@@ -1457,24 +1469,16 @@ namespace dxvk {
   HRESULT STDMETHODCALLTYPE D3D9DeviceEx::SetViewport(const D3DVIEWPORT9* pViewport) {
     D3D9DeviceLock lock = LockDevice();
 
-    D3DVIEWPORT9 viewport;
-    if (pViewport == nullptr) {
-      auto rtv = m_state.renderTargets[0]->GetRenderTargetView(false);
-
-      viewport.X      = 0;
-      viewport.Y      = 0;
-      viewport.Width  = rtv->image()->info().extent.width;
-      viewport.Height = rtv->image()->info().extent.height;
-      viewport.MinZ   = 0.0f;
-      viewport.MaxZ   = 1.0f;
-    }
-    else
-      viewport = *pViewport;
+    if (unlikely(pViewport == nullptr))
+      return D3DERR_INVALIDCALL;
 
     if (unlikely(ShouldRecord()))
-      return m_recorder->SetViewport(&viewport);
+      return m_recorder->SetViewport(pViewport);
 
-    m_state.viewport = viewport;
+    if (m_state.viewport == *pViewport)
+      return D3D_OK;
+
+    m_state.viewport = *pViewport;
 
     m_flags.set(D3D9DeviceFlag::DirtyViewportScissor);
     m_flags.set(D3D9DeviceFlag::DirtyFFViewport);
@@ -1663,6 +1667,8 @@ namespace dxvk {
     bool changed = states[State] != Value;
 
     if (likely(changed)) {
+      const bool oldDepthBiasEnabled = IsDepthBiasEnabled();
+
       const bool oldATOC = IsAlphaToCoverageEnabled();
       const bool oldNVDB = states[D3DRS_ADAPTIVETESS_X] == uint32_t(D3D9Format::NVDB);
       const bool oldAlphaTest = IsAlphaTestEnabled();
@@ -1813,7 +1819,17 @@ namespace dxvk {
           break;
 
         case D3DRS_DEPTHBIAS:
-        case D3DRS_SLOPESCALEDEPTHBIAS:
+        case D3DRS_SLOPESCALEDEPTHBIAS: {
+          const bool depthBiasEnabled = IsDepthBiasEnabled();
+
+          if (depthBiasEnabled != oldDepthBiasEnabled)
+            m_flags.set(D3D9DeviceFlag::DirtyRasterizerState);
+
+          if (depthBiasEnabled)
+            m_flags.set(D3D9DeviceFlag::DirtyDepthBias);
+
+          break;
+        }
         case D3DRS_CULLMODE:
         case D3DRS_FILLMODE:
           m_flags.set(D3D9DeviceFlag::DirtyRasterizerState);
@@ -2195,6 +2211,9 @@ namespace dxvk {
 
     if (unlikely(ShouldRecord()))
       return m_recorder->SetScissorRect(pRect);
+
+    if (m_state.scissorRect == *pRect)
+      return D3D_OK;
 
     m_state.scissorRect = *pRect;
 
@@ -4103,7 +4122,7 @@ namespace dxvk {
     // D3D9 does not do region tracking for READONLY locks
     // But lets also account for whether we get readback from ProcessVertices
     const bool quickRead   = ((Flags & D3DLOCK_READONLY) && !pResource->GetReadLocked());
-    const bool boundsCheck = IsPoolManaged(desc.Pool) && !quickRead;
+    const bool boundsCheck = desc.Pool != D3DPOOL_DEFAULT && !quickRead;
 
     if (boundsCheck) {
       // We can only respect this for these cases -- otherwise R/W OOB still get copied on native
@@ -5065,21 +5084,31 @@ namespace dxvk {
   void D3D9DeviceEx::BindRasterizerState() {
     m_flags.clr(D3D9DeviceFlag::DirtyRasterizerState);
 
-    // TODO: Can we get a specific non-magic number in Vulkan for this based on device/adapter?
-    constexpr float DepthBiasFactor = float(1 << 23);
-
     auto& rs = m_state.renderStates;
-
-    float depthBias            = bit::cast<float>(rs[D3DRS_DEPTHBIAS]) * DepthBiasFactor;
-    float slopeScaledDepthBias = bit::cast<float>(rs[D3DRS_SLOPESCALEDEPTHBIAS]);
 
     DxvkRasterizerState state;
     state.cullMode        = DecodeCullMode(D3DCULL(rs[D3DRS_CULLMODE]));
-    state.depthBiasEnable = depthBias != 0.0f || slopeScaledDepthBias != 0.0f;
+    state.depthBiasEnable = IsDepthBiasEnabled();
     state.depthClipEnable = true;
     state.frontFace       = VK_FRONT_FACE_CLOCKWISE;
     state.polygonMode     = DecodeFillMode(D3DFILLMODE(rs[D3DRS_FILLMODE]));
     state.sampleCount     = 0;
+
+    EmitCs([
+      cState  = state
+    ](DxvkContext* ctx) {
+      ctx->setRasterizerState(cState);
+    });
+  }
+
+
+  void D3D9DeviceEx::BindDepthBias() {
+    m_flags.clr(D3D9DeviceFlag::DirtyDepthBias);
+
+    auto& rs = m_state.renderStates;
+
+    float depthBias            = bit::cast<float>(rs[D3DRS_DEPTHBIAS]) * m_depthBiasScale;
+    float slopeScaledDepthBias = bit::cast<float>(rs[D3DRS_SLOPESCALEDEPTHBIAS]);
 
     DxvkDepthBias biases;
     biases.depthBiasConstant = depthBias;
@@ -5087,10 +5116,8 @@ namespace dxvk {
     biases.depthBiasClamp    = 0.0f;
 
     EmitCs([
-      cState  = state,
       cBiases = biases
     ](DxvkContext* ctx) {
-      ctx->setRasterizerState(cState);
       ctx->setDepthBias(cBiases);
     });
   }
@@ -5348,6 +5375,9 @@ namespace dxvk {
 
     if (m_flags.test(D3D9DeviceFlag::DirtyRasterizerState))
       BindRasterizerState();
+
+    if (m_flags.test(D3D9DeviceFlag::DirtyDepthBias))
+      BindDepthBias();
     
     if (m_flags.test(D3D9DeviceFlag::DirtyMultiSampleState))
       BindMultiSampleState();
@@ -5405,7 +5435,7 @@ namespace dxvk {
       UploadConstants<DxsoProgramTypes::PixelShader>();
 
       if (GetCommonShader(m_state.pixelShader)->GetInfo().majorVersion() >= 2)
-        UpdateSamplerTypes(0u, 0u);
+        UpdateSamplerTypes(m_d3d9Options.forceSamplerTypeSpecConstants ? m_samplerTypeBitfield : 0u, 0u);
       else
         UpdateSamplerTypes(m_samplerTypeBitfield, m_projectionBitfield); // For implicit samplers...
     }
@@ -6267,6 +6297,7 @@ namespace dxvk {
     rs[D3DRS_DEPTHBIAS]           = bit::cast<DWORD>(0.0f);
     rs[D3DRS_SLOPESCALEDEPTHBIAS] = bit::cast<DWORD>(0.0f);
     BindRasterizerState();
+    BindDepthBias();
 
     rs[D3DRS_SCISSORTESTENABLE]   = FALSE;
 
@@ -6469,10 +6500,16 @@ namespace dxvk {
       if (!IsSupportedBackBufferFormat(
         backBufferFmt,
         pPresentationParameters->Windowed)) {
-        Logger::err("D3D9DeviceEx::ResetSwapChain: Unsupported backbuffer format.");
-        return D3DERR_NOTAVAILABLE;
+        Logger::err(str::format("D3D9DeviceEx::ResetSwapChain: Unsupported backbuffer format: ",
+          EnumerateFormat(pPresentationParameters->BackBufferFormat)));
+        return D3DERR_INVALIDCALL;
       }
     }
+
+    if (auto* implicitSwapchain = GetInternalSwapchain(0))
+      implicitSwapchain->Reset(pPresentationParameters, pFullscreenDisplayMode);
+    else
+      m_swapchains.emplace_back(new D3D9SwapChainEx(this, pPresentationParameters, pFullscreenDisplayMode));
 
     if (pPresentationParameters->EnableAutoDepthStencil) {
       D3D9_COMMON_TEXTURE_DESC desc;
@@ -6496,11 +6533,6 @@ namespace dxvk {
       m_initializer->InitTexture(m_autoDepthStencil->GetCommonTexture());
       SetDepthStencilSurface(m_autoDepthStencil.ptr());
     }
-
-    if (auto* implicitSwapchain = GetInternalSwapchain(0))
-      implicitSwapchain->Reset(pPresentationParameters, pFullscreenDisplayMode);
-    else
-      m_swapchains.emplace_back(new D3D9SwapChainEx(this, pPresentationParameters, pFullscreenDisplayMode));
 
     SetRenderTarget(0, GetInternalSwapchain(0)->GetBackBuffer(0));
 
