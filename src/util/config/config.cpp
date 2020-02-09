@@ -178,6 +178,10 @@ namespace dxvk {
     { R"(\\Entropia\.exe$)", {{
       { "d3d11.invariantPosition",          "True" },
     }} },
+    /* Subnautica                                 */
+    { R"(\\Subnautica\.exe$)", {{
+      { "dxvk.enableOpenVR",                "False" },
+    }} },
 
     /**********************************************/
     /* D3D9 GAMES                                 */
