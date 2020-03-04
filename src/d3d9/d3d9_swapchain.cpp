@@ -89,7 +89,7 @@ namespace dxvk {
           HWND     hDestWindowOverride,
     const RGNDATA* pDirtyRegion,
           DWORD    dwFlags) {
-    auto lock = m_parent->LockDevice();
+    D3D9DeviceLock lock = m_parent->LockDevice();
 
     uint32_t presentInterval = m_presentParams.PresentationInterval;
 
@@ -152,7 +152,7 @@ namespace dxvk {
 
 
   HRESULT STDMETHODCALLTYPE D3D9SwapChainEx::GetFrontBufferData(IDirect3DSurface9* pDestSurface) {
-    auto lock = m_parent->LockDevice();
+    D3D9DeviceLock lock = m_parent->LockDevice();
 
     // This function can do absolutely everything!
     // Copies the front buffer between formats with an implicit resolve.
@@ -171,6 +171,9 @@ namespace dxvk {
 
     D3D9CommonTexture* dstTexInfo = dst->GetCommonTexture();
     D3D9CommonTexture* srcTexInfo = m_backBuffers[m_presentParams.BackBufferCount]->GetCommonTexture();
+
+    if (unlikely(dstTexInfo->Desc()->Pool != D3DPOOL_SYSTEMMEM))
+      return D3DERR_INVALIDCALL;
 
     Rc<DxvkBuffer> dstBuffer = dstTexInfo->GetBuffer(dst->GetSubresource());
     Rc<DxvkImage>  srcImage  = srcTexInfo->GetImage();
@@ -328,12 +331,13 @@ namespace dxvk {
           UINT                iBackBuffer,
           D3DBACKBUFFER_TYPE  Type,
           IDirect3DSurface9** ppBackBuffer) {
-    InitReturnPtr(ppBackBuffer);
+    // Could be doing a device reset...
+    D3D9DeviceLock lock = m_parent->LockDevice();
 
-    if (ppBackBuffer == nullptr)
+    if (unlikely(ppBackBuffer == nullptr))
       return D3DERR_INVALIDCALL;
 
-    if (iBackBuffer >= m_presentParams.BackBufferCount) {
+    if (unlikely(iBackBuffer >= m_presentParams.BackBufferCount)) {
       Logger::err(str::format("D3D9: GetBackBuffer: Invalid back buffer index: ", iBackBuffer));
       return D3DERR_INVALIDCALL;
     }
@@ -453,14 +457,12 @@ namespace dxvk {
   void    D3D9SwapChainEx::Reset(
           D3DPRESENT_PARAMETERS* pPresentParams,
           D3DDISPLAYMODEEX*      pFullscreenDisplayMode) {
-    auto lock = m_parent->LockDevice();
+    D3D9DeviceLock lock = m_parent->LockDevice();
 
     this->SynchronizePresent();
     this->NormalizePresentParameters(pPresentParams);
 
     m_dirty    |= m_presentParams.BackBufferFormat   != pPresentParams->BackBufferFormat
-               || m_presentParams.BackBufferWidth    != pPresentParams->BackBufferWidth
-               || m_presentParams.BackBufferHeight   != pPresentParams->BackBufferHeight
                || m_presentParams.BackBufferCount    != pPresentParams->BackBufferCount;
 
     bool changeFullscreen = m_presentParams.Windowed != pPresentParams->Windowed;
@@ -517,6 +519,8 @@ namespace dxvk {
   void    D3D9SwapChainEx::SetGammaRamp(
             DWORD         Flags,
       const D3DGAMMARAMP* pRamp) {
+    D3D9DeviceLock lock = m_parent->LockDevice();
+
     if (unlikely(pRamp == nullptr))
       return;
 
@@ -547,6 +551,8 @@ namespace dxvk {
 
 
   void    D3D9SwapChainEx::GetGammaRamp(D3DGAMMARAMP* pRamp) {
+    D3D9DeviceLock lock = m_parent->LockDevice();
+
     if (likely(pRamp != nullptr))
       *pRamp = m_ramp;
   }
@@ -556,12 +562,18 @@ namespace dxvk {
     if (hWindow == nullptr)
       hWindow = m_parent->GetWindow();
 
-    if (m_presentParams.hDeviceWindow == hWindow)
+    if (m_presentParams.hDeviceWindow == hWindow) {
       m_presenter = nullptr;
+
+      m_device->waitForSubmission(&m_presentStatus);
+      m_device->waitForIdle();
+    }
   }
 
 
   HRESULT D3D9SwapChainEx::SetDialogBoxMode(bool bEnableDialogs) {
+    D3D9DeviceLock lock = m_parent->LockDevice();
+
     // https://docs.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3ddevice9-setdialogboxmode
     // The MSDN documentation says this will error out under many weird conditions.
     // However it doesn't appear to error at all in any of my tests of these
@@ -691,12 +703,17 @@ namespace dxvk {
       viewport.maxDepth = 1.0f;
 
       VkRect2D scissor;
-      scissor.offset.x      = 0;
-      scissor.offset.y      = 0;
+      scissor.offset.x      = m_dstRect.left;
+      scissor.offset.y      = m_dstRect.top;
       scissor.extent.width  = m_dstRect.right  - m_dstRect.left;
       scissor.extent.height = m_dstRect.bottom - m_dstRect.top;
 
       m_context->setViewports(1, &viewport, &scissor);
+
+      // Use an appropriate texture filter depending on whether
+      // the back buffer size matches the swap image size
+      bool fitSize = m_dstRect.right  - m_dstRect.left == m_srcRect.right  - m_srcRect.left
+                  && m_dstRect.bottom - m_dstRect.top  == m_srcRect.bottom - m_srcRect.top;
 
       D3D9PresentInfo presentInfoConsts;
       presentInfoConsts.scale[0]  = float(m_srcRect.right  - m_srcRect.left) / float(swapImage->info().extent.width);
@@ -716,7 +733,7 @@ namespace dxvk {
       m_context->setInputAssemblyState(m_iaState);
       m_context->setInputLayout(0, nullptr, 0, nullptr);
 
-      m_context->bindResourceSampler(BindingIds::Image, m_samplerFitting);
+      m_context->bindResourceSampler(BindingIds::Image, fitSize ? m_samplerFitting : m_samplerScaling);
       m_context->bindResourceSampler(BindingIds::Gamma, m_gammaSampler);
 
       m_context->bindResourceView(BindingIds::Image, swapImageView, nullptr);
@@ -798,6 +815,12 @@ namespace dxvk {
 
 
   void D3D9SwapChainEx::CreatePresenter() {
+    // Ensure that we can safely destroy the swap chain
+    m_device->waitForSubmission(&m_presentStatus);
+    m_device->waitForIdle();
+
+    m_presentStatus.result = VK_SUCCESS;
+
     DxvkDeviceQueue graphicsQueue = m_device->queues().graphics;
 
     vk::PresenterDevice presenterDevice;
@@ -950,8 +973,11 @@ namespace dxvk {
     m_context->beginRecording(
       m_device->createCommandList());
     
-    m_context->clearColorImage(
-      swapImage, clearColor, subresources);
+    for (uint32_t i = 0; i < m_backBuffers.size(); i++) {
+      m_context->clearColorImage(
+        m_backBuffers[i]->GetCommonTexture()->GetImage(),
+        clearColor, subresources);
+    }
 
     m_device->submitCommandList(
       m_context->endRecording(),

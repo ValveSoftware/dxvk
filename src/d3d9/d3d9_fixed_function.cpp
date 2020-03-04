@@ -418,6 +418,7 @@ namespace dxvk {
   enum class D3D9FFVSMembers {
     WorldViewMatrix,
     NormalMatrix,
+    InverseViewMatrix,
     ProjMatrix,
       
     Texcoord0,
@@ -462,6 +463,7 @@ namespace dxvk {
     struct {
       uint32_t worldview;
       uint32_t normal;
+      uint32_t inverseView;
       uint32_t proj;
 
       uint32_t texcoord[8];
@@ -580,6 +582,8 @@ namespace dxvk {
 
     void emitPsSharedConstants();
 
+    void emitVsClipping(uint32_t vtx);
+
     void alphaTestPS();
 
     bool isVS() { return m_programType == DxsoProgramType::VertexShader; }
@@ -607,6 +611,7 @@ namespace dxvk {
     uint32_t              m_uint32Type;
     uint32_t              m_vec4Type;
     uint32_t              m_vec3Type;
+    uint32_t              m_vec2Type;
     uint32_t              m_mat3Type;
     uint32_t              m_mat4Type;
 
@@ -647,6 +652,7 @@ namespace dxvk {
     m_uint32Type = m_module.defIntType(32, 0);
     m_vec4Type   = m_module.defVectorType(m_floatType, 4);
     m_vec3Type   = m_module.defVectorType(m_floatType, 3);
+    m_vec2Type   = m_module.defVectorType(m_floatType, 2);
     m_mat3Type   = m_module.defMatrixType(m_vec3Type, 3);
     m_mat4Type   = m_module.defMatrixType(m_vec4Type, 4);
 
@@ -1156,6 +1162,9 @@ namespace dxvk {
 
     uint32_t pointSize = m_module.opFClamp(m_floatType, pointInfo.defaultValue, pointInfo.min, pointInfo.max);
     m_module.opStore(m_vs.out.POINTSIZE, pointSize);
+
+    if (m_vsKey.Data.Contents.VertexClipping)
+      emitVsClipping(vtx);
   }
 
 
@@ -1236,6 +1245,7 @@ namespace dxvk {
     std::array<uint32_t, uint32_t(D3D9FFVSMembers::MemberCount)> members = {
       m_mat4Type, // World
       m_mat4Type, // View
+      m_mat4Type, // InverseView
       m_mat4Type, // Proj
 
       m_mat4Type, // Texture0
@@ -1309,6 +1319,7 @@ namespace dxvk {
     uint32_t member = 0;
     m_module.setDebugMemberName(structType, member++, "WorldView");
     m_module.setDebugMemberName(structType, member++, "Normal");
+    m_module.setDebugMemberName(structType, member++, "InverseView");
     m_module.setDebugMemberName(structType, member++, "Projection");
 
     m_module.setDebugMemberName(structType, member++, "TexcoordTransform0");
@@ -1427,6 +1438,7 @@ namespace dxvk {
 
     m_vs.constants.worldview = LoadConstant(m_mat4Type, uint32_t(D3D9FFVSMembers::WorldViewMatrix));
     m_vs.constants.normal    = LoadConstant(m_mat4Type, uint32_t(D3D9FFVSMembers::NormalMatrix));
+    m_vs.constants.inverseView = LoadConstant(m_mat4Type, uint32_t(D3D9FFVSMembers::InverseViewMatrix));
     m_vs.constants.proj      = LoadConstant(m_mat4Type, uint32_t(D3D9FFVSMembers::ProjMatrix));
 
     for (uint32_t i = 0; i < caps::TextureStageCount; i++)
@@ -1530,6 +1542,31 @@ namespace dxvk {
 
       bool processedTexture = false;
 
+      auto DoBumpmapCoords = [&](uint32_t baseCoords) {
+        uint32_t stage = i - 1;
+
+        uint32_t coords = baseCoords;
+        for (uint32_t i = 0; i < 2; i++) {
+          std::array<uint32_t, 4> indices = { 0, 1, 2, 3 };
+
+          uint32_t tc_m_n = m_module.opCompositeExtract(m_floatType, coords, 1, &i);
+
+          uint32_t offset = m_module.constu32(D3D9SharedPSStages_Count * stage + D3D9SharedPSStages_BumpEnvMat0 + i);
+          uint32_t bm     = m_module.opAccessChain(m_module.defPointerType(m_vec2Type, spv::StorageClassUniform),
+                                                   m_ps.sharedState, 1, &offset);
+                   bm     = m_module.opLoad(m_vec2Type, bm);
+
+          uint32_t t      = m_module.opVectorShuffle(m_vec2Type, texture, texture, 2, indices.data());
+
+          uint32_t dot    = m_module.opDot(m_floatType, bm, t);
+
+          uint32_t result = m_module.opFAdd(m_floatType, tc_m_n, dot);
+          coords  = m_module.opCompositeInsert(m_vec4Type, result, coords, 1, &i);
+        }
+
+        return coords;
+      };
+
       auto GetTexture = [&]() {
         if (!processedTexture) {
           SpirvImageOperands imageOperands;
@@ -1555,16 +1592,53 @@ namespace dxvk {
           else
             projIdx--;
 
+          uint32_t projValue = 0;
+
           if (m_fsKey.Stages[i].Contents.Projected) {
-            uint32_t projValue = m_module.opCompositeExtract(m_floatType, m_ps.in.TEXCOORD[i], 1, &projIdx);
+            projValue = m_module.opCompositeExtract(m_floatType, m_ps.in.TEXCOORD[i], 1, &projIdx);
             uint32_t insertIdx = texcoordCnt - 1;
             texcoord = m_module.opCompositeInsert(texcoord_t, projValue, texcoord, 1, &insertIdx);
           }
 
-          if (m_fsKey.Stages[i].Contents.Projected)
+          bool shouldProject = m_fsKey.Stages[i].Contents.Projected;
+
+          if (i != 0 && (
+            m_fsKey.Stages[i - 1].Contents.ColorOp == D3DTOP_BUMPENVMAP ||
+            m_fsKey.Stages[i - 1].Contents.ColorOp == D3DTOP_BUMPENVMAPLUMINANCE)) {
+            if (shouldProject) {
+              uint32_t projRcp = m_module.opFDiv(m_floatType, m_module.constf32(1.0), projValue);
+              texcoord = m_module.opVectorTimesScalar(m_vec4Type, texcoord, projRcp);
+            }
+
+            texcoord = DoBumpmapCoords(texcoord);
+
+            shouldProject = false;
+          }
+
+          if (shouldProject)
             texture = m_module.opImageSampleProjImplicitLod(m_vec4Type, imageVarId, texcoord, imageOperands);
           else
             texture = m_module.opImageSampleImplicitLod(m_vec4Type, imageVarId, texcoord, imageOperands);
+
+          if (i != 0 && m_fsKey.Stages[i - 1].Contents.ColorOp == D3DTOP_BUMPENVMAPLUMINANCE) {
+            uint32_t index = m_module.constu32(D3D9SharedPSStages_Count * (i - 1) + D3D9SharedPSStages_BumpEnvLScale);
+            uint32_t lScale = m_module.opAccessChain(m_module.defPointerType(m_floatType, spv::StorageClassUniform),
+                                                     m_ps.sharedState, 1, &index);
+                     lScale = m_module.opLoad(m_floatType, lScale);
+
+                     index = m_module.constu32(D3D9SharedPSStages_Count * (i - 1) + D3D9SharedPSStages_BumpEnvLOffset);
+            uint32_t lOffset = m_module.opAccessChain(m_module.defPointerType(m_floatType, spv::StorageClassUniform),
+                                                     m_ps.sharedState, 1, &index);
+                     lOffset = m_module.opLoad(m_floatType, lOffset);
+            
+            uint32_t zIndex = 2;
+            uint32_t scale = m_module.opCompositeExtract(m_floatType, texture, 1, &zIndex);
+                     scale = m_module.opFMul(m_floatType, scale, lScale);
+                     scale = m_module.opFAdd(m_floatType, scale, lOffset);
+                     scale = m_module.opFClamp(m_floatType, scale, m_module.constf32(0.0f), m_module.constf32(1.0));
+
+            texture = m_module.opVectorTimesScalar(m_vec4Type, texture, scale);
+          }
 
           uint32_t bool_t = m_module.defBoolType();
           uint32_t bvec4_t = m_module.defVectorType(bool_t, 4);
@@ -1749,12 +1823,10 @@ namespace dxvk {
             dst = Saturate(dst);
             break;
 
-          case D3DTOP_BUMPENVMAP:
-            Logger::warn("D3DTOP_BUMPENVMAP: not implemented");
-            break;
-
           case D3DTOP_BUMPENVMAPLUMINANCE:
-            Logger::warn("D3DTOP_BUMPENVMAPLUMINANCE: not implemented");
+          case D3DTOP_BUMPENVMAP:
+            // Load texture for the next stage...
+            texture = GetTexture();
             break;
 
           case D3DTOP_DOTPRODUCT3: {
@@ -2036,6 +2108,77 @@ namespace dxvk {
     resource.view   = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
     resource.access = VK_ACCESS_UNIFORM_READ_BIT;
     m_resourceSlots.push_back(resource);
+  }
+
+
+  void D3D9FFShaderCompiler::emitVsClipping(uint32_t vtx) {
+    uint32_t worldPos = m_module.opMatrixTimesVector(m_vec4Type, m_vs.constants.inverseView, vtx);
+
+    uint32_t clipPlaneCountId = m_module.constu32(caps::MaxClipPlanes);
+    
+    uint32_t floatType = m_module.defFloatType(32);
+    uint32_t vec4Type  = m_module.defVectorType(floatType, 4);
+    
+    // Declare uniform buffer containing clip planes
+    uint32_t clipPlaneArray  = m_module.defArrayTypeUnique(vec4Type, clipPlaneCountId);
+    uint32_t clipPlaneStruct = m_module.defStructTypeUnique(1, &clipPlaneArray);
+    uint32_t clipPlaneBlock  = m_module.newVar(
+      m_module.defPointerType(clipPlaneStruct, spv::StorageClassUniform),
+      spv::StorageClassUniform);
+    
+    m_module.decorateArrayStride  (clipPlaneArray, 16);
+    
+    m_module.setDebugName         (clipPlaneStruct, "clip_info_t");
+    m_module.setDebugMemberName   (clipPlaneStruct, 0, "clip_planes");
+    m_module.decorate             (clipPlaneStruct, spv::DecorationBlock);
+    m_module.memberDecorateOffset (clipPlaneStruct, 0, 0);
+    
+    uint32_t bindingId = computeResourceSlotId(
+      DxsoProgramType::VertexShader,
+      DxsoBindingType::ConstantBuffer,
+      DxsoConstantBuffers::VSClipPlanes);
+    
+    m_module.setDebugName         (clipPlaneBlock, "clip_info");
+    m_module.decorateDescriptorSet(clipPlaneBlock, 0);
+    m_module.decorateBinding      (clipPlaneBlock, bindingId);
+    
+    DxvkResourceSlot resource;
+    resource.slot   = bindingId;
+    resource.type   = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    resource.view   = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+    resource.access = VK_ACCESS_UNIFORM_READ_BIT;
+    m_resourceSlots.push_back(resource);
+    
+    // Declare output array for clip distances
+    uint32_t clipDistArray = m_module.newVar(
+      m_module.defPointerType(
+        m_module.defArrayType(floatType, clipPlaneCountId),
+        spv::StorageClassOutput),
+      spv::StorageClassOutput);
+
+    m_module.decorateBuiltIn(clipDistArray, spv::BuiltInClipDistance);
+    m_entryPointInterfaces.push_back(clipDistArray);
+
+    // Compute clip distances
+    for (uint32_t i = 0; i < caps::MaxClipPlanes; i++) {
+      std::array<uint32_t, 2> blockMembers = {{
+        m_module.constu32(0),
+        m_module.constu32(i),
+      }};
+      
+      uint32_t planeId = m_module.opLoad(vec4Type,
+        m_module.opAccessChain(
+          m_module.defPointerType(vec4Type, spv::StorageClassUniform),
+          clipPlaneBlock, blockMembers.size(), blockMembers.data()));
+      
+      uint32_t distId = m_module.opDot(floatType, worldPos, planeId);
+      
+      m_module.opStore(
+        m_module.opAccessChain(
+          m_module.defPointerType(floatType, spv::StorageClassOutput),
+          clipDistArray, 1, &blockMembers[1]),
+        distId);
+    }
   }
 
 

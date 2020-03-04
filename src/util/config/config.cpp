@@ -139,10 +139,12 @@ namespace dxvk {
     /* Saints Row IV                              */
     { R"(\\SaintsRowIV\.exe$)", {{
       { "d3d11.constantBufferRangeCheck",   "True" },
+      { "d3d11.invariantPosition",          "True" },
     }} },
     /* Saints Row: The Third                      */
     { R"(\\SaintsRowTheThird_DX11\.exe$)", {{
       { "d3d11.constantBufferRangeCheck",   "True" },
+      { "d3d11.invariantPosition",          "True" },
     }} },
     /* Metal Gear Solid 5                         */
     { R"(\\mgsvtpp\.exe$)", {{
@@ -177,6 +179,15 @@ namespace dxvk {
     /* Entropia Universe                          */
     { R"(\\Entropia\.exe$)", {{
       { "d3d11.invariantPosition",          "True" },
+    }} },
+    /* F1 2019 - does not synchronize TGSM access *
+     * in a compute shader, causing artifacts     */
+    { R"(\\F1_2019\.exe$)", {{
+      { "d3d11.forceTgsmBarriers",          "True" },
+    }} },
+    /* Subnautica                                 */
+    { R"(\\Subnautica\.exe$)", {{
+      { "dxvk.enableOpenVR",                "False" },
     }} },
 
     /**********************************************/
@@ -302,6 +313,14 @@ namespace dxvk {
        other apps that use this properly.         */
     { R"(\\rthdribl\.exe$)", {{
       { "d3d9.allowDoNotWait",              "False" },
+    }} },
+    /* Hyperdimension Neptunia U: Action Unleashed */
+    { R"(\\Neptunia\.exe$)", {{
+      { "d3d9.forceAspectRatio",            "16:9" },
+    }} },
+    /* D&D - The Temple Of Elemental Evil          */
+    { R"(\\ToEE\.exe$)", {{
+      { "d3d9.allowDiscard",                "False" },
     }} },
   }};
 
