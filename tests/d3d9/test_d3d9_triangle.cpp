@@ -54,6 +54,8 @@ PS_OUTPUT main( VS_OUTPUT IN ) {
 
 )";
 
+Logger Logger::s_instance("triangle.log");
+
 class TriangleApp {
   
 public:
@@ -65,11 +67,48 @@ public:
     if (FAILED(status))
       throw DxvkError("Failed to create D3D9 interface");
 
+    UINT adapter = D3DADAPTER_DEFAULT;
+
+    D3DADAPTER_IDENTIFIER9 adapterId;
+    m_d3d->GetAdapterIdentifier(adapter, 0, &adapterId);
+
+    Logger::info(str::format("Using adapter: ", adapterId.Description));
+
+    auto CheckSRGBFormat = [&](D3DFORMAT fmt, const char* name) {
+      HRESULT status = m_d3d->CheckDeviceFormat(adapter, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, fmt);
+      Logger::warn(str::format("(linear) ", name, ": ", SUCCEEDED(status) ? "ok" : "nope"));
+
+      status = m_d3d->CheckDeviceFormat(adapter, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, D3DUSAGE_QUERY_SRGBREAD, D3DRTYPE_TEXTURE, fmt);
+      Logger::warn(str::format("(srgb) ", name, ": ", SUCCEEDED(status) ? "ok" : "nope"));
+    };
+
+    CheckSRGBFormat(D3DFMT_R5G6B5,       "R5G6B5");
+    CheckSRGBFormat(D3DFMT_X1R5G5B5,     "X1R5G5B5");
+    CheckSRGBFormat(D3DFMT_A1R5G5B5,     "A1R5G5B5");
+    CheckSRGBFormat(D3DFMT_A4R4G4B4,     "A4R4G4B4");
+    CheckSRGBFormat(D3DFMT_X4R4G4B4,     "X4R4G4B4");
+    CheckSRGBFormat(D3DFMT_G16R16,       "G16R16");
+    CheckSRGBFormat(D3DFMT_A2R10G10B10,  "A2R10G10B10");
+    CheckSRGBFormat(D3DFMT_A16B16G16R16, "A16B16G16R16");
+
+    //
+
+    DWORD quality;
+    status = m_d3d->CheckDepthStencilMatch(adapter, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8, D3DFMT_D24S8);
+    status = m_d3d->CheckDeviceFormat(adapter, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_SURFACE, D3DFMT_A8R8G8B8);
+    status = m_d3d->CheckDeviceFormatConversion(adapter, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8);
+    status = m_d3d->CheckDeviceMultiSampleType(adapter, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, FALSE, D3DMULTISAMPLE_NONE, &quality);
+    status = m_d3d->CheckDeviceMultiSampleType(adapter, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, TRUE, D3DMULTISAMPLE_NONE, &quality);
+    status = m_d3d->CheckDeviceType(adapter, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8, FALSE);
+    status = m_d3d->CheckDeviceType(adapter, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8, TRUE);
+
+    //
+
     D3DPRESENT_PARAMETERS params;
     getPresentParams(params);
 
     status = m_d3d->CreateDeviceEx(
-      D3DADAPTER_DEFAULT,
+      adapter,
       D3DDEVTYPE_HAL,
       m_window,
       D3DCREATE_HARDWARE_VERTEXPROCESSING,
@@ -77,17 +116,55 @@ public:
       nullptr,
       &m_device);
 
-    UINT firstRef = m_device->AddRef();
+    // Funny Swapchain Refcounting
+    // "One of the things COM does really well, is lifecycle management"
+    // Implicit Swapchain
+    {
+      IDirect3DSurface9* pSurface1 = nullptr;
+      IDirect3DSurface9* pSurface2 = nullptr;
+      status = m_device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pSurface1);
+      D3DPRESENT_PARAMETERS newParams = params;
+      newParams.BackBufferWidth  = 10;
+      newParams.BackBufferHeight = 10;
+      status = m_device->Reset(&newParams);
+      status = m_device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pSurface2);
+
+      IDirect3DSwapChain9* pSwapChain2 = nullptr;
+      IDirect3DSwapChain9* pSwapChain3 = nullptr;
+      status = pSurface1->GetContainer(__uuidof(IDirect3DSwapChain9), reinterpret_cast<void**>(&pSwapChain2));
+      status = pSurface2->GetContainer(__uuidof(IDirect3DSwapChain9), reinterpret_cast<void**>(&pSwapChain3));
+
+      printf("E_NOINTERFACE! for pSwapchain2");
+      status = m_device->Reset(&params);
+    }
+    // Additional swapchain
+    {
+      IDirect3DSwapChain9* pSwapChain2 = nullptr;
+      IDirect3DSwapChain9* pSwapChain3 = nullptr;
+      IDirect3DSwapChain9* pSwapChain4 = nullptr;
+      IDirect3DSurface9* pSurface = nullptr;
+      status = m_device->CreateAdditionalSwapChain(&params, &pSwapChain2);
+      status = pSwapChain2->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &pSurface);
+      status = pSurface->GetContainer(__uuidof(IDirect3DSwapChain9), reinterpret_cast<void**>(&pSwapChain3));
+      pSwapChain2->Release();
+      UINT count = pSwapChain2->Release();
+      printf("Count: %u - Should be 0 and swapchain dead!", count);
+      status = pSurface->GetContainer(__uuidof(IDirect3DSwapChain9), reinterpret_cast<void**>(&pSwapChain4));
+      // E_NOINTERFACE !
+      printf("E_NOINTERFACE!");
+    }
+
+    m_device->AddRef();
 
     Com<IDirect3DSurface9> backbuffer;
     m_device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backbuffer);
 
-    UINT firstRef2 = m_device->AddRef();
+    m_device->AddRef();
 
     Com<IDirect3DSwapChain9> swapchain;
     m_device->GetSwapChain(0, &swapchain);
 
-    UINT firstRef3 = m_device->AddRef();
+    m_device->AddRef();
     
     if (FAILED(status))
       throw DxvkError("Failed to create D3D9 device");
@@ -139,17 +216,22 @@ public:
     m_device->SetVertexShader(m_vs.ptr());
     m_device->SetPixelShader(m_ps.ptr());
 
-    UINT secondRef1 = m_device->AddRef();
+    m_device->AddRef();
+
+    Com<IDirect3DSurface9> nullSurface;
+    status = m_device->CreateRenderTarget(64, 64, D3DFORMAT(MAKEFOURCC('N', 'U', 'L', 'L')), D3DMULTISAMPLE_NONE, 0, FALSE, &nullSurface, nullptr);
+
+    status = m_device->ColorFill(nullSurface.ptr(), nullptr, D3DCOLOR_RGBA(255, 0, 0, 255));
 
     Com<IDirect3DTexture9> defaultTexture;
     status = m_device->CreateTexture(64, 64, 1, 0, D3DFMT_DXT3, D3DPOOL_DEFAULT,   &defaultTexture, nullptr);
 
-    UINT secondRef2 = m_device->AddRef();
+    m_device->AddRef();
 
     Com<IDirect3DSurface9> surface;
     status = defaultTexture->GetSurfaceLevel(0, &surface);
 
-    UINT secondRef3 = m_device->AddRef();
+    m_device->AddRef();
 
     Com<IDirect3DTexture9> sysmemTexture;
     status = m_device->CreateTexture(64, 64, 1, 0, D3DFMT_DXT3, D3DPOOL_SYSTEMMEM, &sysmemTexture, nullptr);
@@ -184,16 +266,16 @@ public:
     Com<IDirect3DSurface9> rt;
     status = m_device->CreateRenderTarget(1280, 720, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &rt, nullptr);
 
-    ULONG refCount = m_device->AddRef();
+    m_device->AddRef();
 
     Com<IDirect3DSurface9> rt2;
     status = m_device->CreateRenderTarget(1280, 720, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &rt2, nullptr);
 
-    ULONG refCount2 = m_device->AddRef();
+    m_device->AddRef();
 
     rt2 = nullptr;
 
-    ULONG refCount3 = m_device->AddRef();
+    m_device->AddRef();
 
     RECT stretchRect1 = { 0, 0, 640, 720 };
     RECT stretchRect2 = { 640, 0, 1280, 720 };

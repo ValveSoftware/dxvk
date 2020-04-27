@@ -19,14 +19,15 @@ namespace dxvk {
 
     D3D9Surface(
             D3D9DeviceEx*             pDevice,
-      const D3D9_COMMON_TEXTURE_DESC* pDesc);
+      const D3D9_COMMON_TEXTURE_DESC* pDesc,
+            IUnknown*                 pContainer);
 
     D3D9Surface(
             D3D9DeviceEx*             pDevice,
             D3D9CommonTexture*        pTexture,
             UINT                      Face,
             UINT                      MipLevel,
-            IDirect3DBaseTexture9*    pContainer);
+            IDirect3DBaseTexture9*    pBaseTexture);
 
     void AddRefPrivate();
 
@@ -54,6 +55,8 @@ namespace dxvk {
         std::max(1u, desc->Height >> GetMipLevel())
       };
     }
+
+    void ClearContainer();
 
   private:
 

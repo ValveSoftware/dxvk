@@ -12,6 +12,7 @@ namespace dxvk {
         pDevice,
         new D3D9CommonTexture( pDevice, pDesc, D3DRTYPE_VOLUMETEXTURE ),
         0, 0,
+        nullptr,
         nullptr) { }
 
 
@@ -25,14 +26,14 @@ namespace dxvk {
         pDevice,
         pTexture,
         Face, MipLevel,
+        pContainer,
         pContainer) { }
 
 
   void D3D9Volume::AddRefPrivate() {
-    IDirect3DBaseTexture9* pContainer = this->m_container;
-
-    if (pContainer != nullptr) {
-      reinterpret_cast<D3D9Texture3D*> (pContainer)->AddRefPrivate();
+    // Can't have a swapchain container for a volume.
+    if (m_baseTexture != nullptr) {
+      static_cast<D3D9Texture3D*>(m_baseTexture)->AddRefPrivate();
       return;
     }
 
@@ -41,10 +42,9 @@ namespace dxvk {
 
 
   void D3D9Volume::ReleasePrivate() {
-    IDirect3DBaseTexture9* pContainer = this->m_container;
-
-    if (pContainer != nullptr) {
-      reinterpret_cast<D3D9Texture3D*> (pContainer)->ReleasePrivate();
+    // Can't have a swapchain container for a volume.
+    if (m_baseTexture != nullptr) {
+      static_cast<D3D9Texture3D*>(m_baseTexture)->ReleasePrivate();
       return;
     }
 

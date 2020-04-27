@@ -167,6 +167,8 @@ namespace dxvk {
 
     void CreateRenderTargetViews();
 
+    void DestroyBackBuffers();
+
     void CreateBackBuffers(
             uint32_t            NumBackBuffers);
 

@@ -245,6 +245,14 @@ namespace dxvk {
     }
 
     /**
+     * \brief Depth stencil
+     * \returns Whether a resource is a depth stencil or not
+     */
+    bool IsDepthStencil() const {
+      return m_desc.Usage & D3DUSAGE_DEPTHSTENCIL;
+    }
+
+    /**
      * \brief Autogen Mipmap
      * \returns Whether the texture is to have automatic mip generation
      */
@@ -316,12 +324,19 @@ namespace dxvk {
         : VK_IMAGE_LAYOUT_GENERAL;
     }
 
-    VkImageLayout DetermineDepthStencilLayout() const {
-      return m_image != nullptr &&
-             m_image->info().tiling == VK_IMAGE_TILING_OPTIMAL &&
-            !m_hazardous
-        ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-        : VK_IMAGE_LAYOUT_GENERAL;
+    VkImageLayout DetermineDepthStencilLayout(bool write, bool hazardous) const {
+      VkImageLayout layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+      if (unlikely(hazardous)) {
+        layout = write
+          ? VK_IMAGE_LAYOUT_GENERAL
+          : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL;
+      }
+
+      if (unlikely(m_image->info().tiling != VK_IMAGE_TILING_OPTIMAL))
+        layout = VK_IMAGE_LAYOUT_GENERAL;
+
+      return layout;
     }
 
     Rc<DxvkImageView> CreateView(

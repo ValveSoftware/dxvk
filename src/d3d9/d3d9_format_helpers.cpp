@@ -2,6 +2,8 @@
 
 #include <d3d9_convert_yuy2_uyvy.h>
 #include <d3d9_convert_l6v5u5.h>
+#include <d3d9_convert_x8l8v8u8.h>
+#include <d3d9_convert_a2w10v10u10.h>
 
 namespace dxvk {
 
@@ -32,9 +34,19 @@ namespace dxvk {
         ConvertGenericFormat(conversionFormat, dstImage, dstSubresource, srcBuffer, VK_FORMAT_R32_UINT, specConstant);
         break;
       }
+
       case D3D9ConversionFormat_L6V5U5:
         ConvertGenericFormat(conversionFormat, dstImage, dstSubresource, srcBuffer, VK_FORMAT_R16_UINT, 0);
         break;
+
+      case D3D9ConversionFormat_X8L8V8U8:
+        ConvertGenericFormat(conversionFormat, dstImage, dstSubresource, srcBuffer, VK_FORMAT_R32_UINT, 0);
+        break;
+
+      case D3D9ConversionFormat_A2W10V10U10:
+        ConvertGenericFormat(conversionFormat, dstImage, dstSubresource, srcBuffer, VK_FORMAT_R32_UINT, 0);
+        break;
+
       default:
         Logger::warn("Unimplemented format conversion");
     }
@@ -94,6 +106,8 @@ namespace dxvk {
     m_shaders[D3D9ConversionFormat_YUY2] = InitShader(d3d9_convert_yuy2_uyvy);
     m_shaders[D3D9ConversionFormat_UYVY] = m_shaders[D3D9ConversionFormat_YUY2];
     m_shaders[D3D9ConversionFormat_L6V5U5] = InitShader(d3d9_convert_l6v5u5);
+    m_shaders[D3D9ConversionFormat_X8L8V8U8] = InitShader(d3d9_convert_x8l8v8u8);
+    m_shaders[D3D9ConversionFormat_A2W10V10U10] = InitShader(d3d9_convert_a2w10v10u10);
   }
 
 

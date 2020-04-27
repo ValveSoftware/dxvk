@@ -13,10 +13,8 @@
 //for some reason we need to specify __declspec(dllexport) for MinGW
 #if defined(__WINE__)
 #define DLLEXPORT __attribute__((visibility("default")))
-#elif defined(_MSC_VER)
-#define DLLEXPORT
 #else
-#define DLLEXPORT __declspec(dllexport)
+#define DLLEXPORT
 #endif
 
 
@@ -29,6 +27,8 @@
 
 #include "../util/rc/util_rc.h"
 #include "../util/rc/util_rc_ptr.h"
+
+#include "../util/sync/sync_recursive.h"
 
 #include "../util/util_env.h"
 #include "../util/util_enum.h"

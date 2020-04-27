@@ -90,8 +90,10 @@ namespace dxvk {
           D3D9Format AdapterFormat,
           D3D9Format BackBufferFormat,
           BOOL       bWindowed) {
-    if (!IsSupportedBackBufferFormat(
-      AdapterFormat, BackBufferFormat, bWindowed))
+    if (!IsSupportedAdapterFormat(AdapterFormat, bWindowed) && !bWindowed)
+      return D3DERR_NOTAVAILABLE;
+
+    if (!IsSupportedBackBufferFormat(BackBufferFormat, bWindowed))
       return D3DERR_NOTAVAILABLE;
 
     return D3D_OK;
@@ -212,9 +214,6 @@ namespace dxvk {
           D3D9Format AdapterFormat,
           D3D9Format RenderTargetFormat,
           D3D9Format DepthStencilFormat) {
-    if (!IsSupportedAdapterFormat(AdapterFormat, false))
-      return D3DERR_NOTAVAILABLE;
-
     if (!IsDepthFormat(DepthStencilFormat))
       return D3DERR_NOTAVAILABLE;
 

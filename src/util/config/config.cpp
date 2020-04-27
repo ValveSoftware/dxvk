@@ -76,12 +76,8 @@ namespace dxvk {
     { R"(\\ffxiv_dx11\.exe$)", {{
       { "d3d11.enableRtOutputNanFixup",     "True" },
     }} },
-    /* Resident Evil 2: Improve GPU performance   */
-    { R"(\\re2\.exe$)", {{
-      { "d3d11.relaxedBarriers",            "True" },
-    }} },
-    /* Resident Evil 7                            */
-    { R"(\\re7\.exe$)", {{
+    /* Resident Evil 2/3/7: Ignore WaW hazards    */
+    { R"(\\re(2|3|3demo|7|7trial)\.exe$)", {{
       { "d3d11.relaxedBarriers",            "True" },
     }} },
     /* Devil May Cry 5                            */
@@ -188,6 +184,22 @@ namespace dxvk {
     /* Subnautica                                 */
     { R"(\\Subnautica\.exe$)", {{
       { "dxvk.enableOpenVR",                "False" },
+    }} },
+    /* Super Monkey Ball: Banana Blitz HD         */
+    { R"(\\SMBBBHD\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* Yooka-Laylee and the Impossible Lair       */
+    { R"(\\YLILWin64\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* Blue Reflection                            */
+    { R"(\\BLUE_REFLECTION\.exe$)", {{
+      { "d3d11.constantBufferRangeCheck",   "True" },
+    }} },
+    /* Secret World Legends                       */
+    { R"(\\SecretWorldLegendsDX11\.exe$)", {{
+      { "d3d11.constantBufferRangeCheck",   "True" },
     }} },
 
     /**********************************************/
@@ -322,6 +334,19 @@ namespace dxvk {
     { R"(\\ToEE\.exe$)", {{
       { "d3d9.allowDiscard",                "False" },
     }} },
+    /* ZUSI 3 - Aerosoft Edition                  */
+    { R"(\\ZusiSim\.exe$)", {{
+      { "d3d9.noExplicitFrontBuffer",       "True" },
+    }} },
+    /* GTA IV (NVAPI)                             */
+    { R"(\\GTAIV\.exe$)", {{
+      { "d3d9.customVendorId",              "1002" },
+    }} },
+    /* Battlefield 2 (bad z-pass)                 */
+    { R"(\\BF2\.exe$)", {{
+      { "d3d9.longMad",                     "True" },
+      { "d3d9.invariantPosition",           "True" },
+    }} },
   }};
 
 
@@ -378,9 +403,19 @@ namespace dxvk {
         return;
 
       // Extract the value
+      bool insideString = false;
       n = skipWhitespace(line, n + 1);
-      while (n < line.size() && !isWhitespace(line[n]))
-        value << line[n++];
+
+      while (n < line.size()) {
+        if (!insideString && isWhitespace(line[n]))
+          break;
+
+        if (line[n] == '"') {
+          insideString = !insideString;
+          n++;
+        } else
+          value << line[n++];
+      }
       
       if (ctx.active)
         config.setOption(key.str(), value.str());
