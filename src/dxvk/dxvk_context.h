@@ -1018,6 +1018,7 @@ namespace dxvk {
 
     DxvkContextFlags        m_flags;
     DxvkContextState        m_state;
+    DxvkContextFeatures     m_features;
 
     DxvkBarrierSet          m_sdmaAcquires;
     DxvkBarrierSet          m_sdmaBarriers;
@@ -1038,6 +1039,8 @@ namespace dxvk {
 
     DxvkBindingSet<MaxNumVertexBindings + 1>  m_vbTracked;
     DxvkBindingSet<MaxNumResourceSlots>       m_rcTracked;
+
+    std::vector<DxvkDeferredClear> m_deferredClears;
 
     std::array<DxvkShaderResourceSlot, MaxNumResourceSlots>  m_rc;
     std::array<DxvkGraphicsPipeline*, 4096> m_gpLookupCache = { };
@@ -1112,6 +1115,20 @@ namespace dxvk {
             VkResolveModeFlagBitsKHR  depthMode,
             VkResolveModeFlagBitsKHR  stencilMode);
     
+    void performClear(
+      const Rc<DxvkImageView>&        imageView,
+            int32_t                   attachmentIndex,
+            VkImageAspectFlags        clearAspects,
+            VkClearValue              clearValue);
+
+    void deferClear(
+      const Rc<DxvkImageView>&        imageView,
+            VkImageAspectFlags        clearAspects,
+            VkClearValue              clearValue);
+
+    void flushClears(
+            bool                      useRenderPass);
+
     void updatePredicate(
       const DxvkBufferSliceHandle&    predicate,
       const DxvkGpuQueryHandle&       query);
@@ -1119,8 +1136,7 @@ namespace dxvk {
     void commitPredicateUpdates();
     
     void startRenderPass();
-    void spillRenderPass();
-    void clearRenderPass();
+    void spillRenderPass(bool flushClears = true);
     
     void renderPassBindFramebuffer(
       const Rc<DxvkFramebuffer>&  framebuffer,
@@ -1162,7 +1178,7 @@ namespace dxvk {
 
     void updateFramebuffer();
     
-    void updateIndexBufferBinding();
+    bool updateIndexBufferBinding();
     void updateVertexBufferBindings();
 
     void updateTransformFeedbackBuffers();
@@ -1207,6 +1223,13 @@ namespace dxvk {
             VkPipelineStageFlags      dstStages,
             VkAccessFlags             dstAccess);
     
+    void initializeImage(
+      const Rc<DxvkImage>&            image,
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             dstLayout,
+            VkPipelineStageFlags      dstStages,
+            VkAccessFlags             dstAccess);
+
     VkDescriptorSet allocateDescriptorSet(
             VkDescriptorSetLayout     layout);
 

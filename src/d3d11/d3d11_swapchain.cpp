@@ -348,7 +348,9 @@ namespace dxvk {
       m_context->bindResourceView(BindingIds::Image, m_swapImageView, nullptr);
       m_context->bindResourceView(BindingIds::Gamma, m_gammaTextureView, nullptr);
 
+      m_context->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, 0, m_gammaTextureView != nullptr);
       m_context->draw(3, 1, 0, 0);
+      m_context->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, 0, 0);
 
       if (m_hud != nullptr)
         m_hud->render(m_context, info.format, info.imageExtent);
@@ -848,12 +850,13 @@ namespace dxvk {
     uint32_t n = 0;
 
     if (Vsync) {
+      if (m_parent->GetOptions()->tearFree == Tristate::False)
+        pDstModes[n++] = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
       pDstModes[n++] = VK_PRESENT_MODE_FIFO_KHR;
     } else {
-      if (!m_parent->GetOptions()->tearFree)
+      if (m_parent->GetOptions()->tearFree != Tristate::True)
         pDstModes[n++] = VK_PRESENT_MODE_IMMEDIATE_KHR;
       pDstModes[n++] = VK_PRESENT_MODE_MAILBOX_KHR;
-      pDstModes[n++] = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
     }
 
     return n;

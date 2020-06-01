@@ -3525,7 +3525,7 @@ namespace dxvk {
     // We need to check our ops and disable respective stages.
     // Given we have transition from a null resource to
     // a valid resource or vice versa.
-    if (pTexture == nullptr || m_state.textures[StateSampler] == nullptr)
+    if (StateSampler < 16 && (pTexture == nullptr || m_state.textures[StateSampler] == nullptr))
       m_flags.set(D3D9DeviceFlag::DirtyFFPixelShader);
 
     auto oldTexture = GetCommonTexture(m_state.textures[StateSampler]);
@@ -3579,27 +3579,46 @@ namespace dxvk {
       return m_recorder->SetStateTextureStageState(Stage, Type, Value);
 
     if (likely(m_state.textureStages[Stage][Type] != Value)) {
-      if (Type == DXVK_TSS_TEXTURETRANSFORMFLAGS) {
-        m_projectionBitfield &= ~(1 << Stage);
-        if (Value & D3DTTFF_PROJECTED)
-          m_projectionBitfield |= 1 << Stage;
-      }
-
-      if ((Type >= DXVK_TSS_BUMPENVMAT00  && Type <= DXVK_TSS_BUMPENVMAT11)
-       || (Type == DXVK_TSS_BUMPENVLSCALE || Type == DXVK_TSS_BUMPENVLOFFSET))
-        m_flags.set(D3D9DeviceFlag::DirtySharedPixelShaderData);
-      else if (Type == DXVK_TSS_TEXTURETRANSFORMFLAGS) {
-        // This state affects both!
-        m_flags.set(D3D9DeviceFlag::DirtyFFPixelShader);
-        m_flags.set(D3D9DeviceFlag::DirtyFFVertexShader);
-      }
-      else if (Type == DXVK_TSS_CONSTANT)
-        m_flags.set(D3D9DeviceFlag::DirtySharedPixelShaderData);
-      else if (Type != DXVK_TSS_TEXCOORDINDEX)
-        m_flags.set(D3D9DeviceFlag::DirtyFFPixelShader);
-      else
-        m_flags.set(D3D9DeviceFlag::DirtyFFVertexShader);
       m_state.textureStages[Stage][Type] = Value;
+
+      switch (Type) {
+        case DXVK_TSS_COLOROP:
+        case DXVK_TSS_COLORARG0:
+        case DXVK_TSS_COLORARG1:
+        case DXVK_TSS_COLORARG2:
+        case DXVK_TSS_ALPHAOP:
+        case DXVK_TSS_ALPHAARG0:
+        case DXVK_TSS_ALPHAARG1:
+        case DXVK_TSS_ALPHAARG2:
+        case DXVK_TSS_RESULTARG:
+          m_flags.set(D3D9DeviceFlag::DirtyFFPixelShader);
+          break;
+
+        case DXVK_TSS_TEXCOORDINDEX:
+          m_flags.set(D3D9DeviceFlag::DirtyFFVertexShader);
+          break;
+
+        case DXVK_TSS_TEXTURETRANSFORMFLAGS:
+          m_projectionBitfield &= ~(1 << Stage);
+          if (Value & D3DTTFF_PROJECTED)
+            m_projectionBitfield |= 1 << Stage;
+
+          m_flags.set(D3D9DeviceFlag::DirtyFFVertexShader);
+          m_flags.set(D3D9DeviceFlag::DirtyFFPixelShader);
+          break;
+
+        case DXVK_TSS_BUMPENVMAT00:
+        case DXVK_TSS_BUMPENVMAT01:
+        case DXVK_TSS_BUMPENVMAT10:
+        case DXVK_TSS_BUMPENVMAT11:
+        case DXVK_TSS_BUMPENVLSCALE:
+        case DXVK_TSS_BUMPENVLOFFSET:
+        case DXVK_TSS_CONSTANT:
+          m_flags.set(D3D9DeviceFlag::DirtySharedPixelShaderData);
+          break;
+
+        default: break;
+      }
     }
 
     return D3D_OK;
@@ -3673,6 +3692,11 @@ namespace dxvk {
 
     // Enable depth bounds test if we support it.
     enabled.core.features.depthBounds = supported.core.features.depthBounds;
+
+    if (supported.extCustomBorderColor.customBorderColorWithoutFormat) {
+      enabled.extCustomBorderColor.customBorderColors             = VK_TRUE;
+      enabled.extCustomBorderColor.customBorderColorWithoutFormat = VK_TRUE;
+    }
 
     return enabled;
   }
@@ -5040,11 +5064,15 @@ namespace dxvk {
 
       VkOffset2D srPosA;
       srPosA.x = std::max<int32_t>(0, sr.left);
+      srPosA.x = std::max<int32_t>(vp.X, srPosA.x);
       srPosA.y = std::max<int32_t>(0, sr.top);
+      srPosA.y = std::max<int32_t>(vp.Y, srPosA.y);
 
       VkOffset2D srPosB;
       srPosB.x = std::max<int32_t>(srPosA.x, sr.right);
+      srPosB.x = std::min<int32_t>(vp.X + vp.Width, srPosB.x);
       srPosB.y = std::max<int32_t>(srPosA.y, sr.bottom);
+      srPosB.y = std::min<int32_t>(vp.Y + vp.Height, srPosB.y);
 
       VkExtent2D srSize;
       srSize.width  = uint32_t(srPosB.x - srPosA.x);
@@ -5303,7 +5331,7 @@ namespace dxvk {
     key.MaxAnisotropy = state[D3DSAMP_MAXANISOTROPY];
     key.MipmapLodBias = bit::cast<float>(state[D3DSAMP_MIPMAPLODBIAS]);
     key.MaxMipLevel   = state[D3DSAMP_MAXMIPLEVEL];
-    DecodeD3DCOLOR(D3DCOLOR(state[D3DSAMP_BORDERCOLOR]), key.BorderColor);
+    key.BorderColor   = D3DCOLOR(state[D3DSAMP_BORDERCOLOR]);
 
     if (m_d3d9Options.samplerAnisotropy != -1) {
       if (key.MagFilter == D3DTEXF_LINEAR)
@@ -5357,16 +5385,19 @@ namespace dxvk {
       colorInfo.mipmapLodMin   = mipFilter.MipsEnabled ? float(cKey.MaxMipLevel) : 0;
       colorInfo.mipmapLodMax   = mipFilter.MipsEnabled ? FLT_MAX                 : 0;
       colorInfo.usePixelCoord  = VK_FALSE;
-      for (uint32_t i = 0; i < 4; i++)
-        colorInfo.borderColor.float32[i] = cKey.BorderColor[i];
 
-      // HACK: Let's get OPAQUE_WHITE border color over
-      // TRANSPARENT_BLACK if the border RGB is white.
-      if (colorInfo.borderColor.float32[0] == 1.0f
-       && colorInfo.borderColor.float32[1] == 1.0f
-       && colorInfo.borderColor.float32[2] == 1.0f) {
-        // Then set the alpha to 1.
-        colorInfo.borderColor.float32[3] = 1.0f;
+      DecodeD3DCOLOR(cKey.BorderColor, colorInfo.borderColor.float32);
+
+      if (!m_dxvkDevice->features().extCustomBorderColor.customBorderColorWithoutFormat) {
+        // HACK: Let's get OPAQUE_WHITE border color over
+        // TRANSPARENT_BLACK if the border RGB is white.
+        if (colorInfo.borderColor.float32[0] == 1.0f
+        && colorInfo.borderColor.float32[1] == 1.0f
+        && colorInfo.borderColor.float32[2] == 1.0f
+        && !m_dxvkDevice->features().extCustomBorderColor.customBorderColors) {
+          // Then set the alpha to 1.
+          colorInfo.borderColor.float32[3] = 1.0f;
+        }
       }
 
       DxvkSamplerCreateInfo depthInfo = colorInfo;
@@ -5418,8 +5449,12 @@ namespace dxvk {
       const uint32_t textureBitMask = 0b11u << offset;
       const uint32_t textureBits = textureType << offset;
 
-      m_samplerTypeBitfield &= ~textureBitMask;
-      m_samplerTypeBitfield |= textureBits;
+      if ((m_samplerTypeBitfield & textureBitMask) != textureBits) {
+        m_flags.set(D3D9DeviceFlag::DirtyFFPixelShader);
+
+        m_samplerTypeBitfield &= ~textureBitMask;
+        m_samplerTypeBitfield |= textureBits;
+      }
     }
 
     if (commonTex == nullptr) {
@@ -6124,10 +6159,10 @@ namespace dxvk {
       auto ArgsMask = [](DWORD Op) {
         switch (Op) {
           case D3DTOP_DISABLE:
-            return 0b0u; // No Args
+            return 0b000u; // No Args
           case D3DTOP_SELECTARG1:
           case D3DTOP_PREMODULATE:
-            return 0b10u; // Arg 1
+            return 0b010u; // Arg 1
           case D3DTOP_SELECTARG2:
             return 0b100u; // Arg 2
           case D3DTOP_MULTIPLYADD:
@@ -6603,12 +6638,15 @@ namespace dxvk {
 
       DWORD sampler = i;
       auto samplerInfo = RemapStateSamplerShader(sampler);
-      uint32_t slot = computeResourceSlotId(samplerInfo.first, DxsoBindingType::ColorImage, uint32_t(samplerInfo.second));
+      uint32_t colorSlot = computeResourceSlotId(samplerInfo.first, DxsoBindingType::ColorImage, uint32_t(samplerInfo.second));
+      uint32_t depthSlot = computeResourceSlotId(samplerInfo.first, DxsoBindingType::DepthImage, uint32_t(samplerInfo.second));
 
       EmitCs([
-        cSlot = slot
+        cColorSlot = colorSlot,
+        cDepthSlot = depthSlot
       ](DxvkContext* ctx) {
-        ctx->bindResourceView(cSlot, nullptr, nullptr);
+        ctx->bindResourceView(cColorSlot, nullptr, nullptr);
+        ctx->bindResourceView(cDepthSlot, nullptr, nullptr);
       });
     }
 

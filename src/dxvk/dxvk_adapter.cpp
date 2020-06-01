@@ -88,12 +88,19 @@ namespace dxvk {
       VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT,
       VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
     
+    uint32_t computeQueue = findQueueFamily(
+      VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT,
+      VK_QUEUE_COMPUTE_BIT);
+    
+    if (computeQueue == VK_QUEUE_FAMILY_IGNORED)
+      computeQueue = graphicsQueue;
+
     uint32_t transferQueue = findQueueFamily(
       VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
       VK_QUEUE_TRANSFER_BIT);
     
     if (transferQueue == VK_QUEUE_FAMILY_IGNORED)
-      transferQueue = graphicsQueue;
+      transferQueue = computeQueue;
     
     DxvkAdapterQueueIndices queues;
     queues.graphics = graphicsQueue;
@@ -217,12 +224,22 @@ namespace dxvk {
                 || !required.shaderDrawParameters.shaderDrawParameters)
         && (m_deviceFeatures.extConditionalRendering.conditionalRendering
                 || !required.extConditionalRendering.conditionalRendering)
+        && (m_deviceFeatures.extCustomBorderColor.customBorderColors
+                || !required.extCustomBorderColor.customBorderColors)
+        && (m_deviceFeatures.extCustomBorderColor.customBorderColorWithoutFormat
+                || !required.extCustomBorderColor.customBorderColorWithoutFormat)
         && (m_deviceFeatures.extDepthClipEnable.depthClipEnable
                 || !required.extDepthClipEnable.depthClipEnable)
         && (m_deviceFeatures.extHostQueryReset.hostQueryReset
                 || !required.extHostQueryReset.hostQueryReset)
         && (m_deviceFeatures.extMemoryPriority.memoryPriority
                 || !required.extMemoryPriority.memoryPriority)
+        && (m_deviceFeatures.extRobustness2.robustBufferAccess2
+                || !required.extRobustness2.robustBufferAccess2)
+        && (m_deviceFeatures.extRobustness2.robustImageAccess2
+                || !required.extRobustness2.robustImageAccess2)
+        && (m_deviceFeatures.extRobustness2.nullDescriptor
+                || !required.extRobustness2.nullDescriptor)
         && (m_deviceFeatures.extTransformFeedback.transformFeedback
                 || !required.extTransformFeedback.transformFeedback)
         && (m_deviceFeatures.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor
@@ -242,15 +259,17 @@ namespace dxvk {
           DxvkDeviceFeatures  enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
-    std::array<DxvkExt*, 20> devExtensionList = {{
+    std::array<DxvkExt*, 22> devExtensionList = {{
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.amdShaderFragmentMask,
       &devExtensions.extConditionalRendering,
+      &devExtensions.extCustomBorderColor,
       &devExtensions.extDepthClipEnable,
       &devExtensions.extFullScreenExclusive,
       &devExtensions.extHostQueryReset,
       &devExtensions.extMemoryBudget,
       &devExtensions.extMemoryPriority,
+      &devExtensions.extRobustness2,
       &devExtensions.extShaderDemoteToHelperInvocation,
       &devExtensions.extShaderStencilExport,
       &devExtensions.extShaderViewportIndexLayer,
@@ -300,6 +319,11 @@ namespace dxvk {
       enabledFeatures.extConditionalRendering.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extConditionalRendering);
     }
 
+    if (devExtensions.extCustomBorderColor) {
+      enabledFeatures.extCustomBorderColor.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT;
+      enabledFeatures.extCustomBorderColor.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extCustomBorderColor);
+    }
+
     if (devExtensions.extDepthClipEnable) {
       enabledFeatures.extDepthClipEnable.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT;
       enabledFeatures.extDepthClipEnable.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extDepthClipEnable);
@@ -318,6 +342,11 @@ namespace dxvk {
     if (devExtensions.extShaderDemoteToHelperInvocation) {
       enabledFeatures.extShaderDemoteToHelperInvocation.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT;
       enabledFeatures.extShaderDemoteToHelperInvocation.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extShaderDemoteToHelperInvocation);
+    }
+
+    if (devExtensions.extRobustness2) {
+      enabledFeatures.extRobustness2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+      enabledFeatures.extRobustness2.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extRobustness2);
     }
 
     if (devExtensions.extTransformFeedback) {
@@ -475,6 +504,16 @@ namespace dxvk {
     m_deviceInfo.coreSubgroup.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
     m_deviceInfo.coreSubgroup.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.coreSubgroup);
 
+    if (m_deviceExtensions.supports(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME)) {
+      m_deviceInfo.extCustomBorderColor.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT;
+      m_deviceInfo.extCustomBorderColor.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extCustomBorderColor);
+    }
+
+    if (m_deviceExtensions.supports(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {
+      m_deviceInfo.extRobustness2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_EXT;
+      m_deviceInfo.extRobustness2.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extRobustness2);
+    }
+
     if (m_deviceExtensions.supports(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME)) {
       m_deviceInfo.extTransformFeedback.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT;
       m_deviceInfo.extTransformFeedback.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extTransformFeedback);
@@ -521,6 +560,11 @@ namespace dxvk {
       m_deviceFeatures.extConditionalRendering.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extConditionalRendering);
     }
 
+    if (m_deviceExtensions.supports(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME)) {
+      m_deviceFeatures.extCustomBorderColor.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT;
+      m_deviceFeatures.extCustomBorderColor.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extCustomBorderColor);
+    }
+
     if (m_deviceExtensions.supports(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME)) {
       m_deviceFeatures.extDepthClipEnable.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT;
       m_deviceFeatures.extDepthClipEnable.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extDepthClipEnable);
@@ -534,6 +578,11 @@ namespace dxvk {
     if (m_deviceExtensions.supports(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME)) {
       m_deviceFeatures.extMemoryPriority.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT;
       m_deviceFeatures.extMemoryPriority.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extMemoryPriority);
+    }
+
+    if (m_deviceExtensions.supports(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {
+      m_deviceFeatures.extRobustness2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+      m_deviceFeatures.extRobustness2.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extRobustness2);
     }
 
     if (m_deviceExtensions.supports(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)) {
@@ -619,12 +668,19 @@ namespace dxvk {
       "\n  variableMultisampleRate                : ", features.core.features.variableMultisampleRate ? "1" : "0",
       "\n", VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME,
       "\n  conditionalRendering                   : ", features.extConditionalRendering.conditionalRendering ? "1" : "0",
+      "\n", VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME,
+      "\n  customBorderColors                     : ", features.extCustomBorderColor.customBorderColors ? "1" : "0",
+      "\n  customBorderColorWithoutFormat         : ", features.extCustomBorderColor.customBorderColorWithoutFormat ? "1" : "0",
       "\n", VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME,
       "\n  depthClipEnable                        : ", features.extDepthClipEnable.depthClipEnable ? "1" : "0",
       "\n", VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,
       "\n  hostQueryReset                         : ", features.extHostQueryReset.hostQueryReset ? "1" : "0",
       "\n", VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME,
       "\n  memoryPriority                         : ", features.extMemoryPriority.memoryPriority ? "1" : "0",
+      "\n", VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+      "\n  robustBufferAccess2                    : ", features.extRobustness2.robustBufferAccess2 ? "1" : "0",
+      "\n  robustImageAccess2                     : ", features.extRobustness2.robustImageAccess2 ? "1" : "0",
+      "\n  nullDescriptor                         : ", features.extRobustness2.nullDescriptor ? "1" : "0",
       "\n", VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME,
       "\n  shaderDemoteToHelperInvocation         : ", features.extShaderDemoteToHelperInvocation.shaderDemoteToHelperInvocation ? "1" : "0",
       "\n", VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,

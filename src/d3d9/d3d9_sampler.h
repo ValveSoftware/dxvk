@@ -20,7 +20,7 @@ namespace dxvk {
     DWORD MaxAnisotropy;
     float MipmapLodBias;
     DWORD MaxMipLevel;
-    float BorderColor[4];
+    D3DCOLOR BorderColor;
   };
 
   struct D3D9SamplerKeyHash {
@@ -40,15 +40,15 @@ namespace dxvk {
     key.MinFilter = std::clamp(key.MinFilter, D3DTEXF_NONE, D3DTEXF_ANISOTROPIC);
     key.MipFilter = std::clamp(key.MipFilter, D3DTEXF_NONE, D3DTEXF_ANISOTROPIC);
 
-    key.MaxAnisotropy = std::clamp<DWORD>(key.MaxAnisotropy, 0, 16);
+    key.MaxAnisotropy = std::min<DWORD>(key.MaxAnisotropy, 16);
 
     if (key.MipFilter == D3DTEXF_NONE) {
       // May as well try and keep slots down.
       key.MipmapLodBias = 0;
     }
     else {
-      // Games also pass NAN/INF here, this accounts for that.
-      if (unlikely(std::isnan(key.MipmapLodBias)))
+      // Games also pass NAN here, this accounts for that.
+      if (unlikely(key.MipmapLodBias != key.MipmapLodBias))
         key.MipmapLodBias = 0.0f;
 
       // Clamp between -15.0f and 15.0f, matching mip limits of d3d9.
@@ -63,12 +63,7 @@ namespace dxvk {
     if (key.AddressU != D3DTADDRESS_BORDER
      && key.AddressV != D3DTADDRESS_BORDER
      && key.AddressW != D3DTADDRESS_BORDER) {
-      for (auto& val : key.BorderColor)
-        val = 0.0f;
-    }
-    else {
-      for (auto& val : key.BorderColor)
-        val = val >= 0.5f ? 1.0f : 0.0f;
+      key.BorderColor = 0;
     }
   }
 
