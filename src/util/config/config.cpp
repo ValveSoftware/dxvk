@@ -238,6 +238,26 @@ namespace dxvk {
     { R"(\\MonsterHunterWorld\.exe$)", {{
       { "d3d11.apitraceMode",               "True" },
     }} },
+    /* The Dungeon of Maheulbeuk                  */
+    { R"(\\Naheulbeuk\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* The Ghost Train                            */
+    { R"(\\TheGhostTrain\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* Missing Children                           */
+    { R"(\\Missing Children\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* The Convenience Store Yakin Jiken          */
+    { R"(\\The Convenience Store Yakin Jiken\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* Art of Rally                               */
+    { R"(\\artofrally(_demo)?\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
 
     /**********************************************/
     /* D3D9 GAMES                                 */
@@ -593,7 +613,7 @@ namespace dxvk {
       filePath = "dxvk.conf";
     
     // Open the file if it exists
-    std::ifstream stream(filePath);
+    std::ifstream stream(str::tows(filePath.c_str()).c_str());
 
     if (!stream)
       return config;

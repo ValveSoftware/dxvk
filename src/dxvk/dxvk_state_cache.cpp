@@ -40,13 +40,22 @@ namespace dxvk {
     }
 
     template<typename T>
-    bool read(T& data) {
-      if (m_read + sizeof(T) > m_size)
-        return false;
-      
-      std::memcpy(&data, &m_data[m_read], sizeof(T));
-      m_read += sizeof(T);
-      return true;
+    bool read(T& data, uint32_t version) {
+      return read(data);
+    }
+
+    bool read(DxvkBindingMask& data, uint32_t version) {
+      if (version < 9) {
+        DxvkBindingMaskV8 v8;
+
+        if (!read(v8))
+          return false;
+
+        data = v8.convert();
+        return true;
+      }
+
+      return read(data);
     }
 
     template<typename T>
@@ -76,6 +85,16 @@ namespace dxvk {
     size_t m_size = 0;
     size_t m_read = 0;
     char   m_data[MaxSize];
+
+    template<typename T>
+    bool read(T& data) {
+      if (m_read + sizeof(T) > m_size)
+        return false;
+
+      std::memcpy(&data, &m_data[m_read], sizeof(T));
+      m_read += sizeof(T);
+      return true;
+    }
 
   };
 
@@ -128,12 +147,12 @@ namespace dxvk {
       Logger::warn("DXVK: Creating new state cache file");
 
       // Start with an empty file
-      std::ofstream file(getCacheFileName(),
+      std::ofstream file(getCacheFileName().c_str(),
         std::ios_base::binary |
         std::ios_base::trunc);
 
       if (!file && env::createDirectory(getCacheDir())) {
-        file = std::ofstream(getCacheFileName(),
+        file = std::ofstream(getCacheFileName().c_str(),
           std::ios_base::binary |
           std::ios_base::trunc);
       }
@@ -349,7 +368,7 @@ namespace dxvk {
 
   bool DxvkStateCache::readCacheFile() {
     // Open state file and just fail if it doesn't exist
-    std::ifstream ifile(getCacheFileName(), std::ios_base::binary);
+    std::ifstream ifile(getCacheFileName().c_str(), std::ios_base::binary);
 
     if (!ifile) {
       Logger::warn("DXVK: No state cache file found");
@@ -519,13 +538,13 @@ namespace dxvk {
 
     for (uint32_t i = 0; i < 6; i++) {
       if (stageMask & VkShaderStageFlagBits(1 << i))
-        data.read(keys[i]);
+        data.read(keys[i], version);
       else
         keys[i] = g_nullShaderKey;
     }
 
     if (stageMask & VK_SHADER_STAGE_COMPUTE_BIT) {
-      if (!data.read(entry.cpState.bsBindingMask))
+      if (!data.read(entry.cpState.bsBindingMask, version))
         return false;
     } else {
       // Read packed render pass format
@@ -533,9 +552,9 @@ namespace dxvk {
       uint8_t imageFormat = 0;
       uint8_t imageLayout = 0;
 
-      if (!data.read(sampleCount)
-       || !data.read(imageFormat)
-       || !data.read(imageLayout))
+      if (!data.read(sampleCount, version)
+       || !data.read(imageFormat, version)
+       || !data.read(imageLayout, version))
         return false;
 
       entry.format.sampleCount = VkSampleCountFlagBits(sampleCount);
@@ -543,8 +562,8 @@ namespace dxvk {
       entry.format.depth.layout = unpackImageLayout(imageLayout);
 
       for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
-        if (!data.read(imageFormat)
-         || !data.read(imageLayout))
+        if (!data.read(imageFormat, version)
+         || !data.read(imageLayout, version))
           return false;
 
         entry.format.color[i].format = VkFormat(imageFormat);
@@ -555,15 +574,15 @@ namespace dxvk {
         return false;
 
       // Read common pipeline state
-      if (!data.read(entry.gpState.bsBindingMask)
-       || !data.read(entry.gpState.ia)
-       || !data.read(entry.gpState.il)
-       || !data.read(entry.gpState.rs)
-       || !data.read(entry.gpState.ms)
-       || !data.read(entry.gpState.ds)
-       || !data.read(entry.gpState.om)
-       || !data.read(entry.gpState.dsFront)
-       || !data.read(entry.gpState.dsBack))
+      if (!data.read(entry.gpState.bsBindingMask, version)
+       || !data.read(entry.gpState.ia, version)
+       || !data.read(entry.gpState.il, version)
+       || !data.read(entry.gpState.rs, version)
+       || !data.read(entry.gpState.ms, version)
+       || !data.read(entry.gpState.ds, version)
+       || !data.read(entry.gpState.om, version)
+       || !data.read(entry.gpState.dsFront, version)
+       || !data.read(entry.gpState.dsBack, version))
         return false;
 
       if (entry.gpState.il.attributeCount() > MaxNumVertexAttributes
@@ -572,25 +591,25 @@ namespace dxvk {
 
       // Read render target swizzles
       for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
-        if (!data.read(entry.gpState.omSwizzle[i]))
+        if (!data.read(entry.gpState.omSwizzle[i], version))
           return false;
       }
 
       // Read render target blend info
       for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
-        if (!data.read(entry.gpState.omBlend[i]))
+        if (!data.read(entry.gpState.omBlend[i], version))
           return false;
       }
 
       // Read defined vertex attributes
       for (uint32_t i = 0; i < entry.gpState.il.attributeCount(); i++) {
-        if (!data.read(entry.gpState.ilAttributes[i]))
+        if (!data.read(entry.gpState.ilAttributes[i], version))
           return false;
       }
 
       // Read defined vertex bindings
       for (uint32_t i = 0; i < entry.gpState.il.bindingCount(); i++) {
-        if (!data.read(entry.gpState.ilBindings[i]))
+        if (!data.read(entry.gpState.ilBindings[i], version))
           return false;
       }
     }
@@ -602,12 +621,12 @@ namespace dxvk {
 
     uint32_t specConstantMask = 0;
 
-    if (!data.read(specConstantMask))
+    if (!data.read(specConstantMask, version))
       return false;
 
     for (uint32_t i = 0; i < MaxNumSpecConstants; i++) {
       if (specConstantMask & (1 << i)) {
-        if (!data.read(sc.specConstants[i]))
+        if (!data.read(sc.specConstants[i], version))
           return false;
       }
     }
@@ -795,7 +814,7 @@ namespace dxvk {
 
     if (in.shaders.cs.eq(g_nullShaderKey)) {
       // Binding mask
-      out.gpState.bsBindingMask = in.gpState.bsBindingMask;
+      out.gpState.bsBindingMask = in.gpState.bsBindingMask.convert();
 
       // Graphics state
       out.gpState.ia = DxvkIaInfo(
@@ -871,7 +890,7 @@ namespace dxvk {
         out.cpState.sc.specConstants[i] = in.cpState.scSpecConstants[i];
     } else {
       // Binding mask
-      out.cpState.bsBindingMask = in.cpState.bsBindingMask;
+      out.cpState.bsBindingMask = in.cpState.bsBindingMask.convert();
 
       for (uint32_t i = 0; i < 8 && i < MaxNumSpecConstants; i++)
         out.gpState.sc.specConstants[i] = in.gpState.scSpecConstants[i];
@@ -935,7 +954,7 @@ namespace dxvk {
       }
 
       if (!file) {
-        file = std::ofstream(getCacheFileName(),
+        file = std::ofstream(getCacheFileName().c_str(),
           std::ios_base::binary |
           std::ios_base::app);
       }
@@ -945,7 +964,7 @@ namespace dxvk {
   }
 
 
-  std::string DxvkStateCache::getCacheFileName() const {
+  std::wstring DxvkStateCache::getCacheFileName() const {
     std::string path = getCacheDir();
 
     if (!path.empty() && *path.rbegin() != '/')
@@ -958,7 +977,7 @@ namespace dxvk {
       exeName.erase(extp);
     
     path += exeName + ".dxvk-cache";
-    return path;
+    return str::tows(path.c_str());
   }
 
 

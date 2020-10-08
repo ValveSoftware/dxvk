@@ -160,6 +160,13 @@ namespace dxvk {
     for (uint32_t i = 0; i < m_memProps.memoryHeapCount; i++) {
       m_memHeaps[i].properties = m_memProps.memoryHeaps[i];
       m_memHeaps[i].stats      = DxvkMemoryStats { 0, 0 };
+      m_memHeaps[i].budget     = 0;
+
+      /* Target 80% of a heap on systems where we want
+       * to avoid oversubscribing memory heaps */
+      if ((m_memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+       && (m_device->isUnifiedMemoryArchitecture()))
+        m_memHeaps[i].budget = (8 * m_memProps.memoryHeaps[i].size) / 10;
     }
     
     for (uint32_t i = 0; i < m_memProps.memoryTypeCount; i++) {
@@ -170,7 +177,17 @@ namespace dxvk {
       m_memTypes[i].chunkSize  = pickChunkSize(i);
     }
 
-    m_restrictAllocations = m_device->isUnifiedMemoryArchitecture();
+    /* Work around an issue on Nvidia drivers where using the entire
+     * device_local | host_visible heap can cause crashes, presumably
+     * due to subsequent internal driver allocations failing */
+    if (m_device->properties().core.properties.vendorID == uint16_t(DxvkGpuVendor::Nvidia)) {
+      for (uint32_t i = 0; i < m_memProps.memoryTypeCount; i++) {
+        constexpr VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+
+        if ((m_memTypes[i].memType.propertyFlags & flags) == flags)
+          m_memTypes[i].heap->budget = m_memTypes[i].heap->properties.size / 2;
+      }
+    }
   }
   
   
@@ -316,7 +333,7 @@ namespace dxvk {
     bool useMemoryPriority = (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
                           && (m_device->features().extMemoryPriority.memoryPriority);
     
-    if (m_restrictAllocations && type->heap->stats.memoryAllocated + size > type->heap->properties.size)
+    if (type->heap->budget && type->heap->stats.memoryAllocated + size > type->heap->budget)
       return DxvkDeviceMemory();
 
     DxvkDeviceMemory result;
