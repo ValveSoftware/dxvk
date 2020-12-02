@@ -32,8 +32,8 @@ export WINEPREFIX=/path/to/.wine-prefix
 
 ### Requirements:
 - [wine 3.10](https://www.winehq.org/) or newer
-- [Meson](http://mesonbuild.com/) build system (at least version 0.46)
-- [Mingw-w64](http://mingw-w64.org/) compiler and headers (at least version 6.0)
+- [Meson](https://mesonbuild.com/) build system (at least version 0.46)
+- [Mingw-w64](http://mingw-w64.org/) compiler and headers (at least version 8.0)
 - [glslang](https://github.com/KhronosGroup/glslang) compiler
 
 ### Building DLLs
@@ -84,6 +84,7 @@ The `DXVK_HUD` environment variable controls a HUD which can display the framera
 - `api`: Shows the D3D feature level used by the application.
 - `compiler`: Shows shader compiler activity
 - `samplers`: Shows the current number of sampler pairs used *[D3D9 Only]*
+- `scale=x`: Scales the HUD by a factor of `x` (e.g. `1.5`)
 
 Additionally, `DXVK_HUD=1` has the same effect as `DXVK_HUD=devinfo,fps`, and `DXVK_HUD=full` enables all available HUD elements.
 

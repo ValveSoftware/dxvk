@@ -269,23 +269,6 @@ namespace dxvk {
 
     if (pPredicate && !std::exchange(s_errorShown, true))
       Logger::err("D3D11DeviceContext::SetPredication: Stub");
-
-    // TODO: Figure out why this breaks Watch Dogs and crashes War Thunder
-    // if (!m_device->features().extConditionalRendering.conditionalRendering)
-    //   return;
-
-    // EmitCs([
-    //   cPredicate = Com<D3D11Query, false>(predicate),
-    //   cValue     = PredicateValue
-    // ] (DxvkContext* ctx) {
-    //   DxvkBufferSlice predSlice;
-
-    //   if (cPredicate != nullptr)
-    //     predSlice = cPredicate->GetPredicate(ctx);
-      
-    //   ctx->setPredicate(predSlice,
-    //     cValue ? VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT : 0);
-    // });
   }
   
   
@@ -1535,24 +1518,25 @@ namespace dxvk {
     
     // If possible, batch up multiple indirect draw calls of
     // the same type into one single multiDrawIndirect call
-    constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     auto cmdData = static_cast<D3D11CmdDrawIndirectData*>(m_cmdData);
-
-    bool useMultiDraw = cmdData && cmdData->type == D3D11CmdType::DrawIndirectIndexed
-      && cmdData->offset + cmdData->count * stride == AlignedByteOffsetForArgs;
+    auto stride = 0u;
     
-    if (useMultiDraw) {
+    if (cmdData && cmdData->type == D3D11CmdType::DrawIndirectIndexed)
+      stride = GetIndirectCommandStride(cmdData, AlignedByteOffsetForArgs, sizeof(VkDrawIndexedIndirectCommand));
+    
+    if (stride) {
       cmdData->count += 1;
+      cmdData->stride = stride;
     } else {
       cmdData = EmitCsCmd<D3D11CmdDrawIndirectData>(
         [] (DxvkContext* ctx, const D3D11CmdDrawIndirectData* data) {
-          ctx->drawIndexedIndirect(data->offset, data->count,
-            sizeof(VkDrawIndexedIndirectCommand));
+          ctx->drawIndexedIndirect(data->offset, data->count, data->stride);
         });
       
       cmdData->type   = D3D11CmdType::DrawIndirectIndexed;
       cmdData->offset = AlignedByteOffsetForArgs;
       cmdData->count  = 1;
+      cmdData->stride = 0;
     }
   }
   
@@ -1565,24 +1549,25 @@ namespace dxvk {
 
     // If possible, batch up multiple indirect draw calls of
     // the same type into one single multiDrawIndirect call
-    constexpr VkDeviceSize stride = sizeof(VkDrawIndirectCommand);
     auto cmdData = static_cast<D3D11CmdDrawIndirectData*>(m_cmdData);
-
-    bool useMultiDraw = cmdData && cmdData->type == D3D11CmdType::DrawIndirect
-      && cmdData->offset + cmdData->count * stride == AlignedByteOffsetForArgs;
+    auto stride = 0u;
     
-    if (useMultiDraw) {
+    if (cmdData && cmdData->type == D3D11CmdType::DrawIndirect)
+      stride = GetIndirectCommandStride(cmdData, AlignedByteOffsetForArgs, sizeof(VkDrawIndirectCommand));
+    
+    if (stride) {
       cmdData->count += 1;
+      cmdData->stride = stride;
     } else {
       cmdData = EmitCsCmd<D3D11CmdDrawIndirectData>(
         [] (DxvkContext* ctx, const D3D11CmdDrawIndirectData* data) {
-          ctx->drawIndirect(data->offset, data->count,
-            sizeof(VkDrawIndirectCommand));
+          ctx->drawIndirect(data->offset, data->count, data->stride);
         });
       
       cmdData->type   = D3D11CmdType::DrawIndirect;
       cmdData->offset = AlignedByteOffsetForArgs;
       cmdData->count  = 1;
+      cmdData->stride = 0;
     }
   }
   
@@ -3806,9 +3791,6 @@ namespace dxvk {
       auto scissor  = VkRect2D();
 
       ctx->setViewports(1, &viewport, &scissor);
-
-      // Reset predication
-      ctx->setPredicate(DxvkBufferSlice(), 0);
 
       // Unbind indirect draw buffer
       ctx->bindDrawBuffers(DxvkBufferSlice(), DxvkBufferSlice());

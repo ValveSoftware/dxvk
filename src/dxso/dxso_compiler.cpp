@@ -2150,60 +2150,69 @@ namespace dxvk {
 
 
   void DxsoCompiler::emitMatrixAlu(const DxsoInstructionContext& ctx) {
-    const auto& src = ctx.src;
-
-    DxsoRegMask mask = ctx.dst.mask;
-
-    DxsoRegisterPointer dst = emitGetOperandPtr(ctx.dst);
-
-    DxsoRegisterValue result;
-    result.type.ctype = dst.type.ctype;
-    result.type.ccount = mask.popCount();
-
-    DxsoVectorType scalarType = result.type;
-    scalarType.ccount = 1;
-
-    const uint32_t typeId = getVectorTypeId(result.type);
-    const uint32_t scalarTypeId = getVectorTypeId(scalarType);
-
     const DxsoOpcode opcode = ctx.instruction.opcode;
 
     uint32_t dotCount;
-    uint32_t iterCount;
+    uint32_t componentCount;
 
     switch (opcode) {
       case DxsoOpcode::M3x2:
-        dotCount  = 3;
-        iterCount = 2;
+        dotCount       = 3;
+        componentCount = 2;
         break;
       case DxsoOpcode::M3x3:
-        dotCount  = 3;
-        iterCount = 3;
+        dotCount       = 3;
+        componentCount = 3;
         break;
       case DxsoOpcode::M3x4:
-        dotCount  = 3;
-        iterCount = 4;
+        dotCount       = 3;
+        componentCount = 4;
         break;
       case DxsoOpcode::M4x3:
-        dotCount  = 4;
-        iterCount = 3;
+        dotCount       = 4;
+        componentCount = 3;
         break;
       case DxsoOpcode::M4x4:
-        dotCount  = 4;
-        iterCount = 4;
+        dotCount       = 4;
+        componentCount = 4;
         break;
       default:
         Logger::warn(str::format("DxsoCompiler::emitMatrixAlu: unimplemented op ", opcode));
         return;
     }
 
+    DxsoRegisterPointer dst = emitGetOperandPtr(ctx.dst);
+
+    // Fix the dst mask if componentCount != maskCount
+    // ie. M4x3 on .xyzw.
+    uint32_t maskCnt = 0;
+    uint8_t mask = 0;
+    for (uint32_t i = 0; i < 4 && maskCnt < componentCount; i++) {
+      if (ctx.dst.mask[i]) {
+        mask |= 1 << i;
+        maskCnt++;
+      }
+    }
+    DxsoRegMask dstMask = DxsoRegMask(mask);
+
+    DxsoRegisterValue result;
+    result.type.ctype  = dst.type.ctype;
+    result.type.ccount = componentCount;
+
+    DxsoVectorType scalarType;
+    scalarType.ctype = result.type.ctype;
+    scalarType.ccount = 1;
+
+    const uint32_t typeId = getVectorTypeId(result.type);
+    const uint32_t scalarTypeId = getVectorTypeId(scalarType);
+
     DxsoRegMask srcMask(true, true, true, dotCount == 4);
     std::array<uint32_t, 4> indices;
 
-    DxsoRegister src0 = src[0];
-    DxsoRegister src1 = src[1];
+    DxsoRegister src0 = ctx.src[0];
+    DxsoRegister src1 = ctx.src[1];
 
-    for (uint32_t i = 0; i < iterCount; i++) {
+    for (uint32_t i = 0; i < componentCount; i++) {
       indices[i] = m_module.opDot(scalarTypeId,
         emitRegisterLoad(src0, srcMask).id,
         emitRegisterLoad(src1, srcMask).id);
@@ -2212,9 +2221,9 @@ namespace dxvk {
     }
 
     result.id = m_module.opCompositeConstruct(
-      typeId, iterCount, indices.data());
+      typeId, componentCount, indices.data());
 
-    this->emitDstStore(dst, result, mask, ctx.dst.saturate, emitPredicateLoad(ctx), ctx.dst.shift, ctx.dst.id);
+    this->emitDstStore(dst, result, dstMask, ctx.dst.saturate, emitPredicateLoad(ctx), ctx.dst.shift, ctx.dst.id);
   }
 
 
@@ -3587,6 +3596,21 @@ void DxsoCompiler::emitControlFlowGenericLoop(
       uint32_t alphaId = m_module.opCompositeExtract(floatType,
         m_module.opLoad(m_module.defVectorType(floatType, 4), oC0.id),
         1, &alphaComponentId);
+
+      if (m_moduleInfo.options.alphaTestWiggleRoom) {
+        // NV has wonky interpolation of all 1's in a VS -> PS going to 0.999999...
+        // This causes garbage-looking graphics on people's clothing in EverQuest 2 as it does alpha == 1.0.
+
+        // My testing shows the alpha test has a precision of 1/256 for all A8 and below formats,
+        // and around 1 / 2048 for A32F formats and 1 / 4096 for A16F formats (It makes no sense to me too)
+        // so anyway, we're just going to round this to a precision of 1 / 4096 and hopefully this should make things happy
+        // everywhere.
+        const uint32_t alphaSizeId = m_module.constf32(4096.0f);
+
+        alphaId = m_module.opFMul(floatType, alphaId, alphaSizeId);
+        alphaId = m_module.opRound(floatType, alphaId);
+        alphaId = m_module.opFDiv(floatType, alphaId, alphaSizeId);
+      }
       
       // Load alpha reference
       uint32_t alphaRefMember = m_module.constu32(uint32_t(D3D9RenderStateItem::AlphaRef));

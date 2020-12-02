@@ -2924,16 +2924,37 @@ namespace dxvk {
           1, &zeroIndex);
       }
     }
-    
-    // Store result in the destination register
+
     DxbcRegisterValue result;
     result.type.ctype  = ins.dst[0].dataType;
     result.type.ccount = componentCount;
+
+    uint32_t typeId = getVectorTypeId(result.type);
     result.id = componentCount > 1
-      ? m_module.opCompositeConstruct(
-          getVectorTypeId(result.type),
+      ? m_module.opCompositeConstruct(typeId,
           componentCount, scalarIds.data())
       : scalarIds[0];
+
+    if (isPack) {
+      // Some drivers return infinity if the input value is above a certain
+      // threshold, but D3D wants us to return infinity only if the input is
+      // actually infinite. Fix this up to return the maximum representable
+      // 16-bit floating point number instead, but preserve input infinity.
+      uint32_t t_bvec = getVectorTypeId({ DxbcScalarType::Bool, componentCount });
+      uint32_t f16Infinity = m_module.constuReplicant(0x7C00, componentCount);
+      uint32_t f16Unsigned = m_module.constuReplicant(0x7FFF, componentCount);
+
+      uint32_t isInputInf = m_module.opIsInf(t_bvec, src.id);
+      uint32_t isValueInf = m_module.opIEqual(t_bvec, f16Infinity,
+        m_module.opBitwiseAnd(typeId, result.id, f16Unsigned));
+
+      result.id = m_module.opSelect(getVectorTypeId(result.type),
+        m_module.opLogicalAnd(t_bvec, isValueInf, m_module.opLogicalNot(t_bvec, isInputInf)),
+        m_module.opISub(typeId, result.id, m_module.constuReplicant(1, componentCount)),
+        result.id);
+    }
+
+    // Store result in the destination register
     emitRegisterStore(ins.dst[0], result);
   }
 
@@ -3374,15 +3395,6 @@ namespace dxvk {
     // Extract coordinates from address
     const DxbcRegisterValue coord = emitCalcTexCoord(address, imageType);
     
-    // Fetch texels only if the resource is actually bound
-    const uint32_t labelMerge     = m_module.allocateId();
-    const uint32_t labelBound     = m_module.allocateId();
-    const uint32_t labelUnbound   = m_module.allocateId();
-    
-    m_module.opSelectionMerge(labelMerge, spv::SelectionControlMaskNone);
-    m_module.opBranchConditional(m_textures.at(textureId).specId, labelBound, labelUnbound);
-    m_module.opLabel(labelBound);
-    
     // Reading a typed image or buffer view
     // always returns a four-component vector.
     const uint32_t imageId = m_module.opLoad(
@@ -3402,32 +3414,15 @@ namespace dxvk {
       ins.src[1].swizzle, ins.dst[0].mask);
     
     // If the texture is not bound, return zeroes
-    m_module.opBranch(labelMerge);
-    m_module.opLabel(labelUnbound);
-    
-    DxbcRegisterValue zeroes = [&] {
-      switch (result.type.ctype) {
-        case DxbcScalarType::Float32: return emitBuildConstVecf32(0.0f, 0.0f, 0.0f, 0.0f, ins.dst[0].mask);
-        case DxbcScalarType::Uint32:  return emitBuildConstVecu32(0u, 0u, 0u, 0u,         ins.dst[0].mask);
-        case DxbcScalarType::Sint32:  return emitBuildConstVeci32(0, 0, 0, 0,             ins.dst[0].mask);
-        default: throw DxvkError("DxbcCompiler: Invalid scalar type");
-      }
-    }();
-    
-    m_module.opBranch(labelMerge);
-    m_module.opLabel(labelMerge);
-    
-    // Merge the result with a phi function
-    const std::array<SpirvPhiLabel, 2> phiLabels = {{
-      { result.id, labelBound   },
-      { zeroes.id, labelUnbound },
-    }};
+    DxbcRegisterValue bound;
+    bound.type = { DxbcScalarType::Bool, 1 };
+    bound.id = m_textures.at(textureId).specId;
     
     DxbcRegisterValue mergedResult;
     mergedResult.type = result.type;
-    mergedResult.id = m_module.opPhi(
-      getVectorTypeId(mergedResult.type),
-      phiLabels.size(), phiLabels.data());
+    mergedResult.id = m_module.opSelect(getVectorTypeId(mergedResult.type),
+      emitBuildVector(bound, result.type.ccount).id, result.id,
+      emitBuildZeroVector(result.type).id);
     
     emitRegisterStore(ins.dst[0], mergedResult);
   }
@@ -3548,6 +3543,14 @@ namespace dxvk {
     result = emitRegisterSwizzle(result,
       textureReg.swizzle, ins.dst[0].mask);
     
+    DxbcRegisterValue bound;
+    bound.type = { DxbcScalarType::Bool, 1 };
+    bound.id = m_textures.at(textureId).specId;
+    
+    result.id = m_module.opSelect(getVectorTypeId(result.type),
+      emitBuildVector(bound, result.type.ccount).id, result.id,
+      emitBuildZeroVector(result.type).id);
+
     emitRegisterStore(ins.dst[0], result);
   }
   
@@ -3700,6 +3703,14 @@ namespace dxvk {
         textureReg.swizzle, ins.dst[0].mask);
     }
     
+    DxbcRegisterValue bound;
+    bound.type = { DxbcScalarType::Bool, 1 };
+    bound.id = m_textures.at(textureId).specId;
+    
+    result.id = m_module.opSelect(getVectorTypeId(result.type),
+      emitBuildVector(bound, result.type.ccount).id, result.id,
+      emitBuildZeroVector(result.type).id);
+
     emitRegisterStore(ins.dst[0], result);
   }
   
@@ -4412,6 +4423,42 @@ namespace dxvk {
   }
   
   
+  DxbcRegisterValue DxbcCompiler::emitBuildVector(
+          DxbcRegisterValue       scalar,
+          uint32_t                count) {
+    if (count == 1)
+      return scalar;
+
+    std::array<uint32_t, 4> scalarIds =
+      { scalar.id, scalar.id, scalar.id, scalar.id };
+
+    DxbcRegisterValue result;
+    result.type.ctype = scalar.type.ctype;
+    result.type.ccount = count;
+    result.id = m_module.constComposite(
+      getVectorTypeId(result.type),
+      count, scalarIds.data());
+    return result;
+  }
+
+
+  DxbcRegisterValue DxbcCompiler::emitBuildZeroVector(
+          DxbcVectorType          type) {
+    DxbcRegisterValue result;
+    result.type.ctype = type.ctype;
+    result.type.ccount = 1;
+
+    switch (type.ctype) {
+      case DxbcScalarType::Float32: result.id = m_module.constf32(0.0f); break;
+      case DxbcScalarType::Uint32:  result.id = m_module.constu32(0u); break;
+      case DxbcScalarType::Sint32:  result.id = m_module.consti32(0); break;
+      default: throw DxvkError("DxbcCompiler: Invalid scalar type");
+    }
+
+    return emitBuildVector(result, type.ccount);
+  }
+
+
   DxbcRegisterValue DxbcCompiler::emitRegisterBitcast(
           DxbcRegisterValue       srcValue,
           DxbcScalarType          dstType) {
@@ -4575,7 +4622,9 @@ namespace dxvk {
     
     switch (value.type.ctype) {
       case DxbcScalarType::Float32: value.id = m_module.opFAbs(typeId, value.id); break;
+      case DxbcScalarType::Float64: value.id = m_module.opFAbs(typeId, value.id); break;
       case DxbcScalarType::Sint32:  value.id = m_module.opSAbs(typeId, value.id); break;
+      case DxbcScalarType::Sint64:  value.id = m_module.opSAbs(typeId, value.id); break;
       default: Logger::warn("DxbcCompiler: Cannot get absolute value for given type");
     }
     
@@ -4648,15 +4697,22 @@ namespace dxvk {
           DxbcOpModifiers         modifiers) {
     const uint32_t typeId = getVectorTypeId(value.type);
     
-    if (value.type.ctype == DxbcScalarType::Float32) {
-      // Saturating only makes sense on floats
-      if (modifiers.saturate) {
-        const DxbcRegMask       mask = DxbcRegMask::firstN(value.type.ccount);
-        const DxbcRegisterValue vec0 = emitBuildConstVecf32(0.0f, 0.0f, 0.0f, 0.0f, mask);
-        const DxbcRegisterValue vec1 = emitBuildConstVecf32(1.0f, 1.0f, 1.0f, 1.0f, mask);
-        
-        value.id = m_module.opNClamp(typeId, value.id, vec0.id, vec1.id);
+    if (modifiers.saturate) {
+      DxbcRegMask mask;
+      DxbcRegisterValue vec0, vec1;
+
+      if (value.type.ctype == DxbcScalarType::Float32) {
+        mask = DxbcRegMask::firstN(value.type.ccount);
+        vec0 = emitBuildConstVecf32(0.0f, 0.0f, 0.0f, 0.0f, mask);
+        vec1 = emitBuildConstVecf32(1.0f, 1.0f, 1.0f, 1.0f, mask);
+      } else if (value.type.ctype == DxbcScalarType::Float64) {
+        mask = DxbcRegMask::firstN(value.type.ccount * 2);
+        vec0 = emitBuildConstVecf64(0.0, 0.0, mask);
+        vec1 = emitBuildConstVecf64(1.0, 1.0, mask);
       }
+
+      if (mask)
+        value.id = m_module.opNClamp(typeId, value.id, vec0.id, vec1.id);
     }
     
     return value;

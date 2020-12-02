@@ -45,10 +45,6 @@ namespace dxvk {
     { R"(\\FarCry4\.exe$)", {{
       { "dxgi.nvapiHack",                   "False" },
     }} },
-    /* Far Cry Primal: Nvidia performance         */
-    { R"(\\FCPrimal\.exe$)", {{
-      { "dxgi.nvapiHack",                   "False" },
-    } }},
     /* Frostpunk: Renders one frame with D3D9     *
      * after creating the DXGI swap chain         */
     { R"(\\Frostpunk\.exe$)", {{
@@ -409,6 +405,10 @@ namespace dxvk {
     /* SpellForce 2 Series                        */
     { R"(\\SpellForce2.*\.exe$)", {{
       { "d3d9.forceSamplerTypeSpecConstants", "True" },
+    }} },
+    /* Everquest 2                                */
+    { R"(\\EverQuest2.*\.exe$)", {{
+      { "d3d9.alphaTestWiggleRoom", "True" },
     }} },
   }};
 
