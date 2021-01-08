@@ -30,9 +30,6 @@ namespace dxvk {
             REFIID  riid,
             void**  ppvObject) final;
     
-    void STDMETHODCALLTYPE GetDevice(
-            ID3D11Device** ppDevice) final;
-    
     UINT STDMETHODCALLTYPE GetDataSize();
     
     void STDMETHODCALLTYPE GetDesc(D3D11_QUERY_DESC* pDesc) final;
@@ -96,7 +93,6 @@ namespace dxvk {
     
   private:
     
-    D3D11Device* const m_device;
     D3D11_QUERY_DESC1  m_desc;
 
     D3D11_VK_QUERY_STATE m_state;
