@@ -79,6 +79,7 @@ namespace dxvk {
     /* Devil May Cry 5                            */
     { R"(\\DevilMayCry5\.exe$)", {{
       { "d3d11.relaxedBarriers",            "True" },
+      { "d3d11.invariantPosition",          "True" },
     }} },
     /* Call of Duty WW2                           */
     { R"(\\s2_sp64_ship\.exe$)", {{
@@ -233,6 +234,7 @@ namespace dxvk {
     /* Monster Hunter World                       */
     { R"(\\MonsterHunterWorld\.exe$)", {{
       { "d3d11.apitraceMode",               "True" },
+      { "d3d11.invariantPosition",          "True" },
     }} },
     /* The Dungeon of Maheulbeuk                  */
     { R"(\\Naheulbeuk\.exe$)", {{
@@ -252,6 +254,10 @@ namespace dxvk {
     }} },
     /* Art of Rally                               */
     { R"(\\artofrally(_demo)?\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
+    }} },
+    /* Empire of Sin                               */
+    { R"(\\EmpireOfSin\.exe$)", {{
       { "d3d11.enableRtOutputNanFixup",     "True" },
     }} },
 
@@ -409,6 +415,18 @@ namespace dxvk {
     /* Everquest 2                                */
     { R"(\\EverQuest2.*\.exe$)", {{
       { "d3d9.alphaTestWiggleRoom", "True" },
+    }} },
+    /* Tomb Raider: Legend                       */
+    { R"(\\trl\.exe$)", {{
+      { "d3d9.apitraceMode",                "True" },
+    }} },
+    /* Everquest                                 */
+    { R"(\\eqgame\.exe$)", {{
+      { "d3d9.apitraceMode",                "True" },
+    }} },
+    /* VRChat                                    */
+    { R"(\\VRChat\.exe$)", {{
+      { "d3d11.enableRtOutputNanFixup",     "True" },
     }} },
   }};
 

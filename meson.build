@@ -39,6 +39,9 @@ dxvk_extradep = [ ]
 if dxvk_compiler.get_id() == 'msvc'
   wrc = find_program('rc')
 else
+  add_global_link_arguments('-static', '-static-libgcc', language: 'c')
+  add_global_link_arguments('-static', '-static-libgcc', '-static-libstdc++', language: 'cpp')
+
   if cpu_family == 'x86_64'
     wrc = find_program('x86_64-w64-mingw32-windres')
   elif cpu_family == 'x86'
@@ -54,6 +57,10 @@ if cpu_family == 'x86'
   endif
   if dxvk_compiler.has_link_argument('-Wl,--enable-stdcall-fixup')
     add_global_link_arguments('-Wl,--enable-stdcall-fixup', language: 'cpp')
+  endif
+  if dxvk_compiler.has_argument('-msse') and dxvk_compiler.has_argument('-msse2')
+    add_project_arguments('-msse', '-msse2', language: 'c')
+    add_project_arguments('-msse', '-msse2', language: 'cpp')
   endif
 endif
 
