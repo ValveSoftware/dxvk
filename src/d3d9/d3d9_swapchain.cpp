@@ -14,7 +14,6 @@ namespace dxvk {
     bool unicode;
     bool filter;
     WNDPROC proc;
-    D3D9SwapChainEx* swapchain;
   };
 
 
@@ -83,7 +82,7 @@ namespace dxvk {
   }
 
 
-  void HookWindowProc(HWND window, D3D9SwapChainEx* swapchain) {
+  void HookWindowProc(HWND window) {
     std::lock_guard lock(g_windowProcMapMutex);
 
     ResetWindowProc(window);
@@ -95,7 +94,6 @@ namespace dxvk {
       CallCharsetFunction(
       SetWindowLongPtrW, SetWindowLongPtrA, windowData.unicode,
         window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(D3D9WindowProc)));
-    windowData.swapchain = swapchain;
 
     g_windowProcMap[window] = std::move(windowData);
   }
@@ -126,27 +124,6 @@ namespace dxvk {
 
     if (message == WM_DESTROY)
       ResetWindowProc(window);
-    else if (message == WM_ACTIVATEAPP) {
-      D3DDEVICE_CREATION_PARAMETERS create_parms;
-      windowData.swapchain->GetDevice()->GetCreationParameters(&create_parms);
-
-      if (!(create_parms.BehaviorFlags & D3DCREATE_NOWINDOWCHANGES)) {
-        if (wparam) {
-          // Heroes of Might and Magic V needs this to resume drawing after a focus loss
-          D3DPRESENT_PARAMETERS params;
-          RECT rect;
-
-          GetMonitorRect(GetDefaultMonitor(), &rect);
-          windowData.swapchain->GetPresentParameters(&params);
-          SetWindowPos(window, nullptr, rect.left, rect.top, params.BackBufferWidth, params.BackBufferHeight,
-                       SWP_NOACTIVATE | SWP_NOZORDER);
-        }
-        else {
-          if (IsWindowVisible(window))
-            ShowWindow(window, SW_MINIMIZE);
-        }
-      }
-    }
 
     return CallCharsetFunction(
       CallWindowProcW, CallWindowProcA, unicode,
@@ -1421,7 +1398,7 @@ namespace dxvk {
     // Some games restore window styles after we have changed it, so hooking is
     // also required. Doing it will allow us to create fullscreen windows
     // regardless of their style and it also appears to work on Windows.
-    HookWindowProc(m_window, this);
+    HookWindowProc(m_window);
 
     D3D9WindowMessageFilter filter(m_window);
     
