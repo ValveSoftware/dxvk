@@ -260,6 +260,10 @@ namespace dxvk {
     { R"(\\EmpireOfSin\.exe$)", {{
       { "d3d11.enableRtOutputNanFixup",     "True" },
     }} },
+    /* Nioh 2                                     */
+    { R"(\\nioh2\.exe$)", {{
+      { "dxgi.deferSurfaceCreation",        "True" },
+    }} },
 
     /**********************************************/
     /* D3D9 GAMES                                 */
