@@ -9,7 +9,7 @@ dxvk_config_dll = shared_library('dxvk_config'+dll_ext, dxvk_config_src, dxvk_co
   dependencies        : [ lib_dxgi, dxvk_dep ],
   include_directories : dxvk_include_path,
   install             : true,
-  objects             : not dxvk_msvc ? 'dxvk_config'+def_spec_ext : [],
+  objects             : not dxvk_is_msvc ? 'dxvk_config'+def_spec_ext : [],
   vs_module_defs      : 'dxvk_config'+def_spec_ext,
   override_options    : ['cpp_std='+dxvk_cpp_std])
 
