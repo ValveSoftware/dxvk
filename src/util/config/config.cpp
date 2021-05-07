@@ -162,6 +162,10 @@ namespace dxvk {
     { R"(\\Atelier_(Lulua|Lydie_and_Suelle|Ryza(_2)?)\.exe$)", {{
       { "d3d9.deferSurfaceCreation",        "True" },
     }} },
+    /* ...                                        */
+    { R"(\\Atelier_(Lydie_and_Suelle|Firis|Sophie)_DX\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
     /* Fairy Tail                                 */
     { R"(\\FAIRY_TAIL\.exe$)", {{
       { "d3d9.deferSurfaceCreation",        "True" },
@@ -194,6 +198,14 @@ namespace dxvk {
     }} },
     /* Monster Hunter World                       */
     { R"(\\MonsterHunterWorld\.exe$)", {{
+      { "d3d11.apitraceMode",               "True" },
+    }} },
+    /* Kingdome Come: Deliverance                 */
+    { R"(\\KingdomCome\.exe$)", {{
+      { "d3d11.apitraceMode",               "True" },
+    }} },
+    /* Sniper Ghost Warrior Contracts             */
+    { R"(\\SGWContracts\.exe$)", {{
       { "d3d11.apitraceMode",               "True" },
     }} },
     /* Shadow of the Tomb Raider - invariant      *
@@ -236,17 +248,11 @@ namespace dxvk {
     }} },
     /* Gothic 3                                   */
     { R"(\\Gothic(3|3Final| III Forsaken Gods)\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
       { "d3d9.supportDFFormats",            "False" },
     }} },
     /* Risen                                      */
     { R"(\\Risen[23]?\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
       { "d3d9.invariantPosition",           "True" },
-    }} },
-    /* Nostale                                    */
-    { R"(\\NostaleClientX\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
     }} },
     /* Sonic Adventure 2                          */
     { R"(\\Sonic Adventure 2\\(launcher|sonic2app)\.exe$)", {{
@@ -276,10 +282,6 @@ namespace dxvk {
        of a 1x1 one if DF24 is NOT supported      */
     { R"(\\Dead Space\.exe$)", {{
       { "d3d9.supportDFFormats",                 "False" },
-    }} },
-    /* Burnout Paradise                           */
-    { R"(\\BurnoutParadise\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
     }} },
     /* Halo 2                                     */
     { R"(\\halo2\.exe$)", {{
@@ -382,7 +384,7 @@ namespace dxvk {
     }} },
     /* TrackMania Forever                        */
     { R"(\\TmForever\.exe$)", {{
-      { "d3d9.swvpFloatCount",              "128" },
+      { "d3d9.swvpFloatCount",              "256" },
       { "d3d9.swvpIntCount",                "16" },
       { "d3d9.swvpBoolCount",               "16" },
     }} },
@@ -393,8 +395,19 @@ namespace dxvk {
     }} },
     /* Warhammer: Online                         */
     { R"(\\WAR(-64)?\.exe$)", {{
-      { "d3d9.allowImplicitDiscard",        "False" },
       { "d3d9.customVendorId",              "1002" },
+    }} },
+    /* Dragon Nest                               */
+    { R"(\\DragonNest_x64\.exe$)", {{
+      { "d3d9.memoryTrackTest ",            "True" },
+    }} },
+    /* Dal Segno                                 */
+    { R"(\\DST\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
+    /* Kohan II                                  */
+    { R"(\\k2\.exe$)", {{
+      { "d3d9.memoryTrackTest",             "True" },
     }} },
   }};
 

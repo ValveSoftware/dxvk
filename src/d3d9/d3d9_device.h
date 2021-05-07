@@ -85,7 +85,7 @@ namespace dxvk {
     Rc<DxvkSampler> depth;
   };
 
-  struct D3D9UPBufferSlice {
+  struct D3D9BufferSlice {
     DxvkBufferSlice slice = {};
     void*           mapPtr = nullptr;
   };
@@ -999,7 +999,8 @@ namespace dxvk {
     Rc<DxvkBuffer>                  m_psFixedFunction;
     Rc<DxvkBuffer>                  m_psShared;
 
-    D3D9UPBufferSlice               m_upBuffer;
+    D3D9BufferSlice                 m_upBuffer;
+    D3D9BufferSlice                 m_managedUploadBuffer;
 
     const D3D9Options               m_d3d9Options;
     DxsoOptions                     m_dxsoOptions;
@@ -1073,7 +1074,8 @@ namespace dxvk {
 
     void DetermineConstantLayouts(bool canSWVP);
 
-    D3D9UPBufferSlice AllocUpBuffer(VkDeviceSize size);
+    template<bool UpBuffer>
+    D3D9BufferSlice AllocTempBuffer(VkDeviceSize size);
 
     bool ShouldRecord();
 
@@ -1082,6 +1084,31 @@ namespace dxvk {
             VkShaderStageFlagBits ShaderStage,
       const DWORD*                pShaderBytecode,
       const DxsoModuleInfo*       pModuleInfo);
+
+    inline uint32_t GetUPDataSize(uint32_t vertexCount, uint32_t stride) {
+      return vertexCount * stride;
+    }
+
+    inline uint32_t GetUPBufferSize(uint32_t vertexCount, uint32_t stride) {
+      return (vertexCount - 1) * stride + m_state.vertexDecl->GetSize();
+    }
+
+    inline void FillUPVertexBuffer(void* buffer, const void* userData, uint32_t dataSize, uint32_t bufferSize) {
+      uint8_t* data = reinterpret_cast<uint8_t*>(buffer);
+      // Don't copy excess data if we don't end up needing it.
+      dataSize = std::min(dataSize, bufferSize);
+      std::memcpy(data, userData, dataSize);
+      // Pad out with 0 to make buffer range checks happy
+      // Some games have components out of range in the vertex decl
+      // that they don't read from the shader.
+      // My tests show that these are read back as 0 always if out of range of
+      // the dataSize.
+      //
+      // So... make the actual buffer the range that satisfies the range of the vertex
+      // declaration and pad with 0s outside of it.
+      if (dataSize < bufferSize)
+        std::memset(data + dataSize, 0, bufferSize - dataSize);
+    }
 
     // So we don't do OOB.
     template <DxsoProgramType  ProgramType,
@@ -1152,16 +1179,16 @@ namespace dxvk {
           return D3DERR_INVALIDCALL;
 
         if constexpr (ConstantType == D3D9ConstantType::Float) {
-          auto begin = &set.fConsts[StartRegister];
-          auto end = &begin[Count];
+          const float* source = set.fConsts[StartRegister].data;
+          const size_t size   = Count * sizeof(Vector4);
 
-          std::copy(begin, end, reinterpret_cast<Vector4*>(pConstantData));
+          std::memcpy(pConstantData, source, size);
         }
         else if constexpr (ConstantType == D3D9ConstantType::Int) {
-          auto begin = &set.iConsts[StartRegister];
-          auto end = &begin[Count];
+          const int*  source = set.iConsts[StartRegister].data;
+          const size_t size  = Count * sizeof(Vector4i);
 
-          std::copy(begin, end, reinterpret_cast<Vector4i*>(pConstantData));
+          std::memcpy(pConstantData, source, size);
         }
         else {
           for (uint32_t i = 0; i < Count; i++) {

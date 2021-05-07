@@ -462,7 +462,7 @@ namespace dxvk {
         cLevelExtent);
     });
     
-    dstTexInfo->SetDirty(dst->GetSubresource(), true);
+    dstTexInfo->SetWrittenByGPU(dst->GetSubresource(), true);
 
     return D3D_OK;
   }
@@ -617,6 +617,7 @@ namespace dxvk {
       RECT oldRect = { 0, 0, 0, 0 };
       
       ::GetWindowRect(m_window, &oldRect);
+      ::MapWindowPoints(HWND_DESKTOP, ::GetParent(m_window), reinterpret_cast<POINT*>(&oldRect), 1);
       ::SetRect(&newRect, 0, 0, pPresentParams->BackBufferWidth, pPresentParams->BackBufferHeight);
       ::AdjustWindowRectEx(&newRect,
         ::GetWindowLongW(m_window, GWL_STYLE), FALSE,
@@ -654,7 +655,11 @@ namespace dxvk {
 
 
   HRESULT D3D9SwapChainEx::WaitForVBlank() {
-    Logger::warn("D3D9SwapChainEx::WaitForVBlank: Stub");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D9SwapChainEx::WaitForVBlank: Stub");
+
     return D3D_OK;
   }
 

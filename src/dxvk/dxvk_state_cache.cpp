@@ -58,6 +58,20 @@ namespace dxvk {
       return read(data);
     }
 
+    bool read(DxvkIlBinding& data, uint32_t version) {
+      if (version < 10) {
+        DxvkIlBindingV9 v9;
+
+        if (!read(v9))
+          return false;
+
+        data = v9.convert();
+        return true;
+      }
+
+      return read(data);
+    }
+
     template<typename T>
     bool write(const T& data) {
       if (m_size + sizeof(T) > MaxSize)
@@ -849,7 +863,8 @@ namespace dxvk {
         in.gpState.rsCullMode,
         in.gpState.rsFrontFace,
         in.gpState.rsViewportCount,
-        in.gpState.rsSampleCount);
+        in.gpState.rsSampleCount,
+        VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
 
       out.gpState.ms = DxvkMsInfo(
         in.gpState.msSampleCount,

@@ -567,7 +567,7 @@ namespace dxvk {
     // If not, we need to create a temporary framebuffer.
     int32_t attachmentIndex = -1;
     
-    if (m_flags.test(DxvkContextFlag::GpRenderPassBound)
+    if (m_state.om.framebuffer != nullptr
      && m_state.om.framebuffer->isFullSize(imageView))
       attachmentIndex = m_state.om.framebuffer->findAttachment(imageView);
 
@@ -580,11 +580,29 @@ namespace dxvk {
       // If there is overlap, we need to explicitly transition affected attachments.
       this->spillRenderPass(true);
       this->prepareImage(m_execBarriers, imageView->image(), imageView->subresources(), false);
+    } else if (!m_state.om.framebuffer->isWritable(attachmentIndex, clearAspects)) {
+      // We cannot inline clears if the clear aspects are not writable
+      this->spillRenderPass(true);
     }
 
-    if (m_flags.test(DxvkContextFlag::GpRenderPassBound))
-      this->performClear(imageView, attachmentIndex, 0, clearAspects, clearValue);
-    else
+    if (m_flags.test(DxvkContextFlag::GpRenderPassBound)) {
+      uint32_t colorIndex = std::max(0, m_state.om.framebuffer->getColorAttachmentIndex(attachmentIndex));
+
+      VkClearAttachment clearInfo;
+      clearInfo.aspectMask      = clearAspects;
+      clearInfo.colorAttachment = colorIndex;
+      clearInfo.clearValue      = clearValue;
+
+      VkClearRect clearRect;
+      clearRect.rect.offset.x       = 0;
+      clearRect.rect.offset.y       = 0;
+      clearRect.rect.extent.width   = imageView->mipLevelExtent(0).width;
+      clearRect.rect.extent.height  = imageView->mipLevelExtent(0).height;
+      clearRect.baseArrayLayer      = 0;
+      clearRect.layerCount          = imageView->info().numLayers;
+
+      m_cmd->cmdClearAttachments(1, &clearInfo, 1, &clearRect);
+    } else
       this->deferClear(imageView, clearAspects, clearValue);
   }
   
@@ -766,6 +784,10 @@ namespace dxvk {
           VkOffset3D            srcOffset,
           VkExtent3D            extent) {
     this->spillRenderPass(true);
+
+    if (this->copyImageClear(dstImage, dstSubresource, dstOffset, extent, srcImage, srcSubresource))
+      return;
+
     this->prepareImage(m_execBarriers, dstImage, vk::makeSubresourceRange(dstSubresource));
     this->prepareImage(m_execBarriers, srcImage, vk::makeSubresourceRange(srcSubresource));
 
@@ -1753,6 +1775,26 @@ namespace dxvk {
     else if (discardAspects & VK_IMAGE_ASPECT_DEPTH_BIT)
       depthOp.loadOpS = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 
+    if (attachmentIndex >= 0 && !m_state.om.framebuffer->isWritable(attachmentIndex, clearAspects | discardAspects)) {
+      // Do not fold the clear/discard into the render pass if any of the affected aspects
+      // isn't writable. We can only hit this particular path when starting a render pass,
+      // so we can safely manipulate load layouts here.
+      int32_t colorIndex = m_state.om.framebuffer->getColorAttachmentIndex(attachmentIndex);
+      VkImageLayout renderLayout = m_state.om.framebuffer->getAttachment(attachmentIndex).layout;
+
+      if (colorIndex < 0) {
+        depthOp.loadLayout = m_state.om.renderPassOps.depthOps.loadLayout;
+        depthOp.storeLayout = renderLayout;
+        m_state.om.renderPassOps.depthOps.loadLayout = renderLayout;
+      } else {
+        colorOp.loadLayout = m_state.om.renderPassOps.colorOps[colorIndex].loadLayout;
+        colorOp.storeLayout = renderLayout;
+        m_state.om.renderPassOps.colorOps[colorIndex].loadLayout = renderLayout;
+      }
+
+      attachmentIndex = -1;
+    }
+
     bool is3D = imageView->imageInfo().type == VK_IMAGE_TYPE_3D;
 
     if ((clearAspects | discardAspects) == imageView->info().aspect && !is3D) {
@@ -1802,24 +1844,6 @@ namespace dxvk {
         m_device->createFramebuffer(attachments),
         ops, 1, &clearValue);
       this->renderPassUnbindFramebuffer();
-    } else if (m_flags.test(DxvkContextFlag::GpRenderPassBound)) {
-      uint32_t colorIndex = std::max(0, m_state.om.framebuffer->getColorAttachmentIndex(attachmentIndex));
-
-      VkClearAttachment clearInfo;
-      clearInfo.aspectMask      = clearAspects;
-      clearInfo.colorAttachment = colorIndex;
-      clearInfo.clearValue      = clearValue;
-      
-      VkClearRect clearRect;
-      clearRect.rect.offset.x       = 0;
-      clearRect.rect.offset.y       = 0;
-      clearRect.rect.extent.width   = imageView->mipLevelExtent(0).width;
-      clearRect.rect.extent.height  = imageView->mipLevelExtent(0).height;
-      clearRect.baseArrayLayer      = 0;
-      clearRect.layerCount          = imageView->info().numLayers;
-
-      if (clearAspects)
-        m_cmd->cmdClearAttachments(1, &clearInfo, 1, &clearRect);
     } else {
       // Perform the operation when starting the next render pass
       if ((clearAspects | discardAspects) & VK_IMAGE_ASPECT_COLOR_BIT) {
@@ -1856,7 +1880,8 @@ namespace dxvk {
           VkImageAspectFlags        clearAspects,
           VkClearValue              clearValue) {
     for (auto& entry : m_deferredClears) {
-      if (entry.imageView == imageView) {
+      if (entry.imageView->checkSubresourceMatch(imageView)) {
+        entry.imageView = imageView;
         entry.discardAspects &= ~clearAspects;
         entry.clearAspects |= clearAspects;
 
@@ -1869,7 +1894,7 @@ namespace dxvk {
         
         return;
       } else if (entry.imageView->checkSubresourceOverlap(imageView)) {
-        this->flushClears(false);
+        this->spillRenderPass(false);
         break;
       }
     }
@@ -1882,12 +1907,13 @@ namespace dxvk {
     const Rc<DxvkImageView>&        imageView,
           VkImageAspectFlags        discardAspects) {
     for (auto& entry : m_deferredClears) {
-      if (entry.imageView == imageView) {
+      if (entry.imageView->checkSubresourceMatch(imageView)) {
+        entry.imageView = imageView;
         entry.discardAspects |= discardAspects;
         entry.clearAspects &= ~discardAspects;
         return;
       } else if (entry.imageView->checkSubresourceOverlap(imageView)) {
-        this->flushClears(false);
+        this->spillRenderPass(false);
         break;
       }
     }
@@ -2352,7 +2378,8 @@ namespace dxvk {
       rs.cullMode,
       rs.frontFace,
       m_state.gp.state.rs.viewportCount(),
-      rs.sampleCount);
+      rs.sampleCount,
+      rs.conservativeMode);
 
     m_flags.set(DxvkContextFlag::GpDirtyPipelineState);
   }
@@ -2457,6 +2484,27 @@ namespace dxvk {
 
   void DxvkContext::trimStagingBuffers() {
     m_staging.trim();
+  }
+
+  void DxvkContext::beginDebugLabel(VkDebugUtilsLabelEXT *label) {
+    if (!m_device->instance()->extensions().extDebugUtils)
+      return;
+
+    m_cmd->cmdBeginDebugUtilsLabel(label);
+  }
+
+  void DxvkContext::endDebugLabel() {
+    if (!m_device->instance()->extensions().extDebugUtils)
+      return;
+
+    m_cmd->cmdEndDebugUtilsLabel();
+  }
+
+  void DxvkContext::insertDebugLabel(VkDebugUtilsLabelEXT *label) {
+    if (!m_device->instance()->extensions().extDebugUtils)
+      return;
+
+    m_cmd->cmdInsertDebugUtilsLabel(label);
   }
   
   
@@ -2710,6 +2758,9 @@ namespace dxvk {
     if (m_state.om.framebuffer != nullptr
      && m_state.om.framebuffer->isFullSize(imageView))
       attachmentIndex = m_state.om.framebuffer->findAttachment(imageView);
+
+    if (attachmentIndex >= 0 && !m_state.om.framebuffer->isWritable(attachmentIndex, aspect))
+      attachmentIndex = -1;
 
     if (attachmentIndex < 0) {
       this->spillRenderPass(false);
@@ -3181,6 +3232,73 @@ namespace dxvk {
   }
 
 
+  bool DxvkContext::copyImageClear(
+    const Rc<DxvkImage>&        dstImage,
+          VkImageSubresourceLayers dstSubresource,
+          VkOffset3D            dstOffset,
+          VkExtent3D            dstExtent,
+    const Rc<DxvkImage>&        srcImage,
+          VkImageSubresourceLayers srcSubresource) {
+    // If the source image has a pending deferred clear, we can
+    // implement the copy by clearing the destination image to
+    // the same clear value.
+    const VkImageUsageFlags attachmentUsage
+      = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+      | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+    if (!(dstImage->info().usage & attachmentUsage)
+     || !(srcImage->info().usage & attachmentUsage))
+      return false;
+
+    // Ignore 3D images since those are complicated to handle
+    if (dstImage->info().type == VK_IMAGE_TYPE_3D
+     || srcImage->info().type == VK_IMAGE_TYPE_3D)
+      return false;
+
+    // Find a pending clear that overlaps with the source image
+    const DxvkDeferredClear* clear = nullptr;
+
+    for (const auto& entry : m_deferredClears) {
+      // Entries in the deferred clear array cannot overlap, so
+      // if we find an entry covering all source subresources,
+      // it's the only one in the list that does.
+      if ((entry.imageView->image() == srcImage) && ((srcSubresource.aspectMask & entry.clearAspects) == srcSubresource.aspectMask)
+       && (vk::checkSubresourceRangeSuperset(entry.imageView->subresources(), vk::makeSubresourceRange(srcSubresource)))) {
+        clear = &entry;
+        break;
+      }
+    }
+
+    if (!clear)
+      return false;
+
+    // Create a view for the destination image with the general
+    // properties ofthe source image view used for the clear
+    DxvkImageViewCreateInfo viewInfo = clear->imageView->info();
+    viewInfo.type = dstImage->info().type == VK_IMAGE_TYPE_1D
+      ? VK_IMAGE_VIEW_TYPE_1D_ARRAY
+      : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    viewInfo.minLevel = dstSubresource.mipLevel;
+    viewInfo.numLevels = 1;
+    viewInfo.minLayer = dstSubresource.baseArrayLayer;
+    viewInfo.numLayers = dstSubresource.layerCount;
+
+    // That is, if the formats are actually compatible
+    // so that we can safely use the same clear value
+    if (!dstImage->isViewCompatible(viewInfo.format))
+      return false;
+
+    // Ignore mismatched size for now, needs more testing since we'd
+    // need to prepare the image first and then call clearImageViewFb
+    if (dstImage->mipLevelExtent(dstSubresource.mipLevel) != dstExtent)
+      return false;
+
+    auto view = m_device->createImageView(dstImage, viewInfo);
+    this->deferClear(view, srcSubresource.aspectMask, clear->clearValue);
+    return true;
+  }
+
+
   void DxvkContext::resolveImageHw(
     const Rc<DxvkImage>&            dstImage,
     const Rc<DxvkImage>&            srcImage,
@@ -3331,7 +3449,8 @@ namespace dxvk {
     if (srcImage->info().layout != srcLayout) {
       m_execAcquires.accessImage(
         srcImage, srcSubresourceRange,
-        srcImage->info().layout, 0, 0,
+        srcImage->info().layout,
+        srcImage->info().stages, 0,
         srcLayout,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         VK_ACCESS_SHADER_READ_BIT);

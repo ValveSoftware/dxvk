@@ -91,10 +91,16 @@ namespace dxvk {
   VkInstance DxvkInstance::createInstance() {
     DxvkInstanceExtensions insExtensions;
 
-    std::array<DxvkExt*, 2> insExtensionList = {{
+    std::vector<DxvkExt*> insExtensionList = {{
       &insExtensions.khrGetSurfaceCapabilities2,
       &insExtensions.khrSurface,
     }};
+
+    // Hide VK_EXT_debug_utils behind an environment variable. This extension
+    // adds additional overhead to winevulkan
+    if (env::getEnvVar("DXVK_PERF_EVENTS") == "1") {
+        insExtensionList.push_back(&insExtensions.extDebugUtils);
+    }
 
     DxvkNameSet extensionsEnabled;
     DxvkNameSet extensionsAvailable = DxvkNameSet::enumInstanceExtensions(m_vkl);
@@ -104,6 +110,8 @@ namespace dxvk {
           insExtensionList.data(),
           extensionsEnabled))
       throw DxvkError("DxvkInstance: Failed to create instance");
+
+    m_extensions = insExtensions;
 
     // Enable additional extensions if necessary
     for (const auto& provider : m_extProviders)
@@ -167,7 +175,7 @@ namespace dxvk {
         result.push_back(new DxvkAdapter(m_vki, adapters[i]));
     }
     
-    std::sort(result.begin(), result.end(),
+    std::stable_sort(result.begin(), result.end(),
       [] (const Rc<DxvkAdapter>& a, const Rc<DxvkAdapter>& b) -> bool {
         static const std::array<VkPhysicalDeviceType, 3> deviceTypes = {{
           VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,

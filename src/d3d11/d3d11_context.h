@@ -19,6 +19,8 @@ namespace dxvk {
   
   class D3D11DeviceContext : public D3D11DeviceChild<ID3D11DeviceContext4> {
     friend class D3D11DeviceContextExt;
+    // Needed in order to call EmitCs for pushing markers
+    friend class D3D11UserDefinedAnnotation;
   public:
     
     D3D11DeviceContext(
@@ -786,9 +788,6 @@ namespace dxvk {
             ID3D11Resource*                   pResource,
             UINT                              Subresource);
     
-    void SetIndexBufferOptimized(
-            BOOL                              Enable);
-    
     void SetDrawBuffers(
             ID3D11Buffer*                     pBufferForArgs,
             ID3D11Buffer*                     pBufferForCount);
@@ -830,7 +829,19 @@ namespace dxvk {
             ID3D11Buffer**                    ppConstantBuffers, 
             UINT*                             pFirstConstant, 
             UINT*                             pNumConstants);
-    
+
+    void GetShaderResources(
+      const D3D11ShaderResourceBindings&      Bindings,
+            UINT                              StartSlot,
+            UINT                              NumViews,
+            ID3D11ShaderResourceView**        ppShaderResourceViews);
+
+    void GetSamplers(
+      const D3D11SamplerBindings&             Bindings,
+            UINT                              StartSlot,
+            UINT                              NumSamplers,
+            ID3D11SamplerState**              ppSamplers);
+
     void ResetState();
 
     void RestoreState();

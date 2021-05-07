@@ -18,7 +18,7 @@ namespace dxvk {
     Vector4Base(T x, T y, T z, T w)
       : x(x), y(y), z(z), w(w) { }
 
-    Vector4Base(T xyzw[4])
+    Vector4Base(const T xyzw[4])
       : x(xyzw[0]), y(xyzw[1]), z(xyzw[2]), w(xyzw[3]) { }
 
     Vector4Base(const Vector4Base<T>& other) = default;
@@ -145,6 +145,9 @@ namespace dxvk {
 
   using Vector4  = Vector4Base<float>;
   using Vector4i = Vector4Base<int>;
+
+  static_assert(sizeof(Vector4)  == sizeof(float) * 4);
+  static_assert(sizeof(Vector4i) == sizeof(int)   * 4);
 
   inline Vector4 replaceNaN(Vector4 a) {
     Vector4 result;
