@@ -4,6 +4,7 @@
 #include "d3d11_device.h"
 #include "d3d11_query.h"
 #include "d3d11_texture.h"
+#include "d3d11_video.h"
 
 #include "../dxbc/dxbc_util.h"
 
@@ -959,6 +960,7 @@ namespace dxvk {
     auto dsv = dynamic_cast<D3D11DepthStencilView*>(pView);
     auto rtv = dynamic_cast<D3D11RenderTargetView*>(pView);
     auto uav = dynamic_cast<D3D11UnorderedAccessView*>(pView);
+    auto vov = dynamic_cast<D3D11VideoProcessorOutputView*>(pView);
 
     // Retrieve underlying resource view
     Rc<DxvkBufferView> bufView;
@@ -974,6 +976,9 @@ namespace dxvk {
       bufView = uav->GetBufferView();
       imgView = uav->GetImageView();
     }
+
+    if (vov != nullptr)
+      imgView = vov->GetView();
 
     // 3D views are unsupported
     if (imgView != nullptr
@@ -1218,38 +1223,33 @@ namespace dxvk {
        || !util::isBlockAligned(offset, extent, formatInfo->blockSize, mipExtent))
         return;
 
-      const VkExtent3D regionExtent = util::computeBlockCount(extent, formatInfo->blockSize);
-      
-      const VkDeviceSize bytesPerRow   = regionExtent.width  * formatInfo->elementSize;
-      const VkDeviceSize bytesPerLayer = regionExtent.height * bytesPerRow;
-      const VkDeviceSize bytesTotal    = regionExtent.depth  * bytesPerLayer;
-      
-      DxvkDataSlice imageDataBuffer = AllocUpdateBufferSlice(bytesTotal);
-      
-      util::packImageData(imageDataBuffer.ptr(), pSrcData,
-        regionExtent, formatInfo->elementSize,
-        SrcRowPitch, SrcDepthPitch);
+      auto image = textureInfo->GetImage();
+      auto stagingSlice = AllocStagingBuffer(util::computeImageDataSize(packedFormat, extent));
+
+      util::packImageData(stagingSlice.mapPtr(0),
+        pSrcData, SrcRowPitch, SrcDepthPitch,
+        image->info().type, extent, 1,
+        formatInfo, formatInfo->aspectMask);
       
       EmitCs([
-        cDstImage         = textureInfo->GetImage(),
+        cDstImage         = std::move(image),
         cDstLayers        = layers,
         cDstOffset        = offset,
         cDstExtent        = extent,
-        cSrcData          = std::move(imageDataBuffer),
-        cSrcBytesPerRow   = bytesPerRow,
-        cSrcBytesPerLayer = bytesPerLayer,
+        cStagingSlice     = std::move(stagingSlice),
         cPackedFormat     = packedFormat
       ] (DxvkContext* ctx) {
         if (cDstLayers.aspectMask != (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-          ctx->updateImage(cDstImage, cDstLayers,
-            cDstOffset, cDstExtent, cSrcData.ptr(),
-            cSrcBytesPerRow, cSrcBytesPerLayer);
+          ctx->copyBufferToImage(cDstImage,
+            cDstLayers, cDstOffset, cDstExtent,
+            cStagingSlice.buffer(),
+            cStagingSlice.offset(), 0);
         } else {
-          ctx->updateDepthStencilImage(cDstImage, cDstLayers,
+          ctx->copyPackedBufferToDepthStencilImage(cDstImage, cDstLayers,
             VkOffset2D { cDstOffset.x,     cDstOffset.y      },
             VkExtent2D { cDstExtent.width, cDstExtent.height },
-            cSrcData.ptr(), cSrcBytesPerRow, cSrcBytesPerLayer,
-            cPackedFormat);
+            cStagingSlice.buffer(),
+            cStagingSlice.offset(), cPackedFormat);
         }
       });
 
@@ -4052,8 +4052,7 @@ namespace dxvk {
       cPackedFormat = packedFormat
     ] (DxvkContext* ctx) {
       if (cSubresources.aspectMask != (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-        ctx->copyImageToBuffer(
-          cImageBuffer, 0, VkExtent2D { 0u, 0u },
+        ctx->copyImageToBuffer(cImageBuffer, 0, 0,
           cImage, cSubresources, VkOffset3D { 0, 0, 0 },
           cLevelExtent);
       } else {
@@ -4311,6 +4310,23 @@ namespace dxvk {
   }
   
   
+  DxvkBufferSlice D3D11DeviceContext::AllocStagingBuffer(
+          VkDeviceSize                      Size) {
+    DxvkBufferCreateInfo info;
+    info.size   = Size;
+    info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+                | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
+                | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    info.access = VK_ACCESS_TRANSFER_READ_BIT
+                | VK_ACCESS_SHADER_READ_BIT;
+
+    return DxvkBufferSlice(m_device->createBuffer(info,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+  }
+  
+
   DxvkCsChunkRef D3D11DeviceContext::AllocCsChunk() {
     return m_parent->AllocCsChunk(m_csFlags);
   }

@@ -141,13 +141,12 @@ namespace dxvk {
           
           const uint32_t id = D3D11CalcSubresource(
             level, layer, image->info().mipLevels);
-          
+
           VkOffset3D mipLevelOffset = { 0, 0, 0 };
           VkExtent3D mipLevelExtent = image->mipLevelExtent(level);
 
           m_transferCommands += 1;
-          m_transferMemory   += util::computeImageDataSize(
-            image->info().format, mipLevelExtent);
+          m_transferMemory   += pTexture->GetSubresourceLayout(formatInfo->aspectMask, id).Size;
           
           if (formatInfo->aspectMask != (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
             m_context->uploadImage(
@@ -167,9 +166,9 @@ namespace dxvk {
           }
 
           if (pTexture->GetMapMode() == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER) {
-            util::packImageData(pTexture->GetMappedBuffer(id)->mapPtr(0), pInitialData[id].pSysMem,
-              util::computeBlockCount(image->mipLevelExtent(level), formatInfo->blockSize),
-              formatInfo->elementSize, pInitialData[id].SysMemPitch, pInitialData[id].SysMemSlicePitch);
+            util::packImageData(pTexture->GetMappedBuffer(id)->mapPtr(0),
+              pInitialData[id].pSysMem, pInitialData[id].SysMemPitch, pInitialData[id].SysMemSlicePitch,
+              image->info().type, mipLevelExtent, 1, formatInfo, formatInfo->aspectMask);
           }
         }
       }
@@ -187,7 +186,7 @@ namespace dxvk {
       subresources.baseArrayLayer = 0;
       subresources.layerCount     = image->info().numLayers;
 
-      if (formatInfo->flags.test(DxvkFormatFlag::BlockCompressed)) {
+      if (formatInfo->flags.any(DxvkFormatFlag::BlockCompressed, DxvkFormatFlag::MultiPlane)) {
         m_context->clearCompressedColorImage(image, subresources);
       } else {
         if (subresources.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT) {

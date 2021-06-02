@@ -38,64 +38,58 @@ namespace dxvk::vk {
   }
 
 
-  PresenterSync Presenter::getSyncSemaphores() const {
-    return m_semaphores.at(m_frameIndex);
-  }
-
-
   PresenterImage Presenter::getImage(uint32_t index) const {
     return m_images.at(index);
   }
 
 
-  VkResult Presenter::acquireNextImage(
-          VkSemaphore     signal,
-          VkFence         fence,
-          uint32_t&       index) {
-    VkResult status;
+  VkResult Presenter::acquireNextImage(PresenterSync& sync, uint32_t& index) {
+    sync = m_semaphores.at(m_frameIndex);
 
-    if (fence && ((status = m_vkd->vkResetFences(
-        m_vkd->device(), 1, &fence)) != VK_SUCCESS))
-      return status;
-
-    status = m_vkd->vkAcquireNextImageKHR(
-      m_vkd->device(), m_swapchain,
-      std::numeric_limits<uint64_t>::max(),
-      signal, fence, &m_imageIndex);
+    // Don't acquire more than one image at a time
+    if (m_acquireStatus == VK_NOT_READY) {
+      m_acquireStatus = m_vkd->vkAcquireNextImageKHR(m_vkd->device(),
+        m_swapchain, std::numeric_limits<uint64_t>::max(),
+        sync.acquire, VK_NULL_HANDLE, &m_imageIndex);
+    }
     
-    if (status != VK_SUCCESS
-     && status != VK_SUBOPTIMAL_KHR)
-      return status;
+    if (m_acquireStatus != VK_SUCCESS && m_acquireStatus != VK_SUBOPTIMAL_KHR)
+      return m_acquireStatus;
     
-    m_frameIndex += 1;
-    m_frameIndex %= m_semaphores.size();
-
     index = m_imageIndex;
-    return status;
+    return m_acquireStatus;
   }
 
 
-  VkResult Presenter::waitForFence(VkFence fence) {
-    // Ignore timeouts, we don't want to block the
-    // app indefinitely if something goes wrong
-    return m_vkd->vkWaitForFences(
-      m_vkd->device(), 1, &fence, VK_FALSE,
-      1'000'000'000ull);
-  }
+  VkResult Presenter::presentImage() {
+    PresenterSync sync = m_semaphores.at(m_frameIndex);
 
-  
-  VkResult Presenter::presentImage(VkSemaphore wait) {
     VkPresentInfoKHR info;
     info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     info.pNext              = nullptr;
     info.waitSemaphoreCount = 1;
-    info.pWaitSemaphores    = &wait;
+    info.pWaitSemaphores    = &sync.present;
     info.swapchainCount     = 1;
     info.pSwapchains        = &m_swapchain;
     info.pImageIndices      = &m_imageIndex;
     info.pResults           = nullptr;
 
-    return m_vkd->vkQueuePresentKHR(m_device.queue, &info);
+    VkResult status = m_vkd->vkQueuePresentKHR(m_device.queue, &info);
+
+    if (status != VK_SUCCESS && status != VK_SUBOPTIMAL_KHR)
+      return status;
+
+    // Try to acquire next image already, in order to hide
+    // potential delays from the application thread.
+    m_frameIndex += 1;
+    m_frameIndex %= m_semaphores.size();
+
+    sync = m_semaphores.at(m_frameIndex);
+
+    m_acquireStatus = m_vkd->vkAcquireNextImageKHR(m_vkd->device(),
+      m_swapchain, std::numeric_limits<uint64_t>::max(),
+      sync.acquire, VK_NULL_HANDLE, &m_imageIndex);
+    return status;
   }
 
   
@@ -222,15 +216,6 @@ namespace dxvk::vk {
     m_semaphores.resize(m_info.imageCount);
 
     for (uint32_t i = 0; i < m_semaphores.size(); i++) {
-      VkFenceCreateInfo fenceInfo;
-      fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-      fenceInfo.pNext = nullptr;
-      fenceInfo.flags = 0;
-
-      if ((status = m_vkd->vkCreateFence(m_vkd->device(),
-          &fenceInfo, nullptr, &m_semaphores[i].fence)) != VK_SUCCESS)
-        return status;
-
       VkSemaphoreCreateInfo semInfo;
       semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
       semInfo.pNext = nullptr;
@@ -248,6 +233,7 @@ namespace dxvk::vk {
     // Invalidate indices
     m_imageIndex = 0;
     m_frameIndex = 0;
+    m_acquireStatus = VK_NOT_READY;
     return VK_SUCCESS;
   }
 
@@ -480,7 +466,6 @@ namespace dxvk::vk {
       m_vkd->vkDestroyImageView(m_vkd->device(), img.view, nullptr);
     
     for (const auto& sem : m_semaphores) {
-      m_vkd->vkDestroyFence(m_vkd->device(), sem.fence, nullptr);
       m_vkd->vkDestroySemaphore(m_vkd->device(), sem.acquire, nullptr);
       m_vkd->vkDestroySemaphore(m_vkd->device(), sem.present, nullptr);
     }

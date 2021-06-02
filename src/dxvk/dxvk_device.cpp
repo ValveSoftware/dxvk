@@ -33,13 +33,7 @@ namespace dxvk {
 
 
   bool DxvkDevice::isUnifiedMemoryArchitecture() const {
-    auto memory = m_adapter->memoryProperties();
-    bool result = true;
-
-    for (uint32_t i = 0; i < memory.memoryHeapCount; i++)
-      result &= memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
-
-    return result;
+    return m_adapter->isUnifiedMemoryArchitecture();
   }
 
 
@@ -211,13 +205,11 @@ namespace dxvk {
   
   void DxvkDevice::presentImage(
     const Rc<vk::Presenter>&        presenter,
-          VkSemaphore               semaphore,
           DxvkSubmitStatus*         status) {
     status->result = VK_NOT_READY;
 
     DxvkPresentInfo presentInfo;
     presentInfo.presenter = presenter;
-    presentInfo.waitSync  = semaphore;
     m_submissionQueue.present(presentInfo, status);
     
     std::lock_guard<sync::Spinlock> statLock(m_statLock);

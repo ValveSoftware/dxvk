@@ -21,6 +21,7 @@
 #include "d3d11_state_object.h"
 #include "d3d11_swapchain.h"
 #include "d3d11_texture.h"
+#include "d3d11_video.h"
 
 namespace dxvk {
   
@@ -298,8 +299,10 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppSRView) {
     InitReturnPtr(ppSRView);
 
+    uint32_t plane = GetViewPlaneIndex(pResource, pDesc ? pDesc->Format : DXGI_FORMAT_UNKNOWN);
+
     D3D11_SHADER_RESOURCE_VIEW_DESC1 desc = pDesc
-      ? D3D11ShaderResourceView::PromoteDesc(pDesc)
+      ? D3D11ShaderResourceView::PromoteDesc(pDesc, plane)
       : D3D11_SHADER_RESOURCE_VIEW_DESC1();
     
     ID3D11ShaderResourceView1* view = nullptr;
@@ -341,13 +344,16 @@ namespace dxvk {
       if (FAILED(D3D11ShaderResourceView::NormalizeDesc(pResource, &desc)))
         return E_INVALIDARG;
     }
+
+    uint32_t plane = D3D11ShaderResourceView::GetPlaneSlice(&desc);
     
-    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_SHADER_RESOURCE, desc.Format)) {
+    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_SHADER_RESOURCE, desc.Format, plane)) {
       Logger::err(str::format("D3D11: Cannot create shader resource view:",
         "\n  Resource type:   ", resourceDesc.Dim,
         "\n  Resource usage:  ", resourceDesc.BindFlags,
         "\n  Resource format: ", resourceDesc.Format,
-        "\n  View format:     ", desc.Format));
+        "\n  View format:     ", desc.Format,
+        "\n  View plane:      ", plane));
       return E_INVALIDARG;
     }
     
@@ -370,8 +376,10 @@ namespace dxvk {
           ID3D11UnorderedAccessView**       ppUAView) {
     InitReturnPtr(ppUAView);
 
+    uint32_t plane = GetViewPlaneIndex(pResource, pDesc ? pDesc->Format : DXGI_FORMAT_UNKNOWN);
+
     D3D11_UNORDERED_ACCESS_VIEW_DESC1 desc = pDesc
-      ? D3D11UnorderedAccessView::PromoteDesc(pDesc)
+      ? D3D11UnorderedAccessView::PromoteDesc(pDesc, plane)
       : D3D11_UNORDERED_ACCESS_VIEW_DESC1();
     
     ID3D11UnorderedAccessView1* view = nullptr;
@@ -414,12 +422,15 @@ namespace dxvk {
         return E_INVALIDARG;
     }
     
-    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_UNORDERED_ACCESS, desc.Format)) {
+    uint32_t plane = D3D11UnorderedAccessView::GetPlaneSlice(&desc);
+
+    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_UNORDERED_ACCESS, desc.Format, plane)) {
       Logger::err(str::format("D3D11: Cannot create unordered access view:",
         "\n  Resource type:   ", resourceDesc.Dim,
         "\n  Resource usage:  ", resourceDesc.BindFlags,
         "\n  Resource format: ", resourceDesc.Format,
-        "\n  View format:     ", desc.Format));
+        "\n  View format:     ", desc.Format,
+        "\n  View plane:      ", plane));
       return E_INVALIDARG;
     }
 
@@ -444,8 +455,10 @@ namespace dxvk {
           ID3D11RenderTargetView**          ppRTView) {
     InitReturnPtr(ppRTView);
 
+    uint32_t plane = GetViewPlaneIndex(pResource, pDesc ? pDesc->Format : DXGI_FORMAT_UNKNOWN);
+
     D3D11_RENDER_TARGET_VIEW_DESC1 desc = pDesc
-      ? D3D11RenderTargetView::PromoteDesc(pDesc)
+      ? D3D11RenderTargetView::PromoteDesc(pDesc, plane)
       : D3D11_RENDER_TARGET_VIEW_DESC1();
     
     ID3D11RenderTargetView1* view = nullptr;
@@ -494,12 +507,15 @@ namespace dxvk {
         return E_INVALIDARG;
     }
     
-    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_RENDER_TARGET, desc.Format)) {
+    uint32_t plane = D3D11RenderTargetView::GetPlaneSlice(&desc);
+
+    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_RENDER_TARGET, desc.Format, plane)) {
       Logger::err(str::format("D3D11: Cannot create render target view:",
         "\n  Resource type:   ", resourceDesc.Dim,
         "\n  Resource usage:  ", resourceDesc.BindFlags,
         "\n  Resource format: ", resourceDesc.Format,
-        "\n  View format:     ", desc.Format));
+        "\n  View format:     ", desc.Format,
+        "\n  View plane:      ", plane));
       return E_INVALIDARG;
     }
 
@@ -542,7 +558,7 @@ namespace dxvk {
         return E_INVALIDARG;
     }
     
-    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_DEPTH_STENCIL, desc.Format)) {
+    if (!CheckResourceViewCompatibility(pResource, D3D11_BIND_DEPTH_STENCIL, desc.Format, 0)) {
       Logger::err(str::format("D3D11: Cannot create depth-stencil view:",
         "\n  Resource type:   ", resourceDesc.Dim,
         "\n  Resource usage:  ", resourceDesc.BindFlags,
@@ -2040,6 +2056,23 @@ namespace dxvk {
     
     VkFormatFeatureFlags bufFeatures = fmtSupport.bufferFeatures;
     VkFormatFeatureFlags imgFeatures = fmtSupport.optimalTilingFeatures | fmtSupport.linearTilingFeatures;
+
+    // For multi-plane images, we want to check available view formats as well
+    if (fmtProperties->flags.test(DxvkFormatFlag::MultiPlane)) {
+      const VkFormatFeatureFlags featureMask
+        = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
+        | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT
+        | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
+        | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
+        | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+
+      DXGI_VK_FORMAT_FAMILY formatFamily = LookupFamily(Format, DXGI_VK_FORMAT_MODE_ANY);
+
+      for (uint32_t i = 0; i < formatFamily.FormatCount; i++) {
+        VkFormatProperties viewFmtSupport = m_dxvkAdapter->formatProperties(formatFamily.Formats[i]);
+        imgFeatures |= (viewFmtSupport.optimalTilingFeatures | viewFmtSupport.linearTilingFeatures) & featureMask;
+      }
+    }
     
     UINT flags1 = 0;
     UINT flags2 = 0;
@@ -2092,7 +2125,8 @@ namespace dxvk {
         flags1 |= D3D11_FORMAT_SUPPORT_TEXTURECUBE
                |  D3D11_FORMAT_SUPPORT_SHADER_LOAD
                |  D3D11_FORMAT_SUPPORT_SHADER_GATHER
-               |  D3D11_FORMAT_SUPPORT_SHADER_SAMPLE;
+               |  D3D11_FORMAT_SUPPORT_SHADER_SAMPLE
+               |  D3D11_FORMAT_SUPPORT_VIDEO_PROCESSOR_INPUT;
         
         if (depthFormat != VK_FORMAT_UNDEFINED) {
           flags1 |= D3D11_FORMAT_SUPPORT_SHADER_GATHER_COMPARISON
@@ -2103,7 +2137,8 @@ namespace dxvk {
       // Format is a color format that can be used for rendering
       if (imgFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
         flags1 |= D3D11_FORMAT_SUPPORT_RENDER_TARGET
-               |  D3D11_FORMAT_SUPPORT_MIP_AUTOGEN;
+               |  D3D11_FORMAT_SUPPORT_MIP_AUTOGEN
+               |  D3D11_FORMAT_SUPPORT_VIDEO_PROCESSOR_OUTPUT;
         
         if (m_dxvkDevice->features().core.features.logicOp)
           flags2 |= D3D11_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP;
@@ -2199,6 +2234,32 @@ namespace dxvk {
   }
   
   
+  uint32_t D3D11Device::GetViewPlaneIndex(
+          ID3D11Resource*         pResource,
+          DXGI_FORMAT             ViewFormat) {
+    auto texture = GetCommonTexture(pResource);
+
+    if (!texture)
+      return 0;
+
+    uint32_t planeCount = texture->GetPlaneCount();
+
+    if (planeCount == 1)
+      return 0;
+
+    auto formatMode   = texture->GetFormatMode();
+    auto formatFamily = LookupFamily(texture->Desc()->Format, formatMode);
+    auto viewFormat   = LookupFormat(ViewFormat, formatMode);
+
+    for (uint32_t i = 0; i < formatFamily.FormatCount; i++) {
+      if (formatFamily.Formats[i] == viewFormat.Format)
+        return i % planeCount;
+    }
+
+    return ~0u;
+  }
+
+
   template<typename Void>
   void D3D11Device::CopySubresourceData(
           Void*                       pData,
@@ -2392,6 +2453,206 @@ namespace dxvk {
   
   
   
+  D3D11VideoDevice::D3D11VideoDevice(
+          D3D11DXGIDevice*        pContainer,
+          D3D11Device*            pDevice)
+  : m_container(pContainer), m_device(pDevice) {
+
+  }
+
+
+  D3D11VideoDevice::~D3D11VideoDevice() {
+
+  }
+
+
+  ULONG STDMETHODCALLTYPE D3D11VideoDevice::AddRef() {
+    return m_container->AddRef();
+  }
+
+
+  ULONG STDMETHODCALLTYPE D3D11VideoDevice::Release() {
+    return m_container->Release();
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::QueryInterface(
+          REFIID                  riid,
+          void**                  ppvObject) {
+    return m_container->QueryInterface(riid, ppvObject);
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateVideoDecoder(
+    const D3D11_VIDEO_DECODER_DESC*                     pVideoDesc,
+    const D3D11_VIDEO_DECODER_CONFIG*                   pConfig,
+          ID3D11VideoDecoder**                          ppDecoder) {
+    Logger::err("D3D11VideoDevice::CreateVideoDecoder: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateVideoProcessor(
+          ID3D11VideoProcessorEnumerator*               pEnum,
+          UINT                                          RateConversionIndex,
+          ID3D11VideoProcessor**                        ppVideoProcessor) {
+    try {
+      auto enumerator = static_cast<D3D11VideoProcessorEnumerator*>(pEnum);
+      *ppVideoProcessor = ref(new D3D11VideoProcessor(m_device, enumerator, RateConversionIndex));
+      return S_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return E_FAIL;
+    }
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateAuthenticatedChannel(
+          D3D11_AUTHENTICATED_CHANNEL_TYPE              ChannelType,
+          ID3D11AuthenticatedChannel**                  ppAuthenticatedChannel) {
+    Logger::err("D3D11VideoDevice::CreateAuthenticatedChannel: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateCryptoSession(
+    const GUID*                                         pCryptoType,
+    const GUID*                                         pDecoderProfile,
+    const GUID*                                         pKeyExchangeType,
+          ID3D11CryptoSession**                         ppCryptoSession) {
+    Logger::err("D3D11VideoDevice::CreateCryptoSession: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateVideoDecoderOutputView(
+          ID3D11Resource*                               pResource,
+    const D3D11_VIDEO_DECODER_OUTPUT_VIEW_DESC*         pDesc,
+          ID3D11VideoDecoderOutputView**                ppVDOVView) {
+    Logger::err("D3D11VideoDevice::CreateVideoDecoderOutputView: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateVideoProcessorInputView(
+          ID3D11Resource*                               pResource,
+          ID3D11VideoProcessorEnumerator*               pEnum,
+    const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC*        pDesc,
+          ID3D11VideoProcessorInputView**               ppVPIView) {
+    try {
+      *ppVPIView = ref(new D3D11VideoProcessorInputView(m_device, pResource, *pDesc));
+      return S_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return E_FAIL;
+    }
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateVideoProcessorOutputView(
+          ID3D11Resource*                               pResource,
+          ID3D11VideoProcessorEnumerator*               pEnum,
+    const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC*       pDesc,
+          ID3D11VideoProcessorOutputView**              ppVPOView) {
+    try {
+      *ppVPOView = ref(new D3D11VideoProcessorOutputView(m_device, pResource, *pDesc));
+      return S_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return E_FAIL;
+    }
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CreateVideoProcessorEnumerator(
+    const D3D11_VIDEO_PROCESSOR_CONTENT_DESC*           pDesc,
+          ID3D11VideoProcessorEnumerator**              ppEnum)  {
+    try {
+      *ppEnum = ref(new D3D11VideoProcessorEnumerator(m_device, *pDesc));
+      return S_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return E_FAIL;
+    }
+  }
+
+
+  UINT STDMETHODCALLTYPE D3D11VideoDevice::GetVideoDecoderProfileCount() {
+    Logger::err("D3D11VideoDevice::GetVideoDecoderProfileCount: Stub");
+    return 0;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::GetVideoDecoderProfile(
+          UINT                                          Index,
+          GUID*                                         pDecoderProfile) {
+    Logger::err("D3D11VideoDevice::GetVideoDecoderProfile: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CheckVideoDecoderFormat(
+    const GUID*                                         pDecoderProfile,
+          DXGI_FORMAT                                   Format,
+          BOOL*                                         pSupported) {
+    Logger::err("D3D11VideoDevice::CheckVideoDecoderFormat: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::GetVideoDecoderConfigCount(
+    const D3D11_VIDEO_DECODER_DESC*                     pDesc,
+          UINT*                                         pCount) {
+    Logger::err("D3D11VideoDevice::GetVideoDecoderConfigCount: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::GetVideoDecoderConfig(
+    const D3D11_VIDEO_DECODER_DESC*                     pDesc,
+          UINT                                          Index,
+          D3D11_VIDEO_DECODER_CONFIG*                   pConfig) {
+    Logger::err("D3D11VideoDevice::GetVideoDecoderConfig: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::GetContentProtectionCaps(
+    const GUID*                                         pCryptoType,
+    const GUID*                                         pDecoderProfile,
+          D3D11_VIDEO_CONTENT_PROTECTION_CAPS*          pCaps) {
+    Logger::err("D3D11VideoDevice::GetContentProtectionCaps: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::CheckCryptoKeyExchange(
+    const GUID*                                         pCryptoType,
+    const GUID*                                         pDecoderProfile,
+          UINT                                          Index,
+          GUID*                                         pKeyExchangeType) {
+    Logger::err("D3D11VideoDevice::CheckCryptoKeyExchange: Stub");
+    return E_NOTIMPL;
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::SetPrivateData(
+          REFGUID                                       Name,
+          UINT                                          DataSize,
+    const void*                                         pData) {
+    return m_container->SetPrivateData(Name, DataSize, pData);
+  }
+
+
+  HRESULT STDMETHODCALLTYPE D3D11VideoDevice::SetPrivateDataInterface(
+          REFGUID                                       Name,
+    const IUnknown*                                     pData) {
+    return m_container->SetPrivateDataInterface(Name, pData);
+  }
+
+
+
+
   WineDXGISwapChainFactory::WineDXGISwapChainFactory(
           D3D11DXGIDevice*        pContainer,
           D3D11Device*            pDevice)
@@ -2515,6 +2776,7 @@ namespace dxvk {
     m_d3d11Device   (this, FeatureLevel, FeatureFlags),
     m_d3d11DeviceExt(this, &m_d3d11Device),
     m_d3d11Interop  (this, &m_d3d11Device),
+    m_d3d11Video    (this, &m_d3d11Device),
     m_metaDevice    (this),
     m_wineFactory   (this, &m_d3d11Device) {
 
@@ -2580,12 +2842,17 @@ namespace dxvk {
       return S_OK;
     }
 
+    if (riid == __uuidof(ID3D11VideoDevice)) {
+      *ppvObject = ref(&m_d3d11Video);
+      return S_OK;
+    }
+
     if (riid == __uuidof(ID3D10Multithread)) {
       Com<ID3D11DeviceContext> context;
       m_d3d11Device.GetImmediateContext(&context);
       return context->QueryInterface(riid, ppvObject);
     }
-    
+
     if (riid == __uuidof(ID3D11Debug))
       return E_NOINTERFACE;      
     

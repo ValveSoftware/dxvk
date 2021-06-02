@@ -178,9 +178,8 @@ namespace dxvk {
       return DXGI_ERROR_INVALID_CALL;
 
     m_frameLatency = MaxLatency;
-    m_frameLatencySignal->wait(m_frameId - GetActualFrameLatency());
 
-    SignalFrameLatencyEvent();
+    SyncFrameLatency();
     return S_OK;
   }
 
@@ -242,9 +241,8 @@ namespace dxvk {
     auto immediateContext = static_cast<D3D11ImmediateContext*>(deviceContext.ptr());
     immediateContext->Flush();
 
-    // Wait for the sync event so that we respect the maximum frame latency
-    uint64_t frameId = ++m_frameId;
-    m_frameLatencySignal->wait(frameId - GetActualFrameLatency());
+    // Bump our frame id.
+    ++m_frameId;
     
     for (uint32_t i = 0; i < SyncInterval || i < 1; i++) {
       SynchronizePresent();
@@ -254,12 +252,11 @@ namespace dxvk {
 
       // Presentation semaphores and WSI swap chain image
       vk::PresenterInfo info = m_presenter->info();
-      vk::PresenterSync sync = m_presenter->getSyncSemaphores();
+      vk::PresenterSync sync;
 
       uint32_t imageIndex = 0;
 
-      VkResult status = m_presenter->acquireNextImage(
-        sync.acquire, VK_NULL_HANDLE, imageIndex);
+      VkResult status = m_presenter->acquireNextImage(sync, imageIndex);
 
       while (status != VK_SUCCESS && status != VK_SUBOPTIMAL_KHR) {
         RecreateSwapChain(m_vsync);
@@ -268,10 +265,7 @@ namespace dxvk {
           return DXGI_STATUS_OCCLUDED;
         
         info = m_presenter->info();
-        sync = m_presenter->getSyncSemaphores();
-
-        status = m_presenter->acquireNextImage(
-          sync.acquire, VK_NULL_HANDLE, imageIndex);
+        status = m_presenter->acquireNextImage(sync, imageIndex);
       }
 
       // Resolve back buffer if it is multisampled. We
@@ -287,12 +281,12 @@ namespace dxvk {
         m_hud->render(m_context, info.format, info.imageExtent);
       
       if (i + 1 >= SyncInterval)
-        m_context->signal(m_frameLatencySignal, frameId);
+        m_context->signal(m_frameLatencySignal, m_frameId);
 
       SubmitPresent(immediateContext, sync, i);
     }
 
-    SignalFrameLatencyEvent();
+    SyncFrameLatency();
     return S_OK;
   }
 
@@ -319,8 +313,7 @@ namespace dxvk {
       if (cHud != nullptr && !cFrameId)
         cHud->update();
 
-      m_device->presentImage(m_presenter,
-        cSync.present, &m_presentStatus);
+      m_device->presentImage(m_presenter, &m_presentStatus);
     });
 
     pContext->FlushCsChunk();
@@ -541,7 +534,10 @@ namespace dxvk {
   }
 
 
-  void D3D11SwapChain::SignalFrameLatencyEvent() {
+  void D3D11SwapChain::SyncFrameLatency() {
+    // Wait for the sync event so that we respect the maximum frame latency
+    m_frameLatencySignal->wait(m_frameId - GetActualFrameLatency());
+
     if (m_frameLatencyEvent) {
       // Signal event with the same value that we'd wait for during the next present.
       m_frameLatencySignal->setEvent(m_frameLatencyEvent, m_frameId - GetActualFrameLatency() + 1);

@@ -76,7 +76,6 @@ namespace dxvk::vk {
    * image acquisition.
    */
   struct PresenterSync {
-    VkFence     fence;
     VkSemaphore acquire;
     VkSemaphore present;
   };
@@ -108,15 +107,6 @@ namespace dxvk::vk {
     PresenterInfo info() const;
 
     /**
-     * \breif Retrieves a pair of semaphores
-     * 
-     * These semaphores are meant to be used
-     * for acquire and present operations.
-     * \returns Pair of semaphores
-     */
-    PresenterSync getSyncSemaphores() const;
-    
-    /**
      * \brief Retrieves image by index
      * 
      * Can be used to create per-image objects.
@@ -133,26 +123,13 @@ namespace dxvk::vk {
      * If this returns an error, the swap chain
      * must be recreated and a new image must
      * be acquired before proceeding.
-     * \param [in] signal Semaphore to signal
-     * \param [in] fence Fence to signal (optional)
+     * \param [out] sync Synchronization semaphores
      * \param [out] index Acquired image index
      * \returns Status of the operation
      */
     VkResult acquireNextImage(
-            VkSemaphore     signal,
-            VkFence         fence,
+            PresenterSync&  sync,
             uint32_t&       index);
-    
-    /**
-     * \brief Waits for fence to get signaled
-     *
-     * Helper method that can be used in conjunction
-     * with the fence passed to \ref acquireNextImage.
-     * \param [in] fence Fence to wait on
-     * \returns Status of the operation
-     */
-    VkResult waitForFence(
-            VkFence         fence);
     
     /**
      * \brief Presents current image
@@ -160,11 +137,9 @@ namespace dxvk::vk {
      * Presents the current image. If this returns
      * an error, the swap chain must be recreated,
      * but do not present before acquiring an image.
-     * \param [in] wait Semaphore to wait on
      * \returns Status of the operation
      */
-    VkResult presentImage(
-            VkSemaphore     wait);
+    VkResult presentImage();
     
     /**
      * \brief Changes presenter properties
@@ -206,6 +181,8 @@ namespace dxvk::vk {
 
     uint32_t m_imageIndex = 0;
     uint32_t m_frameIndex = 0;
+
+    VkResult m_acquireStatus = VK_NOT_READY;
 
     VkResult getSupportedFormats(
             std::vector<VkSurfaceFormatKHR>& formats,

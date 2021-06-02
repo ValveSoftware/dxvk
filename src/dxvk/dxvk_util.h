@@ -40,6 +40,30 @@ namespace dxvk::util {
           VkDeviceSize      pitchPerLayer);
   
   /**
+   * \brief Writes tightly packed image data to a buffer
+   * 
+   * \param [in] dstBytes Destination buffer pointer
+   * \param [in] srcBytes Pointer to source data
+   * \param [in] rowPitch Number of bytes between rows
+   * \param [in] slicePitch Number of bytes between layers
+   * \param [in] imageType Image type (2D, 3D etc)
+   * \param [in] imageExtent Image extent, in pixels
+   * \param [in] imageLayers Image layer count
+   * \param [in] formatInfo Image format info
+   * \param [in] aspectMask Image aspects to pack
+   */
+  void packImageData(
+          void*             dstBytes,
+    const void*             srcBytes,
+          VkDeviceSize      rowPitch,
+          VkDeviceSize      slicePitch,
+          VkImageType       imageType,
+          VkExtent3D        imageExtent,
+          uint32_t          imageLayers,
+    const DxvkFormatInfo*   formatInfo,
+          VkImageAspectFlags aspectMask);
+  
+  /**
    * \brief Computes minimum extent
    * 
    * \param [in] a First value
@@ -95,6 +119,29 @@ namespace dxvk::util {
    * \returns Extent of the given mip level
    */
   inline VkExtent3D computeMipLevelExtent(VkExtent3D size, uint32_t level) {
+    size.width  = std::max(1u, size.width  >> level);
+    size.height = std::max(1u, size.height >> level);
+    size.depth  = std::max(1u, size.depth  >> level);
+    return size;
+  }
+  
+  /**
+   * \brief Computes mip level extent
+   *
+   * This function variant takes into account planar formats.
+   * \param [in] size Base mip level extent
+   * \param [in] level Mip level to compute
+   * \param [in] format Image format
+   * \param [in] aspect Image aspect to consider
+   * \returns Extent of the given mip level
+   */
+  inline VkExtent3D computeMipLevelExtent(VkExtent3D size, uint32_t level, VkFormat format, VkImageAspectFlags aspect) {
+    if (unlikely(!(aspect & (VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)))) {
+      auto plane = &imageFormatInfo(format)->planes[vk::getPlaneIndex(aspect)];
+      size.width  /= plane->blockSize.width;
+      size.height /= plane->blockSize.height;
+    }
+
     size.width  = std::max(1u, size.width  >> level);
     size.height = std::max(1u, size.height >> level);
     size.depth  = std::max(1u, size.depth  >> level);

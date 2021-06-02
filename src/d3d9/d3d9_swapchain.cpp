@@ -456,8 +456,7 @@ namespace dxvk {
       cSubresources = srcSubresourceLayers,
       cLevelExtent  = srcExtent
     ] (DxvkContext* ctx) {
-      ctx->copyImageToBuffer(
-        cBuffer, 0, VkExtent2D { 0u, 0u },
+      ctx->copyImageToBuffer(cBuffer, 0, 0,
         cImage, cSubresources, VkOffset3D { 0, 0, 0 },
         cLevelExtent);
     });
@@ -779,30 +778,25 @@ namespace dxvk {
     auto swapImage = m_backBuffers[0]->GetCommonTexture()->GetImage();
     auto swapImageView = m_backBuffers[0]->GetImageView(false);
 
-    // Wait for the sync event so that we respect the maximum frame latency
-    uint64_t frameId = ++m_frameId;
-    m_frameLatencySignal->wait(frameId - GetActualFrameLatency());
+    // Bump our frame id.
+    ++m_frameId;
 
     for (uint32_t i = 0; i < SyncInterval || i < 1; i++) {
       SynchronizePresent();
 
       // Presentation semaphores and WSI swap chain image
       vk::PresenterInfo info = m_presenter->info();
-      vk::PresenterSync sync = m_presenter->getSyncSemaphores();
+      vk::PresenterSync sync;
 
       uint32_t imageIndex = 0;
 
-      VkResult status = m_presenter->acquireNextImage(
-        sync.acquire, VK_NULL_HANDLE, imageIndex);
+      VkResult status = m_presenter->acquireNextImage(sync, imageIndex);
 
       while (status != VK_SUCCESS && status != VK_SUBOPTIMAL_KHR) {
         RecreateSwapChain(m_vsync);
         
         info = m_presenter->info();
-        sync = m_presenter->getSyncSemaphores();
-
-        status = m_presenter->acquireNextImage(
-          sync.acquire, VK_NULL_HANDLE, imageIndex);
+        status = m_presenter->acquireNextImage(sync, imageIndex);
       }
 
       m_context->beginRecording(
@@ -824,10 +818,12 @@ namespace dxvk {
         m_hud->render(m_context, info.format, info.imageExtent);
 
       if (i + 1 >= SyncInterval)
-        m_context->signal(m_frameLatencySignal, frameId);
+        m_context->signal(m_frameLatencySignal, m_frameId);
 
       SubmitPresent(sync, i);
     }
+
+    SyncFrameLatency();
 
     // Rotate swap chain buffers so that the back
     // buffer at index 0 becomes the front buffer.
@@ -855,8 +851,7 @@ namespace dxvk {
       if (cHud != nullptr && !cFrameId)
         cHud->update();
 
-      m_device->presentImage(m_presenter,
-        cSync.present, &m_presentStatus);
+      m_device->presentImage(m_presenter, &m_presentStatus);
     });
 
     m_parent->FlushCsChunk();
@@ -1061,6 +1056,11 @@ namespace dxvk {
   }
 
 
+  void D3D9SwapChainEx::SyncFrameLatency() {
+    // Wait for the sync event so that we respect the maximum frame latency
+    m_frameLatencySignal->wait(m_frameId - GetActualFrameLatency());
+  }
+
 
   uint32_t D3D9SwapChainEx::GetActualFrameLatency() {
     uint32_t maxFrameLatency = m_parent->GetFrameLatency();
@@ -1256,7 +1256,7 @@ namespace dxvk {
     if (hMonitor == nullptr)
       return D3DERR_INVALIDCALL;
     
-    return RestoreMonitorDisplayMode(hMonitor)
+    return RestoreMonitorDisplayMode()
       ? D3D_OK
       : D3DERR_NOTAVAILABLE;
   }
