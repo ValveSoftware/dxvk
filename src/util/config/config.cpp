@@ -68,10 +68,6 @@ namespace dxvk {
     { R"(\\FIFA(19|[2-9][0-9])(_demo)?\.exe$)", {{
       { "dxvk.useRawSsbo",                  "True" },
     }} },
-    /* Final Fantasy XIV: Fix random black blocks */
-    { R"(\\ffxiv_dx11\.exe$)", {{
-      { "d3d11.enableRtOutputNanFixup",     "True" },
-    }} },
     /* Resident Evil 2/3: Ignore WaW hazards      */
     { R"(\\re(2|3|3demo)\.exe$)", {{
       { "d3d11.relaxedBarriers",            "True" },
@@ -111,6 +107,11 @@ namespace dxvk {
     /* NieR:Automata                              */
     { R"(\\NieRAutomata\.exe$)", {{
       { "d3d11.constantBufferRangeCheck",   "True" },
+    }} },
+    /* NieR Replicant                             */
+    { R"(\\NieR Replicant ver\.1\.22474487139\.exe)", {{
+      { "dxgi.syncInterval",                "1"   },
+      { "dxgi.maxFrameRate",                "60"  },
     }} },
     /* SteamVR performance test                   */
     { R"(\\vr\.exe$)", {{
@@ -162,8 +163,16 @@ namespace dxvk {
     { R"(\\Atelier_(Lulua|Lydie_and_Suelle|Ryza(_2)?)\.exe$)", {{
       { "d3d9.deferSurfaceCreation",        "True" },
     }} },
+    /* ...                                        */
+    { R"(\\Atelier_(Lydie_and_Suelle|Firis|Sophie)_DX\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
     /* Fairy Tail                                 */
     { R"(\\FAIRY_TAIL\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
+    /* Nights of Azure                            */
+    { R"(\\CNN\.exe$)", {{
       { "d3d9.deferSurfaceCreation",        "True" },
     }} },
     /* Star Wars Battlefront II: amdags issues    */
@@ -196,6 +205,14 @@ namespace dxvk {
     { R"(\\MonsterHunterWorld\.exe$)", {{
       { "d3d11.apitraceMode",               "True" },
     }} },
+    /* Kingdome Come: Deliverance                 */
+    { R"(\\KingdomCome\.exe$)", {{
+      { "d3d11.apitraceMode",               "True" },
+    }} },
+    /* Sniper Ghost Warrior Contracts             */
+    { R"(\\SGWContracts\.exe$)", {{
+      { "d3d11.apitraceMode",               "True" },
+    }} },
     /* Shadow of the Tomb Raider - invariant      *
      * position breaks character rendering on NV  */
     { R"(\\SOTTR\.exe$)", {{
@@ -210,6 +227,16 @@ namespace dxvk {
      * detects an AMD GPU                         */
     { R"(\\DIRT5\.exe$)", {{
       { "dxgi.customVendorId",              "10de" },
+    }} },
+    /* Crazy Machines 3 - crashes on long device  *
+     * descriptions                               */
+    { R"(\\cm3\.exe$)", {{
+      { "dxgi.customDeviceDesc",            "DXVK Adapter" },
+    }} },
+    /* GTA IV: Thinks we're always on Intel       *
+     * and will report/use bad amounts of VRAM.   */
+    { R"(\\GTAIV\.exe$)", {{
+      { "dxgi.emulateUMA",                  "True" },
     }} },
 
     /**********************************************/
@@ -236,17 +263,11 @@ namespace dxvk {
     }} },
     /* Gothic 3                                   */
     { R"(\\Gothic(3|3Final| III Forsaken Gods)\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
       { "d3d9.supportDFFormats",            "False" },
     }} },
     /* Risen                                      */
     { R"(\\Risen[23]?\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
       { "d3d9.invariantPosition",           "True" },
-    }} },
-    /* Nostale                                    */
-    { R"(\\NostaleClientX\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
     }} },
     /* Sonic Adventure 2                          */
     { R"(\\Sonic Adventure 2\\(launcher|sonic2app)\.exe$)", {{
@@ -276,10 +297,6 @@ namespace dxvk {
        of a 1x1 one if DF24 is NOT supported      */
     { R"(\\Dead Space\.exe$)", {{
       { "d3d9.supportDFFormats",                 "False" },
-    }} },
-    /* Burnout Paradise                           */
-    { R"(\\BurnoutParadise\.exe$)", {{
-      { "d3d9.allowLockFlagReadonly",       "False" },
     }} },
     /* Halo 2                                     */
     { R"(\\halo2\.exe$)", {{
@@ -382,7 +399,7 @@ namespace dxvk {
     }} },
     /* TrackMania Forever                        */
     { R"(\\TmForever\.exe$)", {{
-      { "d3d9.swvpFloatCount",              "128" },
+      { "d3d9.swvpFloatCount",              "256" },
       { "d3d9.swvpIntCount",                "16" },
       { "d3d9.swvpBoolCount",               "16" },
     }} },
@@ -393,8 +410,27 @@ namespace dxvk {
     }} },
     /* Warhammer: Online                         */
     { R"(\\WAR(-64)?\.exe$)", {{
-      { "d3d9.allowImplicitDiscard",        "False" },
       { "d3d9.customVendorId",              "1002" },
+    }} },
+    /* Dragon Nest                               */
+    { R"(\\DragonNest_x64\.exe$)", {{
+      { "d3d9.memoryTrackTest ",            "True" },
+    }} },
+    /* Dal Segno                                 */
+    { R"(\\DST\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
+    /* Kohan II                                  */
+    { R"(\\k2\.exe$)", {{
+      { "d3d9.memoryTrackTest",             "True" },
+    }} },
+    /* Ninja Gaiden Sigma 1/2                    */
+    { R"(\\NINJA GAIDEN SIGMA(2)?\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
+    /* Demon Stone breaks at frame rates > 60fps */
+    { R"(\\Demonstone\.exe$)", {{
+      { "d3d9.maxFrameRate",                "60" },
     }} },
   }};
 

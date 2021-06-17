@@ -26,6 +26,9 @@ namespace dxvk {
     /// a higher value. May help with frame timing issues.
     int32_t maxFrameLatency;
 
+    /// Limit frame rate
+    int32_t maxFrameRate;
+
     /// Set the max shader model the device can support in the caps.
     int32_t shaderModel;
 
@@ -34,11 +37,6 @@ namespace dxvk {
 
     /// Whether or not to set the process as DPI aware in Windows when the API interface is created.
     bool dpiAware;
-    
-    /// Handle D3DLOCK_READONLY properly.
-    ///
-    /// Risen 1 writes to buffers mapped with readonly.
-    bool allowLockFlagReadonly;
 
     /// True:  Copy our constant set into UBO if we are relative indexing ever.
     /// False: Copy our constant set into UBO if we are relative indexing at the start of a defined constant
@@ -157,10 +155,6 @@ namespace dxvk {
 
     /// Use device local memory for constant buffers.
     bool deviceLocalConstantBuffers;
-
-    /// Allow implicit discard of resources in contested situations.
-    /// Some naughty apps write to pointers outside of lock boundaries.
-    bool allowImplicitDiscard;
   };
 
 }

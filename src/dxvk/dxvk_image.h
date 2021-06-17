@@ -213,6 +213,16 @@ namespace dxvk {
     }
     
     /**
+     * \brief Size of a mipmap level
+     * 
+     * \param [in] level Mip level
+     * \returns Size of that level
+     */
+    VkExtent3D mipLevelExtent(uint32_t level, VkImageAspectFlags aspect) const {
+      return util::computeMipLevelExtent(m_info.extent, level, m_info.format, aspect);
+    }
+    
+    /**
      * \brief Queries memory layout of a subresource
      * 
      * Can be used to retrieve the exact pointer to a
@@ -402,7 +412,7 @@ namespace dxvk {
      * \returns Size of that level
      */
     VkExtent3D mipLevelExtent(uint32_t level) const {
-      return m_image->mipLevelExtent(level + m_info.minLevel);
+      return m_image->mipLevelExtent(level + m_info.minLevel, m_info.aspect);
     }
     
     /**
@@ -467,6 +477,22 @@ namespace dxvk {
       result.image.imageView    = handle(type);
       result.image.imageLayout  = layout;
       return result;
+    }
+
+    /**
+     * \brief Checks whether this view matches another
+     *
+     * \param [in] view The other view to check
+     * \returns \c true if the two views have the same subresources
+     */
+    bool matchesView(const Rc<DxvkImageView>& view) const {
+      if (this == view.ptr())
+        return true;
+
+      return this->image()        == view->image()
+          && this->subresources() == view->subresources()
+          && this->info().type    == view->info().type
+          && this->info().format  == view->info().format;
     }
 
     /**

@@ -4,6 +4,7 @@
 #include "d3d11_device.h"
 #include "d3d11_query.h"
 #include "d3d11_texture.h"
+#include "d3d11_video.h"
 
 #include "../dxbc/dxbc_util.h"
 
@@ -959,6 +960,7 @@ namespace dxvk {
     auto dsv = dynamic_cast<D3D11DepthStencilView*>(pView);
     auto rtv = dynamic_cast<D3D11RenderTargetView*>(pView);
     auto uav = dynamic_cast<D3D11UnorderedAccessView*>(pView);
+    auto vov = dynamic_cast<D3D11VideoProcessorOutputView*>(pView);
 
     // Retrieve underlying resource view
     Rc<DxvkBufferView> bufView;
@@ -974,6 +976,9 @@ namespace dxvk {
       bufView = uav->GetBufferView();
       imgView = uav->GetImageView();
     }
+
+    if (vov != nullptr)
+      imgView = vov->GetView();
 
     // 3D views are unsupported
     if (imgView != nullptr
@@ -1218,38 +1223,33 @@ namespace dxvk {
        || !util::isBlockAligned(offset, extent, formatInfo->blockSize, mipExtent))
         return;
 
-      const VkExtent3D regionExtent = util::computeBlockCount(extent, formatInfo->blockSize);
-      
-      const VkDeviceSize bytesPerRow   = regionExtent.width  * formatInfo->elementSize;
-      const VkDeviceSize bytesPerLayer = regionExtent.height * bytesPerRow;
-      const VkDeviceSize bytesTotal    = regionExtent.depth  * bytesPerLayer;
-      
-      DxvkDataSlice imageDataBuffer = AllocUpdateBufferSlice(bytesTotal);
-      
-      util::packImageData(imageDataBuffer.ptr(), pSrcData,
-        regionExtent, formatInfo->elementSize,
-        SrcRowPitch, SrcDepthPitch);
+      auto image = textureInfo->GetImage();
+      auto stagingSlice = AllocStagingBuffer(util::computeImageDataSize(packedFormat, extent));
+
+      util::packImageData(stagingSlice.mapPtr(0),
+        pSrcData, SrcRowPitch, SrcDepthPitch,
+        image->info().type, extent, 1,
+        formatInfo, formatInfo->aspectMask);
       
       EmitCs([
-        cDstImage         = textureInfo->GetImage(),
+        cDstImage         = std::move(image),
         cDstLayers        = layers,
         cDstOffset        = offset,
         cDstExtent        = extent,
-        cSrcData          = std::move(imageDataBuffer),
-        cSrcBytesPerRow   = bytesPerRow,
-        cSrcBytesPerLayer = bytesPerLayer,
+        cStagingSlice     = std::move(stagingSlice),
         cPackedFormat     = packedFormat
       ] (DxvkContext* ctx) {
         if (cDstLayers.aspectMask != (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-          ctx->updateImage(cDstImage, cDstLayers,
-            cDstOffset, cDstExtent, cSrcData.ptr(),
-            cSrcBytesPerRow, cSrcBytesPerLayer);
+          ctx->copyBufferToImage(cDstImage,
+            cDstLayers, cDstOffset, cDstExtent,
+            cStagingSlice.buffer(),
+            cStagingSlice.offset(), 0);
         } else {
-          ctx->updateDepthStencilImage(cDstImage, cDstLayers,
+          ctx->copyPackedBufferToDepthStencilImage(cDstImage, cDstLayers,
             VkOffset2D { cDstOffset.x,     cDstOffset.y      },
             VkExtent2D { cDstExtent.width, cDstExtent.height },
-            cSrcData.ptr(), cSrcBytesPerRow, cSrcBytesPerLayer,
-            cPackedFormat);
+            cStagingSlice.buffer(),
+            cStagingSlice.offset(), cPackedFormat);
         }
       });
 
@@ -1465,7 +1465,6 @@ namespace dxvk {
           UINT            StartIndexLocation,
           INT             BaseVertexLocation) {
     D3D10DeviceLock lock = LockContext();
-    StartIndexLocation += m_state.ia.indexBuffer.firstIndex;
     
     EmitCs([=] (DxvkContext* ctx) {
       ctx->drawIndexed(
@@ -1500,7 +1499,6 @@ namespace dxvk {
           INT             BaseVertexLocation,
           UINT            StartInstanceLocation) {
     D3D10DeviceLock lock = LockContext();
-    StartIndexLocation += m_state.ia.indexBuffer.firstIndex;
     
     EmitCs([=] (DxvkContext* ctx) {
       ctx->drawIndexed(
@@ -1675,12 +1673,6 @@ namespace dxvk {
     if (needsUpdate)
       m_state.ia.indexBuffer.buffer = newBuffer;
 
-    if (likely(m_state.ia.indexBuffer.optimized)) {
-      uint32_t shift = Format == DXGI_FORMAT_R16_UINT ? 1 : 2;
-      m_state.ia.indexBuffer.firstIndex = Offset >> shift;
-      Offset = 0;
-    }
-
     needsUpdate |= m_state.ia.indexBuffer.offset != Offset
                 || m_state.ia.indexBuffer.format != Format;
 
@@ -1716,14 +1708,25 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumBuffers; i++) {
-      if (ppVertexBuffers != nullptr)
-        ppVertexBuffers[i] = m_state.ia.vertexBuffers[StartSlot + i].buffer.ref();
+      const bool inRange = StartSlot + i < m_state.ia.vertexBuffers.size();
+
+      if (ppVertexBuffers != nullptr) {
+        ppVertexBuffers[i] = inRange
+          ? m_state.ia.vertexBuffers[StartSlot + i].buffer.ref()
+          : nullptr;
+      }
       
-      if (pStrides != nullptr)
-        pStrides[i] = m_state.ia.vertexBuffers[StartSlot + i].stride;
+      if (pStrides != nullptr) {
+        pStrides[i] = inRange
+          ? m_state.ia.vertexBuffers[StartSlot + i].stride
+          : 0u;
+      }
       
-      if (pOffsets != nullptr)
-        pOffsets[i] = m_state.ia.vertexBuffers[StartSlot + i].offset;
+      if (pOffsets != nullptr) {
+        pOffsets[i] = inRange
+          ? m_state.ia.vertexBuffers[StartSlot + i].offset
+          : 0u;
+      }
     }
   }
   
@@ -1740,12 +1743,8 @@ namespace dxvk {
     if (pFormat != nullptr)
       *pFormat = m_state.ia.indexBuffer.format;
     
-    if (pOffset != nullptr) {
-      uint32_t shift = m_state.ia.indexBuffer.format == DXGI_FORMAT_R16_UINT ? 1 : 2;
-      *pOffset = m_state.ia.indexBuffer.optimized
-        ? m_state.ia.indexBuffer.firstIndex << shift
-        : m_state.ia.indexBuffer.offset;
-    }
+    if (pOffset != nullptr)
+      *pOffset = m_state.ia.indexBuffer.offset;
   }
   
   
@@ -1875,8 +1874,8 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppShaderResourceViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.vs.shaderResources.views[StartSlot + i].ref();
+    GetShaderResources(m_state.vs.shaderResources,
+      StartSlot, NumViews, ppShaderResourceViews);
   }
   
   
@@ -1886,8 +1885,8 @@ namespace dxvk {
           ID3D11SamplerState**              ppSamplers) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = ref(m_state.vs.samplers[StartSlot + i]);
+    GetSamplers(m_state.vs.samplers,
+      StartSlot, NumSamplers, ppSamplers);
   }
   
   
@@ -1994,7 +1993,7 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::HSGetConstantBuffers1(
+  void STDMETHODCALLTYPE D3D11DeviceContext::HSGetConstantBuffers1(
           UINT                              StartSlot, 
           UINT                              NumBuffers, 
           ID3D11Buffer**                    ppConstantBuffers, 
@@ -2017,8 +2016,8 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppShaderResourceViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.hs.shaderResources.views[StartSlot + i].ref();
+    GetShaderResources(m_state.hs.shaderResources,
+      StartSlot, NumViews, ppShaderResourceViews);
   }
   
   
@@ -2028,8 +2027,8 @@ namespace dxvk {
           ID3D11SamplerState**              ppSamplers) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = ref(m_state.hs.samplers[StartSlot + i]);
+    GetSamplers(m_state.hs.samplers,
+      StartSlot, NumSamplers, ppSamplers);
   }
   
   
@@ -2159,8 +2158,8 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppShaderResourceViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.ds.shaderResources.views[StartSlot + i].ref();
+    GetShaderResources(m_state.ds.shaderResources,
+      StartSlot, NumViews, ppShaderResourceViews);
   }
   
   
@@ -2170,8 +2169,8 @@ namespace dxvk {
           ID3D11SamplerState**              ppSamplers) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = ref(m_state.ds.samplers[StartSlot + i]);
+    GetSamplers(m_state.ds.samplers,
+      StartSlot, NumSamplers, ppSamplers);
   }
   
   
@@ -2207,7 +2206,7 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::GSSetConstantBuffers1(
+  void STDMETHODCALLTYPE D3D11DeviceContext::GSSetConstantBuffers1(
           UINT                              StartSlot, 
           UINT                              NumBuffers, 
           ID3D11Buffer* const*              ppConstantBuffers,
@@ -2278,7 +2277,7 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::GSGetConstantBuffers1(
+  void STDMETHODCALLTYPE D3D11DeviceContext::GSGetConstantBuffers1(
           UINT                              StartSlot, 
           UINT                              NumBuffers, 
           ID3D11Buffer**                    ppConstantBuffers, 
@@ -2301,8 +2300,8 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppShaderResourceViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.gs.shaderResources.views[StartSlot + i].ref();
+    GetShaderResources(m_state.gs.shaderResources,
+      StartSlot, NumViews, ppShaderResourceViews);
   }
   
   
@@ -2312,8 +2311,8 @@ namespace dxvk {
           ID3D11SamplerState**              ppSamplers) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = ref(m_state.gs.samplers[StartSlot + i]);
+    GetSamplers(m_state.gs.samplers,
+      StartSlot, NumSamplers, ppSamplers);
   }
   
   
@@ -2349,7 +2348,7 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::PSSetConstantBuffers1(
+  void STDMETHODCALLTYPE D3D11DeviceContext::PSSetConstantBuffers1(
           UINT                              StartSlot, 
           UINT                              NumBuffers, 
           ID3D11Buffer* const*              ppConstantBuffers, 
@@ -2420,7 +2419,7 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::PSGetConstantBuffers1(
+  void STDMETHODCALLTYPE D3D11DeviceContext::PSGetConstantBuffers1(
           UINT                              StartSlot,
           UINT                              NumBuffers, 
           ID3D11Buffer**                    ppConstantBuffers,
@@ -2443,8 +2442,8 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppShaderResourceViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.ps.shaderResources.views[StartSlot + i].ref();
+    GetShaderResources(m_state.ps.shaderResources,
+      StartSlot, NumViews, ppShaderResourceViews);
   }
   
   
@@ -2454,8 +2453,8 @@ namespace dxvk {
           ID3D11SamplerState**              ppSamplers) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = ref(m_state.ps.samplers[StartSlot + i]);
+    GetSamplers(m_state.ps.samplers,
+      StartSlot, NumSamplers, ppSamplers);
   }
   
   
@@ -2641,8 +2640,8 @@ namespace dxvk {
           ID3D11ShaderResourceView**        ppShaderResourceViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumViews; i++)
-      ppShaderResourceViews[i] = m_state.cs.shaderResources.views[StartSlot + i].ref();
+    GetShaderResources(m_state.cs.shaderResources,
+      StartSlot, NumViews, ppShaderResourceViews);
   }
   
   
@@ -2652,8 +2651,8 @@ namespace dxvk {
           ID3D11SamplerState**              ppSamplers) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumSamplers; i++)
-      ppSamplers[i] = ref(m_state.cs.samplers[StartSlot + i]);
+    GetSamplers(m_state.cs.samplers,
+      StartSlot, NumSamplers, ppSamplers);
   }
   
   
@@ -2663,8 +2662,11 @@ namespace dxvk {
           ID3D11UnorderedAccessView**       ppUnorderedAccessViews) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumUAVs; i++)
-      ppUnorderedAccessViews[i] = m_state.cs.unorderedAccessViews[StartSlot + i].ref();
+    for (uint32_t i = 0; i < NumUAVs; i++) {
+      ppUnorderedAccessViews[i] = StartSlot + i < m_state.cs.unorderedAccessViews.size()
+        ? m_state.cs.unorderedAccessViews[StartSlot + i].ref()
+        : nullptr;
+    }
   }
   
   
@@ -2814,8 +2816,11 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     if (ppRenderTargetViews != nullptr) {
-      for (UINT i = 0; i < NumViews; i++)
-        ppRenderTargetViews[i] = m_state.om.renderTargetViews[i].ref();
+      for (UINT i = 0; i < NumViews; i++) {
+        ppRenderTargetViews[i] = i < m_state.om.renderTargetViews.size()
+          ? m_state.om.renderTargetViews[i].ref()
+          : nullptr;
+      }
     }
     
     if (ppDepthStencilView != nullptr)
@@ -2835,8 +2840,11 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     if (ppUnorderedAccessViews != nullptr) {
-      for (UINT i = 0; i < NumUAVs; i++)
-        ppUnorderedAccessViews[i] = m_state.ps.unorderedAccessViews[UAVStartSlot + i].ref();
+      for (UINT i = 0; i < NumUAVs; i++) {
+        ppUnorderedAccessViews[i] = UAVStartSlot + i < m_state.ps.unorderedAccessViews.size()
+          ? m_state.ps.unorderedAccessViews[UAVStartSlot + i].ref()
+          : nullptr;
+      }
     }
   }
   
@@ -3054,8 +3062,11 @@ namespace dxvk {
           ID3D11Buffer**                    ppSOTargets) {
     D3D10DeviceLock lock = LockContext();
     
-    for (uint32_t i = 0; i < NumBuffers; i++)
-      ppSOTargets[i] = m_state.so.targets[i].buffer.ref();
+    for (uint32_t i = 0; i < NumBuffers; i++) {
+      ppSOTargets[i] = i < m_state.so.targets.size()
+        ? m_state.so.targets[i].buffer.ref()
+        : nullptr;
+    }
   }
   
   
@@ -3066,18 +3077,25 @@ namespace dxvk {
     D3D10DeviceLock lock = LockContext();
     
     for (uint32_t i = 0; i < NumBuffers; i++) {
-      if (ppSOTargets != nullptr)
-        ppSOTargets[i] = m_state.so.targets[i].buffer.ref();
+      const bool inRange = i < m_state.so.targets.size();
 
-      if (pOffsets != nullptr)
-        pOffsets[i] = m_state.so.targets[i].offset;
+      if (ppSOTargets != nullptr) {
+        ppSOTargets[i] = inRange
+          ? m_state.so.targets[i].buffer.ref()
+          : nullptr;
+      }
+
+      if (pOffsets != nullptr) {
+        pOffsets[i] = inRange
+          ? m_state.so.targets[i].offset
+          : 0u;
+      }
     }
   }
 
 
   BOOL STDMETHODCALLTYPE D3D11DeviceContext::IsAnnotationEnabled() {
-    // Not implemented in the backend
-    return FALSE;
+    return m_device->instance()->extensions().extDebugUtils;
   }
 
 
@@ -3401,13 +3419,7 @@ namespace dxvk {
 
   void D3D11DeviceContext::BindFramebuffer() {
     DxvkRenderTargets attachments;
-
-    // Re-enable index buffer optimization here. Some games will
-    // use indirect draws for actual scene rendering, but then
-    // use direct draws for things like the user interface.
-    if (!m_state.ia.indexBuffer.optimized)
-      SetIndexBufferOptimized(true);
-
+    
     // D3D11 doesn't have the concept of a framebuffer object,
     // so we'll just create a new one every time the render
     // target bindings are updated. Set up the attachments.
@@ -3602,38 +3614,11 @@ namespace dxvk {
   }
 
 
-  void D3D11DeviceContext::SetIndexBufferOptimized(
-          BOOL                              Enable) {
-    uint32_t shift = m_state.ia.indexBuffer.format == DXGI_FORMAT_R16_UINT ? 1 : 2;
-
-    if (Enable) {
-      m_state.ia.indexBuffer.firstIndex = m_state.ia.indexBuffer.offset >> shift;
-      m_state.ia.indexBuffer.offset = 0;
-    } else {
-      m_state.ia.indexBuffer.offset += m_state.ia.indexBuffer.firstIndex << shift;
-      m_state.ia.indexBuffer.firstIndex = 0;
-    }
-
-    m_state.ia.indexBuffer.optimized = Enable;
-
-    BindIndexBuffer(
-      m_state.ia.indexBuffer.buffer.ptr(),
-      m_state.ia.indexBuffer.offset,
-      m_state.ia.indexBuffer.format);
-  }
-
-
   void D3D11DeviceContext::SetDrawBuffers(
           ID3D11Buffer*                     pBufferForArgs,
           ID3D11Buffer*                     pBufferForCount) {
     auto argBuffer = static_cast<D3D11Buffer*>(pBufferForArgs);
     auto cntBuffer = static_cast<D3D11Buffer*>(pBufferForCount);
-
-    // Bind index buffer with the actual offset since otherwise the
-    // first index members of the indirect draw structures would be
-    // incorrect.
-    if (unlikely(m_state.ia.indexBuffer.optimized))
-      SetIndexBufferOptimized(false);
 
     if (m_state.id.argBuffer != argBuffer
      || m_state.id.cntBuffer != cntBuffer) {
@@ -3790,18 +3775,55 @@ namespace dxvk {
           UINT*                             pFirstConstant, 
           UINT*                             pNumConstants) {
     for (uint32_t i = 0; i < NumBuffers; i++) {
-      if (ppConstantBuffers != nullptr)
-        ppConstantBuffers[i] = Bindings[StartSlot + i].buffer.ref();
+      const bool inRange = StartSlot + i < Bindings.size();
+
+      if (ppConstantBuffers != nullptr) {
+        ppConstantBuffers[i] = inRange
+          ? Bindings[StartSlot + i].buffer.ref()
+          : nullptr;
+      }
       
-      if (pFirstConstant != nullptr)
-        pFirstConstant[i] = Bindings[StartSlot + i].constantOffset;
+      if (pFirstConstant != nullptr) {
+        pFirstConstant[i] = inRange
+          ? Bindings[StartSlot + i].constantOffset
+          : 0u;
+      }
       
-      if (pNumConstants != nullptr)
-        pNumConstants[i] = Bindings[StartSlot + i].constantCount;
+      if (pNumConstants != nullptr) {
+        pNumConstants[i] = inRange
+          ? Bindings[StartSlot + i].constantCount
+          : 0u;
+      }
     }
   }
   
   
+  void D3D11DeviceContext::GetShaderResources(
+    const D3D11ShaderResourceBindings&      Bindings,
+          UINT                              StartSlot,
+          UINT                              NumViews,
+          ID3D11ShaderResourceView**        ppShaderResourceViews) {
+    for (uint32_t i = 0; i < NumViews; i++) {
+      ppShaderResourceViews[i] = StartSlot + i < Bindings.views.size()
+        ? Bindings.views[StartSlot + i].ref()
+        : nullptr;
+    }
+  }
+
+
+  void D3D11DeviceContext::GetSamplers(
+    const D3D11SamplerBindings&             Bindings,
+          UINT                              StartSlot,
+          UINT                              NumSamplers,
+          ID3D11SamplerState**              ppSamplers) {
+    for (uint32_t i = 0; i < NumSamplers; i++) {
+      ppSamplers[i] = StartSlot + i < Bindings.size()
+        ? ref(Bindings[StartSlot + i])
+        : nullptr;
+    }
+  }
+
+
   void D3D11DeviceContext::ResetState() {
     EmitCs([] (DxvkContext* ctx) {
       // Reset render targets
@@ -4030,8 +4052,7 @@ namespace dxvk {
       cPackedFormat = packedFormat
     ] (DxvkContext* ctx) {
       if (cSubresources.aspectMask != (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-        ctx->copyImageToBuffer(
-          cImageBuffer, 0, VkExtent2D { 0u, 0u },
+        ctx->copyImageToBuffer(cImageBuffer, 0, 0,
           cImage, cSubresources, VkOffset3D { 0, 0, 0 },
           cLevelExtent);
       } else {
@@ -4289,6 +4310,23 @@ namespace dxvk {
   }
   
   
+  DxvkBufferSlice D3D11DeviceContext::AllocStagingBuffer(
+          VkDeviceSize                      Size) {
+    DxvkBufferCreateInfo info;
+    info.size   = Size;
+    info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+                | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
+                | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    info.access = VK_ACCESS_TRANSFER_READ_BIT
+                | VK_ACCESS_SHADER_READ_BIT;
+
+    return DxvkBufferSlice(m_device->createBuffer(info,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+  }
+  
+
   DxvkCsChunkRef D3D11DeviceContext::AllocCsChunk() {
     return m_parent->AllocCsChunk(m_csFlags);
   }
@@ -4309,6 +4347,7 @@ namespace dxvk {
     pRsState->frontFace       = VK_FRONT_FACE_CLOCKWISE;
     pRsState->depthClipEnable = VK_TRUE;
     pRsState->depthBiasEnable = VK_FALSE;
+    pRsState->conservativeMode = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     pRsState->sampleCount     = 0;
   }
 

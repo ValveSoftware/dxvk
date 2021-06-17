@@ -17,8 +17,15 @@ namespace dxvk {
                     ? D3D9Format::D32
                     : D3D9Format::X8R8G8B8;
 
-    for (uint32_t i = 0; i < m_updateDirtyBoxes.size(); i++) {
-      AddUpdateDirtyBox(nullptr, i);
+    for (uint32_t i = 0; i < m_dirtyBoxes.size(); i++) {
+      AddDirtyBox(nullptr, i);
+    }
+
+    if (m_desc.Pool != D3DPOOL_DEFAULT) {
+      const uint32_t subresources = CountSubresources();
+      for (uint32_t i = 0; i < subresources; i++) {
+        SetNeedsUpload(i, true);
+      }
     }
 
     m_mapping = pDevice->LookupFormat(m_desc.Format);
@@ -194,8 +201,7 @@ namespace dxvk {
     const uint32_t planeCount = m_mapping.ConversionFormatInfo.PlaneCount;
 
     return std::min(planeCount, 2u)
-         * formatInfo.elementSize
-         * blockCount.width
+         * align(formatInfo.elementSize * blockCount.width, 4)
          * blockCount.height
          * blockCount.depth;
   }
@@ -489,7 +495,7 @@ namespace dxvk {
     if (IsManaged()) {
       auto lock = m_device->LockDevice();
 
-      if (GetNeedsUpload(Subresource)) {
+      if (NeedsUpload(Subresource)) {
         m_device->FlushImage(this, Subresource);
         SetNeedsUpload(Subresource, false);
 

@@ -50,7 +50,7 @@ namespace dxvk {
   
   int32_t DxvkFramebuffer::findAttachment(const Rc<DxvkImageView>& view) const {
     for (uint32_t i = 0; i < m_attachmentCount; i++) {
-      if (getAttachment(i).view == view)
+      if (getAttachment(i).view->matchesView(view))
         return int32_t(i);
     }
     
@@ -75,6 +75,12 @@ namespace dxvk {
     return m_renderSize.width  == view->mipLevelExtent(0).width
         && m_renderSize.height == view->mipLevelExtent(0).height
         && m_renderSize.layers == view->info().numLayers;
+  }
+
+
+  bool DxvkFramebuffer::isWritable(uint32_t attachmentIndex, VkImageAspectFlags aspects) const {
+    VkImageAspectFlags writableAspects = vk::getWritableAspectsForLayout(getAttachment(attachmentIndex).layout);
+    return (writableAspects & aspects) == aspects;
   }
 
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
@@ -52,10 +52,15 @@ function build_arch {
   
   cd "$DXVK_SRC_DIR"
 
+  opt_strip=
+  if [ $opt_devbuild -eq 0 ]; then
+    opt_strip=--strip
+  fi
+
   meson --cross-file "$DXVK_SRC_DIR/$crossfile$1.txt" \
         --buildtype "release"                         \
         --prefix "$DXVK_BUILD_DIR"                    \
-        --strip                                       \
+        $opt_strip                                    \
         --bindir "x$1"                                \
         --libdir "x$1"                                \
         -Denable_tests=false                          \

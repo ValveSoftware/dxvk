@@ -76,6 +76,8 @@ namespace dxvk {
 
     const D3DPRESENT_PARAMETERS* GetPresentParams() const { return &m_presentParams; }
 
+    void SyncFrameLatency();
+
   private:
 
     enum BindingIds : uint32_t {
@@ -126,6 +128,8 @@ namespace dxvk {
 
     WindowState               m_windowState;
 
+    double                    m_displayRefreshRate = 0.0;
+
     void PresentImage(UINT PresentInterval);
 
     void SubmitPresent(const vk::PresenterSync& Sync, uint32_t FrameId);
@@ -164,6 +168,9 @@ namespace dxvk {
             UINT                      Preferred);
 
     void NormalizePresentParameters(D3DPRESENT_PARAMETERS* pPresentParams);
+
+    void NotifyDisplayRefreshRate(
+            double                  RefreshRate);
 
     HRESULT EnterFullscreenMode(
             D3DPRESENT_PARAMETERS*  pPresentParams,

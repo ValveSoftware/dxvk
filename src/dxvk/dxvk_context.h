@@ -341,13 +341,14 @@ namespace dxvk {
     /**
      * \brief Copies data from a buffer to an image
      * 
+     * Source data must be packed, except for the row alignment.
      * \param [in] dstImage Destination image
      * \param [in] dstSubresource Destination subresource
      * \param [in] dstOffset Destination area offset
      * \param [in] dstExtent Destination area size
      * \param [in] srcBuffer Source buffer
      * \param [in] srcOffset Source offset, in bytes
-     * \param [in] srcExtent Source data extent
+     * \param [in] rowAlignment Row alignment, in bytes
      */
     void copyBufferToImage(
       const Rc<DxvkImage>&        dstImage,
@@ -356,7 +357,7 @@ namespace dxvk {
             VkExtent3D            dstExtent,
       const Rc<DxvkBuffer>&       srcBuffer,
             VkDeviceSize          srcOffset,
-            VkExtent2D            srcExtent);
+            VkDeviceSize          rowAlignment);
     
     /**
      * \brief Copies data from one image to another
@@ -408,7 +409,7 @@ namespace dxvk {
     void copyImageToBuffer(
       const Rc<DxvkBuffer>&       dstBuffer,
             VkDeviceSize          dstOffset,
-            VkExtent2D            dstExtent,
+            VkDeviceSize          rowAlignment,
       const Rc<DxvkImage>&        srcImage,
             VkImageSubresourceLayers srcSubresource,
             VkOffset3D            srcOffset,
@@ -981,7 +982,32 @@ namespace dxvk {
      * given context are rare.
      */
     void trimStagingBuffers();
-    
+   
+    /**
+     * \brief Begins a debug label region
+     * \param [in] label The debug label
+     *
+     * Marks the start of a debug label region. Used by debugging/profiling
+     * tools to mark different workloads within a frame.
+     */
+    void beginDebugLabel(VkDebugUtilsLabelEXT *label);
+
+    /**
+     * \brief Ends a debug label region
+     *
+     * Marks the close of a debug label region. Used by debugging/profiling
+     * tools to mark different workloads within a frame.
+     */
+    void endDebugLabel();
+
+    /**
+     * \brief Inserts a debug label
+     * \param [in] label The debug label
+     *
+     * Inserts an instantaneous debug label. Used by debugging/profiling
+     * tools to mark different workloads within a frame.
+     */
+    void insertDebugLabel(VkDebugUtilsLabelEXT *label);
   private:
     
     Rc<DxvkDevice>          m_device;
@@ -1036,6 +1062,28 @@ namespace dxvk {
       const VkImageBlit&          region,
             VkFilter              filter);
 
+    template<bool ToImage>
+    void copyImageBufferData(
+            DxvkCmdBuffer         cmd,
+      const Rc<DxvkImage>&        image,
+      const VkImageSubresourceLayers& imageSubresource,
+            VkOffset3D            imageOffset,
+            VkExtent3D            imageExtent,
+            VkImageLayout         imageLayout,
+      const DxvkBufferSliceHandle& bufferSlice,
+            VkDeviceSize          bufferRowAlignment,
+            VkDeviceSize          bufferSliceAlignment);
+
+    void copyImageHostData(
+            DxvkCmdBuffer         cmd,
+      const Rc<DxvkImage>&        image,
+      const VkImageSubresourceLayers& imageSubresource,
+            VkOffset3D            imageOffset,
+            VkExtent3D            imageExtent,
+      const void*                 hostData,
+            VkDeviceSize          rowPitch,
+            VkDeviceSize          slicePitch);
+
     void clearImageViewFb(
       const Rc<DxvkImageView>&    imageView,
             VkOffset3D            offset,
@@ -1067,6 +1115,14 @@ namespace dxvk {
             VkOffset3D            srcOffset,
             VkExtent3D            extent);
     
+    bool copyImageClear(
+      const Rc<DxvkImage>&        dstImage,
+            VkImageSubresourceLayers dstSubresource,
+            VkOffset3D            dstOffset,
+            VkExtent3D            dstExtent,
+      const Rc<DxvkImage>&        srcImage,
+            VkImageSubresourceLayers srcSubresource);
+
     void resolveImageHw(
       const Rc<DxvkImage>&            dstImage,
       const Rc<DxvkImage>&            srcImage,
@@ -1105,6 +1161,8 @@ namespace dxvk {
 
     void flushClears(
             bool                      useRenderPass);
+
+    void flushSharedImages();
 
     void startRenderPass();
     void spillRenderPass(bool suspend);

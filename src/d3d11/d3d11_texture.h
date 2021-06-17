@@ -46,6 +46,17 @@ namespace dxvk {
     UINT             MiscFlags;
     D3D11_TEXTURE_LAYOUT TextureLayout;
   };
+
+
+  /**
+   * \brief Packed subresource layout
+   */
+  struct D3D11_COMMON_TEXTURE_SUBRESOURCE_LAYOUT {
+    UINT64          Offset;
+    UINT64          Size;
+    UINT            RowPitch;
+    UINT            DepthPitch;
+  };
   
   
   /**
@@ -175,7 +186,18 @@ namespace dxvk {
     VkImageSubresource GetSubresourceFromIndex(
             VkImageAspectFlags    Aspect,
             UINT                  Subresource) const;
-    
+
+    /**
+     * \brief Computes subresource layout for the given subresource
+     *
+     * \param [in] Aspect The image aspect
+     * \param [in] Subresource Subresource index
+     * \returns Memory layout of the mapped subresource
+     */
+    D3D11_COMMON_TEXTURE_SUBRESOURCE_LAYOUT GetSubresourceLayout(
+            VkImageAspectFlags    Aspect,
+            UINT                  Subresource) const;
+
     /**
      * \brief Format mode
      * 
@@ -184,7 +206,15 @@ namespace dxvk {
      * \returns Format mode
      */
     DXGI_VK_FORMAT_MODE GetFormatMode() const;
-    
+
+    /**
+     * \brief Computes plane count
+     *
+     * For non-planar formats, the plane count will be 1.
+     * \returns Image plane count
+     */
+    uint32_t GetPlaneCount() const;
+
     /**
      * \brief Checks whether a view can be created for this textue
      * 
@@ -194,11 +224,13 @@ namespace dxvk {
      * will also check whether the required bind flags are supported.
      * \param [in] BindFlags Bind flags for the view
      * \param [in] Format The desired view format
+     * \param [in] Plane Plane slice for planar formats
      * \returns \c true if the format is compatible
      */
     bool CheckViewCompatibility(
             UINT                BindFlags,
-            DXGI_FORMAT         Format) const;
+            DXGI_FORMAT         Format,
+            UINT                Plane) const;
     
     /**
      * \brief Normalizes and validates texture description

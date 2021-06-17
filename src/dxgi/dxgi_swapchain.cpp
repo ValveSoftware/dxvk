@@ -14,15 +14,9 @@ namespace dxvk {
     m_window    (hWnd),
     m_desc      (*pDesc),
     m_descFs    (*pFullscreenDesc),
+    m_presentCount(0u),
     m_presenter (pPresenter),
     m_monitor   (nullptr) {
-    // Initialize frame statistics
-    m_stats.PresentCount         = 0;
-    m_stats.PresentRefreshCount  = 0;
-    m_stats.SyncRefreshCount     = 0;
-    m_stats.SyncQPCTime.QuadPart = 0;
-    m_stats.SyncGPUTime.QuadPart = 0;
-    
     if (FAILED(m_presenter->GetAdapter(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&m_adapter))))
       throw DxvkError("DXGI: Failed to get adapter for present device");
     
@@ -171,10 +165,22 @@ namespace dxvk {
   
   
   HRESULT STDMETHODCALLTYPE DxgiSwapChain::GetFrameStatistics(DXGI_FRAME_STATISTICS* pStats) {
-    if (pStats == nullptr)
+    std::lock_guard<std::recursive_mutex> lock(m_lockWindow);
+
+    if (!pStats)
       return E_INVALIDARG;
-    
-    *pStats = m_stats;
+
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("DxgiSwapChain::GetFrameStatistics: Semi-stub");
+
+    // TODO deal with the refresh counts at some point
+    pStats->PresentCount = m_presentCount;
+    pStats->PresentRefreshCount = 0;
+    pStats->SyncRefreshCount = 0;
+    pStats->SyncQPCTime.QuadPart = dxvk::high_resolution_clock::getCounter();
+    pStats->SyncGPUTime.QuadPart = 0;
     return S_OK;
   }
   
@@ -228,7 +234,7 @@ namespace dxvk {
     if (pLastPresentCount == nullptr)
       return E_INVALIDARG;
     
-    *pLastPresentCount = m_stats.PresentCount;
+    *pLastPresentCount = m_presentCount;
     return S_OK;
   }
   
@@ -259,7 +265,10 @@ namespace dxvk {
     std::lock_guard<std::mutex> lockBuf(m_lockBuffer);
 
     try {
-      return m_presenter->Present(SyncInterval, PresentFlags, nullptr);
+      HRESULT hr = m_presenter->Present(SyncInterval, PresentFlags, nullptr);
+      if (hr == S_OK && !(PresentFlags & DXGI_PRESENT_TEST))
+        m_presentCount++;
+      return hr;
     } catch (const DxvkError& err) {
       Logger::err(err.message());
       return DXGI_ERROR_DRIVER_INTERNAL_ERROR;
@@ -356,8 +365,10 @@ namespace dxvk {
       }
       
       // If the swap chain allows it, change the display mode
-      if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH)
+      if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) {
         ChangeDisplayMode(output.ptr(), pNewTargetParameters);
+        NotifyModeChange(m_monitor, FALSE);
+      }
       
       // Resize and reposition the window to 
       DXGI_OUTPUT_DESC desc;
@@ -613,6 +624,7 @@ namespace dxvk {
       ReleaseMonitorData();
     }
 
+    NotifyModeChange(m_monitor, FALSE);
     return S_OK;
   }
   
@@ -633,6 +645,8 @@ namespace dxvk {
     }
     
     // Restore internal state
+    HMONITOR monitor = m_monitor;
+
     m_descFs.Windowed = TRUE;
     m_monitor = nullptr;
     m_target  = nullptr;
@@ -658,6 +672,7 @@ namespace dxvk {
       rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
       SWP_FRAMECHANGED | SWP_NOACTIVATE);
     
+    NotifyModeChange(monitor, TRUE);
     return S_OK;
   }
   
@@ -713,7 +728,7 @@ namespace dxvk {
     if (!hMonitor)
       return DXGI_ERROR_INVALID_CALL;
     
-    return RestoreMonitorDisplayMode(hMonitor)
+    return RestoreMonitorDisplayMode()
       ? S_OK
       : DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
   }
@@ -765,6 +780,29 @@ namespace dxvk {
   void DxgiSwapChain::ReleaseMonitorData() {
     if (m_monitorInfo != nullptr)
       m_monitorInfo->ReleaseMonitorData();
+  }
+
+
+  void DxgiSwapChain::NotifyModeChange(
+          HMONITOR                hMonitor,
+          BOOL                    Windowed) {
+    DEVMODEW devMode = { };
+    devMode.dmSize       = sizeof(devMode);
+    devMode.dmFields     = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+
+    if (GetMonitorDisplayMode(hMonitor, ENUM_CURRENT_SETTINGS, &devMode)) {
+      DXGI_MODE_DESC displayMode = { };
+      displayMode.Width            = devMode.dmPelsWidth;
+      displayMode.Height           = devMode.dmPelsHeight;
+      displayMode.RefreshRate      = { devMode.dmDisplayFrequency, 1 };
+      displayMode.Format           = m_desc.Format;
+      displayMode.ScanlineOrdering = m_descFs.ScanlineOrdering;
+      displayMode.Scaling          = m_descFs.Scaling;
+      m_presenter->NotifyModeChange(Windowed, &displayMode);
+    } else {
+      Logger::warn("Failed to query current display mode");
+      m_presenter->NotifyModeChange(Windowed, nullptr);
+    }
   }
   
 }

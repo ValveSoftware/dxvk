@@ -173,7 +173,7 @@ namespace dxvk {
     , m_context          (m_device->createContext())
     , m_frameLatencyCap  (pDevice->GetOptions()->maxFrameLatency)
     , m_frameLatencySignal(new sync::Fence(m_frameId))
-    , m_dialog            (pDevice->GetOptions()->enableDialogMode) {
+    , m_dialog           (pDevice->GetOptions()->enableDialogMode) {
     this->NormalizePresentParameters(pPresentParams);
     m_presentParams = *pPresentParams;
     m_window = m_presentParams.hDeviceWindow;
@@ -456,13 +456,12 @@ namespace dxvk {
       cSubresources = srcSubresourceLayers,
       cLevelExtent  = srcExtent
     ] (DxvkContext* ctx) {
-      ctx->copyImageToBuffer(
-        cBuffer, 0, VkExtent2D { 0u, 0u },
+      ctx->copyImageToBuffer(cBuffer, 0, 0,
         cImage, cSubresources, VkOffset3D { 0, 0, 0 },
         cLevelExtent);
     });
     
-    dstTexInfo->SetDirty(dst->GetSubresource(), true);
+    dstTexInfo->SetWrittenByGPU(dst->GetSubresource(), true);
 
     return D3D_OK;
   }
@@ -617,6 +616,7 @@ namespace dxvk {
       RECT oldRect = { 0, 0, 0, 0 };
       
       ::GetWindowRect(m_window, &oldRect);
+      ::MapWindowPoints(HWND_DESKTOP, ::GetParent(m_window), reinterpret_cast<POINT*>(&oldRect), 1);
       ::SetRect(&newRect, 0, 0, pPresentParams->BackBufferWidth, pPresentParams->BackBufferHeight);
       ::AdjustWindowRectEx(&newRect,
         ::GetWindowLongW(m_window, GWL_STYLE), FALSE,
@@ -654,7 +654,11 @@ namespace dxvk {
 
 
   HRESULT D3D9SwapChainEx::WaitForVBlank() {
-    Logger::warn("D3D9SwapChainEx::WaitForVBlank: Stub");
+    static bool s_errorShown = false;
+
+    if (!std::exchange(s_errorShown, true))
+      Logger::warn("D3D9SwapChainEx::WaitForVBlank: Stub");
+
     return D3D_OK;
   }
 
@@ -774,30 +778,25 @@ namespace dxvk {
     auto swapImage = m_backBuffers[0]->GetCommonTexture()->GetImage();
     auto swapImageView = m_backBuffers[0]->GetImageView(false);
 
-    // Wait for the sync event so that we respect the maximum frame latency
-    uint64_t frameId = ++m_frameId;
-    m_frameLatencySignal->wait(frameId - GetActualFrameLatency());
+    // Bump our frame id.
+    ++m_frameId;
 
     for (uint32_t i = 0; i < SyncInterval || i < 1; i++) {
       SynchronizePresent();
 
       // Presentation semaphores and WSI swap chain image
       vk::PresenterInfo info = m_presenter->info();
-      vk::PresenterSync sync = m_presenter->getSyncSemaphores();
+      vk::PresenterSync sync;
 
       uint32_t imageIndex = 0;
 
-      VkResult status = m_presenter->acquireNextImage(
-        sync.acquire, VK_NULL_HANDLE, imageIndex);
+      VkResult status = m_presenter->acquireNextImage(sync, imageIndex);
 
       while (status != VK_SUCCESS && status != VK_SUBOPTIMAL_KHR) {
         RecreateSwapChain(m_vsync);
         
         info = m_presenter->info();
-        sync = m_presenter->getSyncSemaphores();
-
-        status = m_presenter->acquireNextImage(
-          sync.acquire, VK_NULL_HANDLE, imageIndex);
+        status = m_presenter->acquireNextImage(sync, imageIndex);
       }
 
       m_context->beginRecording(
@@ -819,10 +818,12 @@ namespace dxvk {
         m_hud->render(m_context, info.format, info.imageExtent);
 
       if (i + 1 >= SyncInterval)
-        m_context->signal(m_frameLatencySignal, frameId);
+        m_context->signal(m_frameLatencySignal, m_frameId);
 
       SubmitPresent(sync, i);
     }
+
+    SyncFrameLatency();
 
     // Rotate swap chain buffers so that the back
     // buffer at index 0 becomes the front buffer.
@@ -850,8 +851,7 @@ namespace dxvk {
       if (cHud != nullptr && !cFrameId)
         cHud->update();
 
-      m_device->presentImage(m_presenter,
-        cSync.present, &m_presentStatus);
+      m_device->presentImage(m_presenter, &m_presentStatus);
     });
 
     m_parent->FlushCsChunk();
@@ -914,7 +914,10 @@ namespace dxvk {
       m_device->vkd(),
       presenterDevice,
       presenterDesc);
-    
+
+    m_presenter->setFrameRateLimit(m_parent->GetOptions()->maxFrameRate);
+    m_presenter->setFrameRateLimiterRefreshRate(m_displayRefreshRate);
+
     CreateRenderTargetViews();
   }
 
@@ -1056,6 +1059,11 @@ namespace dxvk {
   }
 
 
+  void D3D9SwapChainEx::SyncFrameLatency() {
+    // Wait for the sync event so that we respect the maximum frame latency
+    m_frameLatencySignal->wait(m_frameId - GetActualFrameLatency());
+  }
+
 
   uint32_t D3D9SwapChainEx::GetActualFrameLatency() {
     uint32_t maxFrameLatency = m_parent->GetFrameLatency();
@@ -1132,6 +1140,16 @@ namespace dxvk {
     int32_t option = m_parent->GetOptions()->numBackBuffers;
     return option > 0 ? uint32_t(option) : uint32_t(Preferred);
   }
+
+
+  void D3D9SwapChainEx::NotifyDisplayRefreshRate(
+          double                  RefreshRate) {
+    m_displayRefreshRate = RefreshRate;
+
+    if (m_presenter != nullptr)
+      m_presenter->setFrameRateLimiterRefreshRate(RefreshRate);
+  }
+
 
   HRESULT D3D9SwapChainEx::EnterFullscreenMode(
           D3DPRESENT_PARAMETERS* pPresentParams,
@@ -1241,9 +1259,19 @@ namespace dxvk {
       devMode.dmDisplayFrequency = mode.RefreshRate;
     }
     
-    return SetMonitorDisplayMode(GetDefaultMonitor(), &devMode)
-      ? D3D_OK
-      : D3DERR_NOTAVAILABLE;
+    HMONITOR monitor = GetDefaultMonitor();
+
+    if (!SetMonitorDisplayMode(monitor, &devMode))
+      return D3DERR_NOTAVAILABLE;
+
+    devMode.dmFields = DM_DISPLAYFREQUENCY;
+    
+    if (GetMonitorDisplayMode(monitor, ENUM_CURRENT_SETTINGS, &devMode))
+      NotifyDisplayRefreshRate(double(devMode.dmDisplayFrequency));
+    else
+      NotifyDisplayRefreshRate(0.0);
+
+    return D3D_OK;
   }
   
   
@@ -1251,9 +1279,11 @@ namespace dxvk {
     if (hMonitor == nullptr)
       return D3DERR_INVALIDCALL;
     
-    return RestoreMonitorDisplayMode(hMonitor)
-      ? D3D_OK
-      : D3DERR_NOTAVAILABLE;
+    if (!RestoreMonitorDisplayMode())
+      return D3DERR_NOTAVAILABLE;
+
+    NotifyDisplayRefreshRate(0.0);
+    return D3D_OK;
   }
 
   bool    D3D9SwapChainEx::UpdatePresentRegion(const RECT* pSourceRect, const RECT* pDestRect) {

@@ -91,10 +91,16 @@ namespace dxvk {
   VkInstance DxvkInstance::createInstance() {
     DxvkInstanceExtensions insExtensions;
 
-    std::array<DxvkExt*, 2> insExtensionList = {{
+    std::vector<DxvkExt*> insExtensionList = {{
       &insExtensions.khrGetSurfaceCapabilities2,
       &insExtensions.khrSurface,
     }};
+
+    // Hide VK_EXT_debug_utils behind an environment variable. This extension
+    // adds additional overhead to winevulkan
+    if (env::getEnvVar("DXVK_PERF_EVENTS") == "1") {
+        insExtensionList.push_back(&insExtensions.extDebugUtils);
+    }
 
     DxvkNameSet extensionsEnabled;
     DxvkNameSet extensionsAvailable = DxvkNameSet::enumInstanceExtensions(m_vkl);
@@ -104,6 +110,8 @@ namespace dxvk {
           insExtensionList.data(),
           extensionsEnabled))
       throw DxvkError("DxvkInstance: Failed to create instance");
+
+    m_extensions = insExtensions;
 
     // Enable additional extensions if necessary
     for (const auto& provider : m_extProviders)
@@ -122,7 +130,7 @@ namespace dxvk {
     appInfo.pApplicationName      = appName.c_str();
     appInfo.applicationVersion    = 0;
     appInfo.pEngineName           = "DXVK";
-    appInfo.engineVersion         = VK_MAKE_VERSION(1, 8, 1);
+    appInfo.engineVersion         = VK_MAKE_VERSION(1, 9, 0);
     appInfo.apiVersion            = VK_MAKE_VERSION(1, 1, 0);
     
     VkInstanceCreateInfo info;
@@ -146,8 +154,6 @@ namespace dxvk {
   
   
   std::vector<Rc<DxvkAdapter>> DxvkInstance::queryAdapters() {
-    DxvkDeviceFilter filter;
-    
     uint32_t numAdapters = 0;
     if (m_vki->vkEnumeratePhysicalDevices(m_vki->instance(), &numAdapters, nullptr) != VK_SUCCESS)
       throw DxvkError("DxvkInstance::enumAdapters: Failed to enumerate adapters");
@@ -155,19 +161,26 @@ namespace dxvk {
     std::vector<VkPhysicalDevice> adapters(numAdapters);
     if (m_vki->vkEnumeratePhysicalDevices(m_vki->instance(), &numAdapters, adapters.data()) != VK_SUCCESS)
       throw DxvkError("DxvkInstance::enumAdapters: Failed to enumerate adapters");
-    
-    std::vector<Rc<DxvkAdapter>> result;
-    for (uint32_t i = 0; i < numAdapters; i++) {
-      VkPhysicalDeviceProperties deviceProperties;
-      m_vki->vkGetPhysicalDeviceProperties(adapters[i], &deviceProperties);
 
-      if (deviceProperties.apiVersion < VK_MAKE_VERSION(1, 1, 0))
-        Logger::warn(str::format("Skipping Vulkan 1.0 adapter: ", deviceProperties.deviceName));
-      else if (filter.testAdapter(deviceProperties))
+    std::vector<VkPhysicalDeviceProperties> deviceProperties(numAdapters);
+    DxvkDeviceFilterFlags filterFlags = 0;
+
+    for (uint32_t i = 0; i < numAdapters; i++) {
+      m_vki->vkGetPhysicalDeviceProperties(adapters[i], &deviceProperties[i]);
+
+      if (deviceProperties[i].deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU)
+        filterFlags.set(DxvkDeviceFilterFlag::SkipCpuDevices);
+    }
+
+    DxvkDeviceFilter filter(filterFlags);
+    std::vector<Rc<DxvkAdapter>> result;
+
+    for (uint32_t i = 0; i < numAdapters; i++) {
+      if (filter.testAdapter(deviceProperties[i]))
         result.push_back(new DxvkAdapter(m_vki, adapters[i]));
     }
     
-    std::sort(result.begin(), result.end(),
+    std::stable_sort(result.begin(), result.end(),
       [] (const Rc<DxvkAdapter>& a, const Rc<DxvkAdapter>& b) -> bool {
         static const std::array<VkPhysicalDeviceType, 3> deviceTypes = {{
           VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
