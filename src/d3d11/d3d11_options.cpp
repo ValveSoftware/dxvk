@@ -16,6 +16,7 @@ namespace dxvk {
     this->samplerAnisotropy     = config.getOption<int32_t>("d3d11.samplerAnisotropy", -1);
     this->invariantPosition     = config.getOption<bool>("d3d11.invariantPosition", true);
     this->floatControls         = config.getOption<bool>("d3d11.floatControls", true);
+    this->disableMsaa           = config.getOption<bool>("d3d11.disableMsaa", false);
     this->deferSurfaceCreation  = config.getOption<bool>("dxgi.deferSurfaceCreation", false);
     this->numBackBuffers        = config.getOption<int32_t>("dxgi.numBackBuffers", 0);
     this->maxFrameLatency       = config.getOption<int32_t>("dxgi.maxFrameLatency", 0);
@@ -27,9 +28,7 @@ namespace dxvk {
       && DxvkGpuVendor(devInfo.core.properties.vendorID) != DxvkGpuVendor::Amd;
 
     bool apitraceAttached = false;
-    #ifndef __WINE__
     apitraceAttached = ::GetModuleHandle("dxgitrace.dll") != nullptr;
-    #endif
 
     this->apitraceMode = config.getOption<bool>("d3d11.apitraceMode", apitraceAttached);
 

@@ -391,8 +391,10 @@ namespace dxvk {
           D3D11_MAPPED_SUBRESOURCE*   pMappedResource) {
     const Rc<DxvkImage>  mappedImage  = pResource->GetImage();
     const Rc<DxvkBuffer> mappedBuffer = pResource->GetMappedBuffer(Subresource);
+
+    auto mapMode = pResource->GetMapMode();
     
-    if (unlikely(pResource->GetMapMode() == D3D11_COMMON_TEXTURE_MAP_MODE_NONE)) {
+    if (unlikely(mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_NONE)) {
       Logger::err("D3D11: Cannot map a device-local image");
       return E_INVALIDARG;
     }
@@ -414,34 +416,21 @@ namespace dxvk {
       pResource->Desc()->Format, pResource->GetFormatMode()).Format;
     
     auto formatInfo = imageFormatInfo(packedFormat);
-    auto subresource = pResource->GetSubresourceFromIndex(
-      formatInfo->aspectMask, Subresource);
-    
-    if (pResource->GetMapMode() == D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT) {
+    void* mapPtr;
+
+    if (mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT) {
       // Wait for the resource to become available
       if (!WaitForResource(mappedImage, MapType, MapFlags))
         return DXGI_ERROR_WAS_STILL_DRAWING;
       
-      // Mark the given subresource as mapped
-      pResource->SetMapType(Subresource, MapType);
-
       // Query the subresource's memory layout and hope that
       // the application respects the returned pitch values.
-      if (pMappedResource) {
-        auto layout = pResource->GetSubresourceLayout(formatInfo->aspectMask, Subresource);
-        pMappedResource->pData      = mappedImage->mapPtr(layout.Offset);
-        pMappedResource->RowPitch   = layout.RowPitch;
-        pMappedResource->DepthPitch = layout.DepthPitch;
-      }
-
-      return S_OK;
+      mapPtr = mappedImage->mapPtr(0);
     } else {
-      DxvkBufferSliceHandle physSlice;
-      
       if (MapType == D3D11_MAP_WRITE_DISCARD) {
         // We do not have to preserve the contents of the
         // buffer if the entire image gets discarded.
-        physSlice = mappedBuffer->allocSlice();
+        DxvkBufferSliceHandle physSlice = pResource->DiscardSlice(Subresource);
         
         EmitCs([
           cImageBuffer = mappedBuffer,
@@ -449,36 +438,31 @@ namespace dxvk {
         ] (DxvkContext* ctx) {
           ctx->invalidateBuffer(cImageBuffer, cBufferSlice);
         });
+
+        mapPtr = physSlice.mapPtr;
       } else {
-        // When using any map mode which requires the image contents
-        // to be preserved, and if the GPU has write access to the
-        // image, copy the current image contents into the buffer.
-        if (pResource->Desc()->Usage == D3D11_USAGE_STAGING
-         && !pResource->CanUpdateMappedBufferEarly()) {
-          UpdateMappedBuffer(pResource, subresource);
-          MapFlags &= ~D3D11_MAP_FLAG_DO_NOT_WAIT;
-        }
+        bool wait = MapType != D3D11_MAP_WRITE_NO_OVERWRITE
+                 || mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
         
         // Wait for mapped buffer to become available
-        if (!WaitForResource(mappedBuffer, MapType, MapFlags))
+        if (wait && !WaitForResource(mappedBuffer, MapType, MapFlags))
           return DXGI_ERROR_WAS_STILL_DRAWING;
         
-        physSlice = mappedBuffer->getSliceHandle();
+        mapPtr = pResource->GetMappedSlice(Subresource).mapPtr;
       }
-      
-      // Mark the given subresource as mapped
-      pResource->SetMapType(Subresource, MapType);
-
-      // Set up map pointer. Data is tightly packed within the mapped buffer.
-      if (pMappedResource) {
-        auto layout = pResource->GetSubresourceLayout(formatInfo->aspectMask, Subresource);
-        pMappedResource->pData      = reinterpret_cast<char*>(physSlice.mapPtr) + layout.Offset;
-        pMappedResource->RowPitch   = layout.RowPitch;
-        pMappedResource->DepthPitch = layout.DepthPitch;
-      }
-
-      return S_OK;
     }
+
+    // Mark the given subresource as mapped
+    pResource->SetMapType(Subresource, MapType);
+
+    if (pMappedResource) {
+      auto layout = pResource->GetSubresourceLayout(formatInfo->aspectMask, Subresource);
+      pMappedResource->pData      = reinterpret_cast<char*>(mapPtr) + layout.Offset;
+      pMappedResource->RowPitch   = layout.RowPitch;
+      pMappedResource->DepthPitch = layout.DepthPitch;
+    }
+
+    return S_OK;
   }
   
   
@@ -495,43 +479,12 @@ namespace dxvk {
     if (pResource->GetMapMode() == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER) {
       // Now that data has been written into the buffer,
       // we need to copy its contents into the image
-      const Rc<DxvkImage>  mappedImage  = pResource->GetImage();
-      const Rc<DxvkBuffer> mappedBuffer = pResource->GetMappedBuffer(Subresource);
+      VkImageAspectFlags aspectMask = imageFormatInfo(pResource->GetPackedFormat())->aspectMask;
+      VkImageSubresource subresource = pResource->GetSubresourceFromIndex(aspectMask, Subresource);
 
-      VkFormat packedFormat = m_parent->LookupPackedFormat(
-        pResource->Desc()->Format, pResource->GetFormatMode()).Format;
-
-      auto formatInfo = imageFormatInfo(packedFormat);
-      auto subresource = pResource->GetSubresourceFromIndex(
-        formatInfo->aspectMask, Subresource);
-
-      VkExtent3D levelExtent = mappedImage
-        ->mipLevelExtent(subresource.mipLevel);
-      
-      VkImageSubresourceLayers subresourceLayers = {
-        subresource.aspectMask,
-        subresource.mipLevel,
-        subresource.arrayLayer, 1 };
-      
-      EmitCs([
-        cSrcBuffer      = mappedBuffer,
-        cDstImage       = mappedImage,
-        cDstLayers      = subresourceLayers,
-        cDstLevelExtent = levelExtent,
-        cPackedFormat   = GetPackedDepthStencilFormat(pResource->Desc()->Format)
-      ] (DxvkContext* ctx) {
-        if (cPackedFormat == VK_FORMAT_UNDEFINED) {
-          ctx->copyBufferToImage(cDstImage, cDstLayers,
-            VkOffset3D { 0, 0, 0 }, cDstLevelExtent,
-            cSrcBuffer, 0, 0);
-        } else {
-          ctx->copyPackedBufferToDepthStencilImage(
-            cDstImage, cDstLayers,
-            VkOffset2D { 0, 0 },
-            VkExtent2D { cDstLevelExtent.width, cDstLevelExtent.height },
-            cSrcBuffer, 0, cPackedFormat);
-        }
-      });
+      UpdateImage(pResource, &subresource, VkOffset3D { 0, 0, 0 },
+        pResource->MipLevelExtent(subresource.mipLevel),
+        DxvkBufferSlice(pResource->GetMappedBuffer(Subresource)));
     }
   }
   

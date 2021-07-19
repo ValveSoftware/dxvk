@@ -20,9 +20,10 @@ namespace dxvk {
    * behave when mapping an image.
    */
   enum D3D11_COMMON_TEXTURE_MAP_MODE {
-    D3D11_COMMON_TEXTURE_MAP_MODE_NONE,   ///< Not mapped
-    D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER, ///< Mapped through buffer
-    D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT, ///< Directly mapped to host mem
+    D3D11_COMMON_TEXTURE_MAP_MODE_NONE,     ///< Not mapped
+    D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER,   ///< Mapped through buffer
+    D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT,   ///< Directly mapped to host mem
+    D3D11_COMMON_TEXTURE_MAP_MODE_STAGING,  ///< Buffer only, no image
   };
   
   
@@ -91,6 +92,28 @@ namespace dxvk {
     }
 
     /**
+     * \brief Retrieves Vulkan image type
+     *
+     * Returns the image type based on the D3D11 resource
+     * dimension. Also works if there is no actual image.
+     * \returns Vulkan image type
+     */
+    VkImageType GetVkImageType() const {
+      return GetImageTypeFromResourceDim(m_dimension);
+    }
+
+    /**
+     * \brief Computes extent of a given mip level
+     *
+     * This also works for staging resources that have no image.
+     * \param [in] Level Mip level to compute the size of
+     */
+    VkExtent3D MipLevelExtent(uint32_t Level) const {
+      return util::computeMipLevelExtent(
+        VkExtent3D { m_desc.Width, m_desc.Height, m_desc.Depth }, Level);
+    }
+
+    /**
      * \brief Special DXGI usage flags
      *
      * Flags that are set in addition to the bind
@@ -156,23 +179,59 @@ namespace dxvk {
      */
     Rc<DxvkBuffer> GetMappedBuffer(UINT Subresource) const {
       return Subresource < m_buffers.size()
-        ? m_buffers[Subresource]
+        ? m_buffers[Subresource].buffer
         : Rc<DxvkBuffer>();
+    }
+
+    /**
+     * \brief Discards mapped buffer slice for a given subresource
+     *
+     * \param [in] Subresource Subresource to discard
+     * \returns Newly allocated mapped buffer slice
+     */
+    DxvkBufferSliceHandle DiscardSlice(UINT Subresource) {
+      if (Subresource < m_buffers.size()) {
+        DxvkBufferSliceHandle slice = m_buffers[Subresource].buffer->allocSlice();
+        m_buffers[Subresource].slice = slice;
+        return slice;
+      } else {
+        return DxvkBufferSliceHandle();
+      }
+    }
+
+    /**
+     * \brief Retrieves mapped buffer slice for a given subresource
+     *
+     * \param [in] Subresource Subresource index to query
+     * \returns Currently mapped buffer slice
+     */
+    DxvkBufferSliceHandle GetMappedSlice(UINT Subresource) const {
+      return Subresource < m_buffers.size()
+        ? m_buffers[Subresource].slice
+        : DxvkBufferSliceHandle();
+    }
+
+    /**
+     * \brief Returns underlying packed Vulkan format
+     *
+     * This works even for staging resources that have no image.
+     * Note that for depth-stencil resources, the returned format
+     * may be different from the image format on some systems.
+     * \returns Packed Vulkan format
+     */
+    VkFormat GetPackedFormat() const {
+      return m_packedFormat;
     }
     
     /**
-     * \brief Checks whether we can update the mapped buffer early
-     * 
-     * For images which are mapped through a buffer and that are
-     * only used for transfer operations, we can update the mapped
-     * buffer right after performing those transfers to avoid stalls.
-     * \returns \c true if the mapped buffer can be updated early
+     * \brief Computes pixel offset into mapped buffer
+     *
+     * \param [in] Subresource Subresource index
+     * \param [in] Subresource Plane index
+     * \param [in] Offset Pixel coordinate to compute offset for
+     * \returns Offset into mapped subresource buffer, in pixels
      */
-    bool CanUpdateMappedBufferEarly() const {
-      return m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER
-          && (m_desc.BindFlags & ~D3D11_BIND_SHADER_RESOURCE) == 0
-          && (m_desc.Usage == D3D11_USAGE_STAGING);
-    }
+    VkDeviceSize ComputeMappedOffset(UINT Subresource, UINT Plane, VkOffset3D Offset) const;
     
     /**
      * \brief Computes subresource from the subresource index
@@ -190,12 +249,12 @@ namespace dxvk {
     /**
      * \brief Computes subresource layout for the given subresource
      *
-     * \param [in] Aspect The image aspect
+     * \param [in] AspectMask The image aspect
      * \param [in] Subresource Subresource index
      * \returns Memory layout of the mapped subresource
      */
     D3D11_COMMON_TEXTURE_SUBRESOURCE_LAYOUT GetSubresourceLayout(
-            VkImageAspectFlags    Aspect,
+            VkImageAspectFlags    AspectMask,
             UINT                  Subresource) const;
 
     /**
@@ -246,16 +305,23 @@ namespace dxvk {
     
   private:
     
+    struct MappedBuffer {
+      Rc<DxvkBuffer>        buffer;
+      DxvkBufferSliceHandle slice;
+    };
+
     D3D11Device* const            m_device;
+    D3D11_RESOURCE_DIMENSION      m_dimension;
     D3D11_COMMON_TEXTURE_DESC     m_desc;
     D3D11_COMMON_TEXTURE_MAP_MODE m_mapMode;
     DXGI_USAGE                    m_dxgiUsage;
+    VkFormat                      m_packedFormat;
     
     Rc<DxvkImage>                 m_image;
-    std::vector<Rc<DxvkBuffer>>   m_buffers;
+    std::vector<MappedBuffer>     m_buffers;
     std::vector<D3D11_MAP>        m_mapTypes;
     
-    Rc<DxvkBuffer> CreateMappedBuffer(
+    MappedBuffer CreateMappedBuffer(
             UINT                  MipLevel) const;
     
     BOOL CheckImageSupport(

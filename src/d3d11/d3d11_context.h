@@ -780,14 +780,37 @@ namespace dxvk {
             D3D11UnorderedAccessView*         pUav,
             UINT                              CtrSlot,
             UINT                              Counter);
-    
+
+    void CopyBuffer(
+            D3D11Buffer*                      pDstBuffer,
+            VkDeviceSize                      DstOffset,
+            D3D11Buffer*                      pSrcBuffer,
+            VkDeviceSize                      SrcOffset,
+            VkDeviceSize                      ByteCount);
+
+    void CopyImage(
+            D3D11CommonTexture*               pDstTexture,
+      const VkImageSubresourceLayers*         pDstLayers,
+            VkOffset3D                        DstOffset,
+            D3D11CommonTexture*               pSrcTexture,
+      const VkImageSubresourceLayers*         pSrcLayers,
+            VkOffset3D                        SrcOffset,
+            VkExtent3D                        SrcExtent);
+
     void DiscardBuffer(
             ID3D11Resource*                   pResource);
     
     void DiscardTexture(
             ID3D11Resource*                   pResource,
             UINT                              Subresource);
-    
+
+    void UpdateImage(
+            D3D11CommonTexture*               pDstTexture,
+      const VkImageSubresource*               pDstSubresource,
+            VkOffset3D                        DstOffset,
+            VkExtent3D                        DstExtent,
+            DxvkBufferSlice                   StagingBuffer);
+
     void SetDrawBuffers(
             ID3D11Buffer*                     pBufferForArgs,
             ID3D11Buffer*                     pBufferForCount);
@@ -861,10 +884,6 @@ namespace dxvk {
     template<DxbcProgramType Stage>
     void RestoreUnorderedAccessViews(
             D3D11UnorderedAccessBindings&     Bindings);
-    
-    void UpdateMappedBuffer(
-      const D3D11CommonTexture*               pTexture,
-            VkImageSubresource                Subresource);
     
     bool TestRtvUavHazards(
             UINT                              NumRTVs,

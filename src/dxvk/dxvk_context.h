@@ -349,6 +349,7 @@ namespace dxvk {
      * \param [in] srcBuffer Source buffer
      * \param [in] srcOffset Source offset, in bytes
      * \param [in] rowAlignment Row alignment, in bytes
+     * \param [in] sliceAlignment Slice alignment, in bytes
      */
     void copyBufferToImage(
       const Rc<DxvkImage>&        dstImage,
@@ -357,7 +358,8 @@ namespace dxvk {
             VkExtent3D            dstExtent,
       const Rc<DxvkBuffer>&       srcBuffer,
             VkDeviceSize          srcOffset,
-            VkDeviceSize          rowAlignment);
+            VkDeviceSize          rowAlignment,
+            VkDeviceSize          sliceAlignment);
     
     /**
      * \brief Copies data from one image to another
@@ -401,6 +403,8 @@ namespace dxvk {
      * \param [in] dstBuffer Destination buffer
      * \param [in] dstOffset Destination offset, in bytes
      * \param [in] dstExtent Destination data extent
+     * \param [in] rowAlignment Row alignment, in bytes
+     * \param [in] sliceAlignment Slice alignment, in bytes
      * \param [in] srcImage Source image
      * \param [in] srcSubresource Source subresource
      * \param [in] srcOffset Source area offset
@@ -410,6 +414,7 @@ namespace dxvk {
       const Rc<DxvkBuffer>&       dstBuffer,
             VkDeviceSize          dstOffset,
             VkDeviceSize          rowAlignment,
+            VkDeviceSize          sliceAlignment,
       const Rc<DxvkImage>&        srcImage,
             VkImageSubresourceLayers srcSubresource,
             VkOffset3D            srcOffset,
@@ -423,7 +428,9 @@ namespace dxvk {
      * - \c VK_FORMAT_D24_UNORM_S8_UINT: 0xssdddddd
      * - \c VK_FORMAT_D32_SFLOAT_S8_UINT: 0xdddddddd 0x000000ss
      * \param [in] dstBuffer Destination buffer
-     * \param [in] dstOffset Destination offset, in bytes
+     * \param [in] dstBufferOffset Destination offset, in bytes
+     * \param [in] dstOffset Destination image offset
+     * \param [in] dstSize Destination image size
      * \param [in] srcImage Source image
      * \param [in] srcSubresource Source subresource
      * \param [in] srcOffset Source area offset
@@ -432,13 +439,43 @@ namespace dxvk {
      */
     void copyDepthStencilImageToPackedBuffer(
       const Rc<DxvkBuffer>&       dstBuffer,
-            VkDeviceSize          dstOffset,
+            VkDeviceSize          dstBufferOffset,
+            VkOffset2D            dstOffset,
+            VkExtent2D            dstExtent,
       const Rc<DxvkImage>&        srcImage,
             VkImageSubresourceLayers srcSubresource,
             VkOffset2D            srcOffset,
             VkExtent2D            srcExtent,
             VkFormat              format);
     
+    /**
+     * \brief Copies image data stored in a linear buffer to another
+     *
+     * The source and destination regions may overlap, in which case
+     * a temporary copy of the source buffer will be created.
+     * \param [in] dstBuffer Destination buffer
+     * \param [in] dstBufferOffset Destination subresource offset
+     * \param [in] dstOffset Destination image offset
+     * \param [in] dstSize Total size of the destination image
+     * \param [in] srcBuffer Source buffer
+     * \param [in] srcBufferOffset Source subresource offset
+     * \param [in] srcOffset Source image offset
+     * \param [in] srcSize Total size of the source image
+     * \param [in] extent Number of pixels to copy
+     * \param [in] elementSize Pixel size, in bytes
+     */
+    void copyPackedBufferImage(
+      const Rc<DxvkBuffer>&       dstBuffer,
+            VkDeviceSize          dstBufferOffset,
+            VkOffset3D            dstOffset,
+            VkExtent3D            dstSize,
+      const Rc<DxvkBuffer>&       srcBuffer,
+            VkDeviceSize          srcBufferOffset,
+            VkOffset3D            srcOffset,
+            VkExtent3D            srcSize,
+            VkExtent3D            extent,
+            VkDeviceSize          elementSize);
+
     /**
      * \brief Unpacks buffer data to a depth-stencil image
      * 
@@ -450,7 +487,9 @@ namespace dxvk {
      * \param [in] dstOffset Image area offset
      * \param [in] dstExtent Image area size
      * \param [in] srcBuffer Packed data buffer
-     * \param [in] srcOffset Packed data offset
+     * \param [in] srcBufferOffset Buffer offset of source image
+     * \param [in] srcOffset Offset into the source image
+     * \param [in] srcExtent Total size of the source image
      * \param [in] format Packed data format
      */
     void copyPackedBufferToDepthStencilImage(
@@ -459,7 +498,9 @@ namespace dxvk {
             VkOffset2D            dstOffset,
             VkExtent2D            dstExtent,
       const Rc<DxvkBuffer>&       srcBuffer,
-            VkDeviceSize          srcOffset,
+            VkDeviceSize          srcBufferOffset,
+            VkOffset2D            srcOffset,
+            VkExtent2D            srcExtent,
             VkFormat              format);
     
     /**

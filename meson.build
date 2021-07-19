@@ -28,6 +28,8 @@ if dxvk_compiler.get_id() == 'clang'
 endif
 
 if not dxvk_is_msvc
+  add_project_arguments('-D_WIN32_WINNT=0xa00', language : 'cpp')
+
   if get_option('build_id') and dxvk_compiler.has_link_argument('-Wl,--build-id')
     add_global_link_arguments('-Wl,--build-id', language: 'cpp')
   endif
@@ -55,13 +57,7 @@ else
   add_global_link_arguments('-static', '-static-libgcc', language: 'c')
   add_global_link_arguments('-static', '-static-libgcc', '-static-libstdc++', language: 'cpp')
 
-  if cpu_family == 'x86_64'
-    wrc = find_program('x86_64-w64-mingw32-windres')
-  elif cpu_family == 'x86'
-    wrc = find_program('i686-w64-mingw32-windres')
-  else
-    error('Unsupported target architecture')
-  endif
+  wrc = find_program('windres')
 endif
 
 if cpu_family == 'x86_64'

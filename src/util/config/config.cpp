@@ -238,6 +238,11 @@ namespace dxvk {
     { R"(\\GTAIV\.exe$)", {{
       { "dxgi.emulateUMA",                  "True" },
     }} },
+    /* World of Final Fantasy: Broken and useless *
+     * use of 4x MSAA throughout the renderer     */
+    { R"(\\WOFF\.exe$)", {{
+      { "d3d11.disableMsaa",                "True" },
+    }} },
 
     /**********************************************/
     /* D3D9 GAMES                                 */
@@ -431,6 +436,15 @@ namespace dxvk {
     /* Demon Stone breaks at frame rates > 60fps */
     { R"(\\Demonstone\.exe$)", {{
       { "d3d9.maxFrameRate",                "60" },
+    }} },
+    /* Far Cry 1 has worse water rendering when it detects AMD GPUs */
+    { R"(\\FarCry\.exe$)", {{
+      { "d3d9.customVendorId",              "10de" },
+    }} },
+    /* Earth Defense Force 5 */
+    { R"(\\EDF5\.exe$)", {{
+      { "dxgi.tearFree",                    "False" },
+      { "dxgi.syncInterval",                "1"     },
     }} },
   }};
 
