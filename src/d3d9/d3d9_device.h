@@ -838,6 +838,8 @@ namespace dxvk {
 
     void UndirtySamplers();
 
+    void UndirtyTextures();
+
     void MarkSamplersDirty();
 
     D3D9DrawInfo GenerateDrawInfo(
@@ -919,6 +921,7 @@ namespace dxvk {
 
     D3D9DeviceFlags                 m_flags;
     uint32_t                        m_dirtySamplerStates = 0;
+    uint32_t                        m_dirtyTextures = 0;
 
     D3D9Adapter*                    m_adapter;
     Rc<DxvkDevice>                  m_dxvkDevice;
@@ -1090,7 +1093,7 @@ namespace dxvk {
     }
 
     inline uint32_t GetUPBufferSize(uint32_t vertexCount, uint32_t stride) {
-      return (vertexCount - 1) * stride + m_state.vertexDecl->GetSize();
+      return (vertexCount - 1) * stride + std::max(m_state.vertexDecl->GetSize(), stride);
     }
 
     inline void FillUPVertexBuffer(void* buffer, const void* userData, uint32_t dataSize, uint32_t bufferSize) {

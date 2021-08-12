@@ -308,6 +308,8 @@ namespace dxvk {
 
     bool GetLocked(UINT Subresource) const { return m_locked.get(Subresource); }
 
+    bool IsAnySubresourceLocked() const { return m_locked.any(); }
+
     void SetWrittenByGPU(UINT Subresource, bool value) { m_wasWrittenByGPU.set(Subresource, value); }
 
     bool WasWrittenByGPU(UINT Subresource) const { return m_wasWrittenByGPU.get(Subresource); }
@@ -356,6 +358,11 @@ namespace dxvk {
     bool NeedsUpload(UINT Subresource) const { return m_needsUpload.get(Subresource); }
     bool NeedsAnyUpload() { return m_needsUpload.any(); }
     void ClearNeedsUpload() { return m_needsUpload.clearAll();  }
+    bool DoesStagingBufferUploads(UINT Subresource) const { return m_uploadUsingStaging.get(Subresource); }
+
+    void EnableStagingBufferUploads(UINT Subresource) {
+      m_uploadUsingStaging.set(Subresource, true);
+    }
 
     void SetNeedsMipGen(bool value) { m_needsMipGen = value; }
     bool NeedsMipGen() const { return m_needsMipGen; }
@@ -406,6 +413,9 @@ namespace dxvk {
       return m_dirtyBoxes[layer];
     }
 
+    static VkImageType GetImageTypeFromResourceType(
+            D3DRESOURCETYPE  Dimension);
+
   private:
 
     D3D9DeviceEx*                 m_device;
@@ -439,6 +449,8 @@ namespace dxvk {
     D3D9SubresourceBitset         m_wasWrittenByGPU = { };
 
     D3D9SubresourceBitset         m_needsUpload = { };
+
+    D3D9SubresourceBitset         m_uploadUsingStaging = { };
 
     DWORD                         m_exposedMipLevels = 0;
 
@@ -480,9 +492,6 @@ namespace dxvk {
 
     VkImageLayout OptimizeLayout(
             VkImageUsageFlags         Usage) const;
-
-    static VkImageType GetImageTypeFromResourceType(
-            D3DRESOURCETYPE  Dimension);
 
     static VkImageViewType GetImageViewTypeFromResourceType(
             D3DRESOURCETYPE  Dimension,

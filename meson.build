@@ -1,4 +1,4 @@
-project('dxvk', ['c', 'cpp'], version : 'v1.9', meson_version : '>= 0.46')
+project('dxvk', ['c', 'cpp'], version : 'v1.9.1', meson_version : '>= 0.46')
 
 cpu_family = target_machine.cpu_family()
 
@@ -28,6 +28,8 @@ if dxvk_compiler.get_id() == 'clang'
 endif
 
 if not dxvk_is_msvc
+  add_project_arguments('-D_WIN32_WINNT=0xa00', language : 'cpp')
+
   if get_option('build_id') and dxvk_compiler.has_link_argument('-Wl,--build-id')
     add_global_link_arguments('-Wl,--build-id', language: 'cpp')
   endif
@@ -36,6 +38,13 @@ if not dxvk_is_msvc
   # work properly as well as avoiding a memcpy from the Wine loader.
   if dxvk_compiler.has_link_argument('-Wl,--file-alignment=4096')
     add_global_link_arguments('-Wl,--file-alignment=4096', language: 'cpp')
+  endif
+
+  # Wine's built-in back traces only work with dwarf2 symbols
+  if get_option('debug') and target_machine.system() == 'windows'
+    if dxvk_compiler.has_argument('-gstrict-dwarf') and dxvk_compiler.has_argument('-gdwarf-2')
+      add_project_arguments('-gstrict-dwarf', '-gdwarf-2', language: ['c', 'cpp'])
+    endif
   endif
 endif
 
@@ -55,13 +64,7 @@ else
   add_global_link_arguments('-static', '-static-libgcc', language: 'c')
   add_global_link_arguments('-static', '-static-libgcc', '-static-libstdc++', language: 'cpp')
 
-  if cpu_family == 'x86_64'
-    wrc = find_program('x86_64-w64-mingw32-windres')
-  elif cpu_family == 'x86'
-    wrc = find_program('i686-w64-mingw32-windres')
-  else
-    error('Unsupported target architecture')
-  endif
+  wrc = find_program('windres')
 endif
 
 if cpu_family == 'x86_64'

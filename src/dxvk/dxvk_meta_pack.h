@@ -16,18 +16,8 @@ namespace dxvk {
   struct DxvkMetaPackArgs {
     VkOffset2D srcOffset;
     VkExtent2D srcExtent;
-  };
-
-
-  /**
-   * \brief Unpacking arguments
-   * 
-   * Passed in as push constants
-   * to the compute shader.
-   */
-  struct DxvkMetaUnpackArgs {
+    VkOffset2D dstOffset;
     VkExtent2D dstExtent;
-    VkExtent2D srcExtent;
   };
 
 

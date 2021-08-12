@@ -15,7 +15,7 @@ namespace dxvk {
   };
 
 
-  static std::recursive_mutex g_windowProcMapMutex;
+  static dxvk::recursive_mutex g_windowProcMapMutex;
   static std::unordered_map<HWND, D3D9WindowData> g_windowProcMap;
 
 
@@ -456,7 +456,7 @@ namespace dxvk {
       cSubresources = srcSubresourceLayers,
       cLevelExtent  = srcExtent
     ] (DxvkContext* ctx) {
-      ctx->copyImageToBuffer(cBuffer, 0, 0,
+      ctx->copyImageToBuffer(cBuffer, 0, 0, 0,
         cImage, cSubresources, VkOffset3D { 0, 0, 0 },
         cLevelExtent);
     });

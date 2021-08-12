@@ -10,13 +10,15 @@ namespace dxvk {
           D3D11_RESOURCE_DIMENSION    Dimension,
           DXGI_USAGE                  DxgiUsage,
           VkImage                     vkImage)
-  : m_device(pDevice), m_desc(*pDesc), m_dxgiUsage(DxgiUsage) {
+  : m_device(pDevice), m_dimension(Dimension), m_desc(*pDesc), m_dxgiUsage(DxgiUsage) {
     DXGI_VK_FORMAT_MODE   formatMode   = GetFormatMode();
     DXGI_VK_FORMAT_INFO   formatInfo   = m_device->LookupFormat(m_desc.Format, formatMode);
     DXGI_VK_FORMAT_FAMILY formatFamily = m_device->LookupFamily(m_desc.Format, formatMode);
+    DXGI_VK_FORMAT_INFO   formatPacked = m_device->LookupPackedFormat(m_desc.Format, formatMode);
+    m_packedFormat = formatPacked.Format;
 
     DxvkImageCreateInfo imageInfo;
-    imageInfo.type            = GetImageTypeFromResourceDim(Dimension);
+    imageInfo.type            = GetVkImageType();
     imageInfo.format          = formatInfo.Format;
     imageInfo.flags           = 0;
     imageInfo.sampleCount     = VK_SAMPLE_COUNT_1_BIT;
@@ -35,7 +37,8 @@ namespace dxvk {
     imageInfo.initialLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.shared          = vkImage != VK_NULL_HANDLE;
 
-    DecodeSampleCount(m_desc.SampleDesc.Count, &imageInfo.sampleCount);
+    if (!pDevice->GetOptions()->disableMsaa)
+      DecodeSampleCount(m_desc.SampleDesc.Count, &imageInfo.sampleCount);
 
     // Integer clear operations on UAVs are implemented using
     // a view with a bit-compatible integer format, so we'll
@@ -71,12 +74,6 @@ namespace dxvk {
       }
     }
 
-    // Some games will try to create an SRGB image with the UAV
-    // bind flag set. This works on Windows, but no UAVs can be
-    // created for the image in practice.
-    bool noUav = formatProperties->flags.test(DxvkFormatFlag::ColorSpaceSrgb)
-      && !CheckFormatFeatureSupport(formatInfo.Format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
-    
     // Adjust image flags based on the corresponding D3D flags
     if (m_desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
       imageInfo.usage  |= VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -99,11 +96,16 @@ namespace dxvk {
                        |  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
     
-    if (m_desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS && !noUav) {
+    if (m_desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) {
       imageInfo.usage  |= VK_IMAGE_USAGE_STORAGE_BIT;
       imageInfo.stages |= pDevice->GetEnabledShaderStages();
       imageInfo.access |= VK_ACCESS_SHADER_READ_BIT
                        |  VK_ACCESS_SHADER_WRITE_BIT;
+
+      // UAVs are not supported for sRGB formats on most drivers,
+      // but we can still create linear views for the image
+      if (formatProperties->flags.test(DxvkFormatFlag::ColorSpaceSrgb))
+        imageInfo.flags |= VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
     }
 
     // Multi-plane formats need views to be created with color formats, and
@@ -153,6 +155,22 @@ namespace dxvk {
       imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
     }
     
+    // If necessary, create the mapped linear buffer
+    if (m_mapMode != D3D11_COMMON_TEXTURE_MAP_MODE_NONE) {
+      for (uint32_t i = 0; i < m_desc.ArraySize; i++) {
+        for (uint32_t j = 0; j < m_desc.MipLevels; j++) {
+          if (m_mapMode != D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT)
+            m_buffers.push_back(CreateMappedBuffer(j));
+
+          m_mapTypes.push_back(D3D11_MAP(~0u));
+        }
+      }
+    }
+
+    // Skip image creation if possible
+    if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_STAGING)
+      return;
+
     // We must keep LINEAR images in GENERAL layout, but we
     // can choose a better layout for the image based on how
     // it is going to be used by the game.
@@ -194,16 +212,6 @@ namespace dxvk {
       m_image = m_device->GetDXVKDevice()->createImage(imageInfo, memoryProperties);
     else
       m_image = m_device->GetDXVKDevice()->createImageFromVkImage(imageInfo, vkImage);
-
-    // If necessary, create the mapped linear buffer
-    for (uint32_t i = 0; i < m_desc.ArraySize; i++) {
-      for (uint32_t j = 0; j < m_desc.MipLevels; j++) {
-        if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER)
-          m_buffers.push_back(CreateMappedBuffer(j));
-        if (m_mapMode != D3D11_COMMON_TEXTURE_MAP_MODE_NONE)
-          m_mapTypes.push_back(D3D11_MAP(~0u));
-      }
-    }
   }
   
   
@@ -212,6 +220,30 @@ namespace dxvk {
   }
   
   
+  VkDeviceSize D3D11CommonTexture::ComputeMappedOffset(UINT Subresource, UINT Plane, VkOffset3D Offset) const {
+    auto packedFormatInfo = imageFormatInfo(m_packedFormat);
+
+    VkImageAspectFlags aspectMask = packedFormatInfo->aspectMask;
+    VkDeviceSize elementSize = packedFormatInfo->elementSize;
+
+    if (packedFormatInfo->flags.test(DxvkFormatFlag::MultiPlane)) {
+      auto plane = &packedFormatInfo->planes[Plane];
+      elementSize = plane->elementSize;
+      Offset.x /= plane->blockSize.width;
+      Offset.y /= plane->blockSize.height;
+      aspectMask = vk::getPlaneAspect(Plane);
+    }
+
+    auto layout = GetSubresourceLayout(aspectMask, Subresource);
+    auto blockOffset = util::computeBlockOffset(Offset, packedFormatInfo->blockSize);
+
+    return VkDeviceSize(blockOffset.z) * layout.DepthPitch
+         + VkDeviceSize(blockOffset.y) * layout.RowPitch
+         + VkDeviceSize(blockOffset.x) * elementSize
+         + VkDeviceSize(layout.Offset);
+  }
+
+
   VkImageSubresource D3D11CommonTexture::GetSubresourceFromIndex(
           VkImageAspectFlags    Aspect,
           UINT                  Subresource) const {
@@ -224,9 +256,9 @@ namespace dxvk {
   
   
   D3D11_COMMON_TEXTURE_SUBRESOURCE_LAYOUT D3D11CommonTexture::GetSubresourceLayout(
-          VkImageAspectFlags    Aspect,
+          VkImageAspectFlags    AspectMask,
           UINT                  Subresource) const {
-    VkImageSubresource subresource = GetSubresourceFromIndex(Aspect, Subresource);
+    VkImageSubresource subresource = GetSubresourceFromIndex(AspectMask, Subresource);
     D3D11_COMMON_TEXTURE_SUBRESOURCE_LAYOUT layout = { };
 
     switch (m_mapMode) {
@@ -238,37 +270,38 @@ namespace dxvk {
         layout.DepthPitch = vkLayout.depthPitch;
       } break;
 
-      case D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER: {
-        auto formatInfo = imageFormatInfo(m_device->LookupPackedFormat(m_desc.Format, GetFormatMode()).Format);
-        auto aspects = Aspect;
+      case D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER:
+      case D3D11_COMMON_TEXTURE_MAP_MODE_STAGING: {
+        auto packedFormatInfo = imageFormatInfo(m_packedFormat);
 
-        // The exact aspect mask only matters for multi-plane formats,
-        // but depth-stencil is assumed to be packed in memory
-        if (aspects == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
-          aspects = VK_IMAGE_ASPECT_DEPTH_BIT;
-
-        VkExtent3D mipExtent = m_image->mipLevelExtent(subresource.mipLevel);
+        VkImageAspectFlags aspects = packedFormatInfo->aspectMask;
+        VkExtent3D mipExtent = MipLevelExtent(subresource.mipLevel);
 
         while (aspects) {
           auto aspect = vk::getNextAspect(aspects);
           auto extent = mipExtent;
-          auto elementSize = formatInfo->elementSize;
+          auto elementSize = packedFormatInfo->elementSize;
 
-          if (formatInfo->flags.test(DxvkFormatFlag::MultiPlane)) {
-            auto plane = &formatInfo->planes[vk::getPlaneIndex(aspect)];
+          if (packedFormatInfo->flags.test(DxvkFormatFlag::MultiPlane)) {
+            auto plane = &packedFormatInfo->planes[vk::getPlaneIndex(aspect)];
             extent.width  /= plane->blockSize.width;
             extent.height /= plane->blockSize.height;
             elementSize = plane->elementSize;
           }
 
-          auto blockCount = util::computeBlockCount(extent, formatInfo->blockSize);
+          auto blockCount = util::computeBlockCount(extent, packedFormatInfo->blockSize);
 
           if (!layout.RowPitch) {
             layout.RowPitch   = elementSize * blockCount.width;
             layout.DepthPitch = elementSize * blockCount.width * blockCount.height;
           }
 
-          layout.Size += elementSize * blockCount.width * blockCount.height * blockCount.depth;
+          VkDeviceSize size = elementSize * blockCount.width * blockCount.height * blockCount.depth;
+
+          if (aspect & AspectMask)
+            layout.Size += size;
+          else if (!layout.Size)
+            layout.Offset += size;
         }
       } break;
 
@@ -277,8 +310,8 @@ namespace dxvk {
     }
 
     // D3D wants us to return the total subresource size in some instances
-    if (m_image->info().type < VK_IMAGE_TYPE_2D) layout.RowPitch = layout.Size;
-    if (m_image->info().type < VK_IMAGE_TYPE_3D) layout.DepthPitch = layout.Size;
+    if (m_dimension < D3D11_RESOURCE_DIMENSION_TEXTURE2D) layout.RowPitch = layout.Size;
+    if (m_dimension < D3D11_RESOURCE_DIMENSION_TEXTURE3D) layout.DepthPitch = layout.Size;
     return layout;
   }
 
@@ -502,17 +535,22 @@ namespace dxvk {
   D3D11_COMMON_TEXTURE_MAP_MODE D3D11CommonTexture::DetermineMapMode(
     const DxvkImageCreateInfo*  pImageInfo) const {
     // Don't map an image unless the application requests it
-    if (m_desc.CPUAccessFlags == 0)
+    if (!m_desc.CPUAccessFlags)
       return D3D11_COMMON_TEXTURE_MAP_MODE_NONE;
     
+    // If the resource cannot be used in the actual rendering pipeline, we
+    // do not need to create an actual image and can instead implement copy
+    // functions as buffer-to-image and image-to-buffer copies.
+    if (!m_desc.BindFlags && m_desc.Usage != D3D11_USAGE_DEFAULT)
+      return D3D11_COMMON_TEXTURE_MAP_MODE_STAGING;
+
     // Write-only images should go through a buffer for multiple reasons:
     // 1. Some games do not respect the row and depth pitch that is returned
     //    by the Map() method, which leads to incorrect rendering (e.g. Nier)
     // 2. Since the image will most likely be read for rendering by the GPU,
     //    writing the image to device-local image may be more efficient than
-    //    reading its contents from host-visible memory.
+    //    reading its contents from host memory.
     if (m_desc.Usage         == D3D11_USAGE_DYNAMIC
-     && m_desc.BindFlags     != 0
      && m_desc.TextureLayout != D3D11_TEXTURE_LAYOUT_ROW_MAJOR)
       return D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
     
@@ -521,7 +559,7 @@ namespace dxvk {
     if (GetPackedDepthStencilFormat(m_desc.Format))
       return D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
 
-    // Multi-plane images have a sepcial memory layout in D3D11
+    // Multi-plane images have a special memory layout in D3D11
     if (imageFormatInfo(pImageInfo->format)->flags.test(DxvkFormatFlag::MultiPlane))
       return D3D11_COMMON_TEXTURE_MAP_MODE_BUFFER;
 
@@ -535,7 +573,7 @@ namespace dxvk {
   }
   
   
-  Rc<DxvkBuffer> D3D11CommonTexture::CreateMappedBuffer(UINT MipLevel) const {
+  D3D11CommonTexture::MappedBuffer D3D11CommonTexture::CreateMappedBuffer(UINT MipLevel) const {
     const DxvkFormatInfo* formatInfo = imageFormatInfo(
       m_device->LookupPackedFormat(m_desc.Format, GetFormatMode()).Format);
     
@@ -543,10 +581,15 @@ namespace dxvk {
     info.size   = GetSubresourceLayout(formatInfo->aspectMask, MipLevel).Size;
     info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
                 | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT
+                | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
+    info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT
+                | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     info.access = VK_ACCESS_TRANSFER_READ_BIT
-                | VK_ACCESS_TRANSFER_WRITE_BIT;
+                | VK_ACCESS_TRANSFER_WRITE_BIT
+                | VK_ACCESS_SHADER_READ_BIT
+                | VK_ACCESS_SHADER_WRITE_BIT;
     
     VkMemoryPropertyFlags memType = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
                                   | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -554,7 +597,10 @@ namespace dxvk {
     if (m_desc.Usage == D3D11_USAGE_STAGING)
       memType |= VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
     
-    return m_device->GetDXVKDevice()->createBuffer(info, memType);
+    MappedBuffer result;
+    result.buffer = m_device->GetDXVKDevice()->createBuffer(info, memType);
+    result.slice = result.buffer->getSliceHandle();
+    return result;
   }
   
   

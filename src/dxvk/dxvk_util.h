@@ -40,12 +40,17 @@ namespace dxvk::util {
           VkDeviceSize      pitchPerLayer);
   
   /**
-   * \brief Writes tightly packed image data to a buffer
+   * \brief Repacks image data to a buffer
    * 
+   * Note that passing destination pitches of 0 means that the data is
+   * tightly packed, while a source pitch of 0 will not show this behaviour
+   * in order to match client API behaviour for initialization.
    * \param [in] dstBytes Destination buffer pointer
    * \param [in] srcBytes Pointer to source data
-   * \param [in] rowPitch Number of bytes between rows
-   * \param [in] slicePitch Number of bytes between layers
+   * \param [in] srcRowPitch Number of bytes between rows to read
+   * \param [in] srcSlicePitch Number of bytes between layers to read
+   * \param [in] dstRowPitch Number of bytes between rows to write
+   * \param [in] dstSlicePitch Number of bytes between layers to write
    * \param [in] imageType Image type (2D, 3D etc)
    * \param [in] imageExtent Image extent, in pixels
    * \param [in] imageLayers Image layer count
@@ -55,8 +60,10 @@ namespace dxvk::util {
   void packImageData(
           void*             dstBytes,
     const void*             srcBytes,
-          VkDeviceSize      rowPitch,
-          VkDeviceSize      slicePitch,
+          VkDeviceSize      srcRowPitch,
+          VkDeviceSize      srcSlicePitch,
+          VkDeviceSize      dstRowPitchIn,
+          VkDeviceSize      dstSlicePitchIn,
           VkImageType       imageType,
           VkExtent3D        imageExtent,
           uint32_t          imageLayers,
@@ -94,7 +101,7 @@ namespace dxvk::util {
   }
   
   /**
-   * \brief Checks whether an extent is block-aligned
+   * \brief Checks whether an offset and extent are block-aligned
    * 
    * A block-aligned extent can be used for image copy
    * operations that involve block-compressed images.
@@ -108,7 +115,8 @@ namespace dxvk::util {
   inline bool isBlockAligned(VkOffset3D offset, VkExtent3D extent, VkExtent3D blockSize, VkExtent3D imageSize) {
     return ((extent.width  % blockSize.width  == 0) || (uint32_t(offset.x + extent.width)  == imageSize.width))
         && ((extent.height % blockSize.height == 0) || (uint32_t(offset.y + extent.height) == imageSize.height))
-        && ((extent.depth  % blockSize.depth  == 0) || (uint32_t(offset.z + extent.depth)  == imageSize.depth));
+        && ((extent.depth  % blockSize.depth  == 0) || (uint32_t(offset.z + extent.depth)  == imageSize.depth))
+        && isBlockAligned(offset, blockSize);
   }
   
   /**
@@ -195,6 +203,23 @@ namespace dxvk::util {
       (extent.width  + blockSize.width  - offset.x - 1) / blockSize.width,
       (extent.height + blockSize.height - offset.y - 1) / blockSize.height,
       (extent.depth  + blockSize.depth  - offset.z - 1) / blockSize.depth };
+  }
+  
+  /**
+   * \brief Snaps block-aligned image extent to image edges
+   * 
+   * Fixes up an image extent that is aligned to a compressed
+   * block so that it no longer exceeds the given image size.
+   * \param [in] offset Aligned pixel offset
+   * \param [in] extent Extent to clamp
+   * \param [in] imageExtent Image size
+   * \returns Number of blocks in the image
+   */
+  inline VkExtent3D snapExtent3D(VkOffset3D offset, VkExtent3D extent, VkExtent3D imageExtent) {
+    return VkExtent3D {
+      std::min(extent.width,  imageExtent.width  - uint32_t(offset.x)),
+      std::min(extent.height, imageExtent.height - uint32_t(offset.y)),
+      std::min(extent.depth,  imageExtent.depth  - uint32_t(offset.z)) };
   }
   
   /**

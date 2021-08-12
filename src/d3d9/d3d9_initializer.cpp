@@ -18,7 +18,7 @@ namespace dxvk {
 
 
   void D3D9Initializer::Flush() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<dxvk::mutex> lock(m_mutex);
 
     if (m_transferCommands != 0)
       FlushInternal();
@@ -52,7 +52,7 @@ namespace dxvk {
 
   void D3D9Initializer::InitDeviceLocalBuffer(
           DxvkBufferSlice    Slice) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<dxvk::mutex> lock(m_mutex);
 
     m_transferCommands += 1;
 
@@ -79,7 +79,7 @@ namespace dxvk {
 
   void D3D9Initializer::InitDeviceLocalTexture(
           D3D9CommonTexture* pTexture) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<dxvk::mutex> lock(m_mutex);
 
     auto InitImage = [&](Rc<DxvkImage> image) {
       if (image == nullptr)
@@ -131,18 +131,36 @@ namespace dxvk {
     // If the buffer is mapped, we can write data directly
     // to the mapped memory region instead of doing it on
     // the GPU. Same goes for zero-initialization.
-    for (uint32_t i = 0; i < pTexture->CountSubresources(); i++) {
-      DxvkBufferSliceHandle mapSlice  = pTexture->GetBuffer(i)->getSliceHandle();
+    const D3D9_COMMON_TEXTURE_DESC* desc = pTexture->Desc();
+    for (uint32_t a = 0; a < desc->ArraySize; a++) {
+      for (uint32_t m = 0; m < desc->MipLevels; m++) {
+        uint32_t subresource = pTexture->CalcSubresource(a, m);
+        DxvkBufferSliceHandle mapSlice  = pTexture->GetBuffer(subresource)->getSliceHandle();
 
-      if (pInitialData != nullptr) {
-        std::memcpy(
-          mapSlice.mapPtr,
-          pInitialData,
-          mapSlice.length);
-      } else {
-        std::memset(
-          mapSlice.mapPtr, 0,
-          mapSlice.length);
+        if (pInitialData != nullptr) {
+          VkExtent3D mipExtent = pTexture->GetExtentMip(m);
+          const DxvkFormatInfo* formatInfo = imageFormatInfo(pTexture->GetFormatMapping().FormatColor);
+          VkExtent3D blockCount = util::computeBlockCount(mipExtent, formatInfo->blockSize);
+          uint32_t pitch = blockCount.width * formatInfo->elementSize;
+          uint32_t alignedPitch = align(pitch, 4);
+
+          util::packImageData(
+            mapSlice.mapPtr,
+            pInitialData,
+            pitch,
+            pitch * blockCount.height,
+            alignedPitch,
+            alignedPitch * blockCount.height,
+            D3D9CommonTexture::GetImageTypeFromResourceType(pTexture->GetType()),
+            mipExtent,
+            pTexture->Desc()->ArraySize,
+            formatInfo,
+            VK_IMAGE_ASPECT_COLOR_BIT);
+        } else {
+          std::memset(
+            mapSlice.mapPtr, 0,
+            mapSlice.length);
+        }
       }
     }
   }
