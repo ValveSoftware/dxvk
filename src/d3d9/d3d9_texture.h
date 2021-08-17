@@ -60,7 +60,7 @@ namespace dxvk {
 
       m_texture.CreateSampleView(LODNew);
       if (this->GetPrivateRefCount() > 0)
-        this->m_parent->MarkSamplersDirty();
+        this->m_parent->MarkTextureBindingDirty(this);
 
       return oldLod;
     }
@@ -80,7 +80,8 @@ namespace dxvk {
       auto lock = this->m_parent->LockDevice();
 
       m_texture.SetMipFilter(FilterType);
-      this->m_parent->MarkTextureMipsDirty(&m_texture);
+      if (m_texture.IsAutomaticMip())
+        this->m_parent->MarkTextureMipsDirty(&m_texture);
       return D3D_OK;
     }
 
@@ -114,9 +115,9 @@ namespace dxvk {
 
     D3D9CommonTexture m_texture;
 
-    DWORD m_lod;
-
     std::vector<SubresourceData> m_subresources;
+
+    DWORD m_lod;
 
   };
 
@@ -195,17 +196,18 @@ namespace dxvk {
 
   };
 
+  static_assert(sizeof(D3D9Texture2D) == sizeof(D3D9Texture3D) &&
+                sizeof(D3D9Texture2D) == sizeof(D3D9TextureCube));
+
   inline D3D9CommonTexture* GetCommonTexture(IDirect3DBaseTexture9* ptr) {
     if (ptr == nullptr)
       return nullptr;
 
-    D3DRESOURCETYPE type = ptr->GetType();
-    if (type == D3DRTYPE_TEXTURE)
-      return static_cast<D3D9Texture2D*>  (ptr)->GetCommonTexture();
-    else if (type == D3DRTYPE_CUBETEXTURE)
-      return static_cast<D3D9TextureCube*>(ptr)->GetCommonTexture();
-    else //if(type == D3DRTYPE_VOLUMETEXTURE)
-      return static_cast<D3D9Texture3D*>  (ptr)->GetCommonTexture();
+    // We can avoid needing to get the type as m_texture has the same offset
+    // no matter the texture type.
+    // The compiler is not smart enough to eliminate the call to GetType as it is
+    // not marked const.
+    return static_cast<D3D9Texture2D*>(ptr)->GetCommonTexture();
   }
 
   inline D3D9CommonTexture* GetCommonTexture(D3D9Surface* ptr) {
@@ -223,13 +225,11 @@ namespace dxvk {
     if (tex == nullptr)
       return;
 
-    D3DRESOURCETYPE type = tex->GetType();
-    if (type == D3DRTYPE_TEXTURE)
-      return CastRefPrivate<D3D9Texture2D>  (tex, AddRef);
-    else if (type == D3DRTYPE_CUBETEXTURE)
-      return CastRefPrivate<D3D9TextureCube>(tex, AddRef);
-    else //if(type == D3DRTYPE_VOLUMETEXTURE)
-      return CastRefPrivate<D3D9Texture3D>  (tex, AddRef);
+    // We can avoid needing to get the type as m_refCount has the same offset
+    // no matter the texture type.
+    // The compiler is not smart enough to eliminate the call to GetType as it is
+    // not marked const.
+    return CastRefPrivate<D3D9Texture2D>(tex, AddRef);
   }
 
   inline void TextureChangePrivate(IDirect3DBaseTexture9*& dst, IDirect3DBaseTexture9* src) {

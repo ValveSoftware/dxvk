@@ -3360,7 +3360,7 @@ namespace dxvk {
                         && (dstImage->info().usage & tgtUsage);
     
     // If needed, create a temporary render target for the copy
-    Rc<DxvkImage>            tgtImage       = dstImage;
+    Rc<DxvkImage>            tgtImage;
     VkImageSubresourceLayers tgtSubresource = dstSubresource;
     VkOffset3D               tgtOffset      = dstOffset;
 
@@ -3385,6 +3385,8 @@ namespace dxvk {
       tgtSubresource.baseArrayLayer = 0;
 
       tgtOffset = { 0, 0, 0 };
+    } else {
+      tgtImage = dstImage;
     }
     
     // Create source and destination image views
@@ -4446,7 +4448,7 @@ namespace dxvk {
       m_state.om.framebuffer = fb;
 
       for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
-        Rc<DxvkImageView> attachment = fb->getColorTarget(i).view;
+        const Rc<DxvkImageView>& attachment = fb->getColorTarget(i).view;
 
         VkComponentMapping mapping = attachment != nullptr
           ? util::invertComponentMapping(attachment->info().swizzle)
@@ -4727,7 +4729,7 @@ namespace dxvk {
         xfbBuffers[i] = m_common->dummyResources().bufferHandle();
       
       if (physSlice.handle != VK_NULL_HANDLE) {
-        auto buffer = m_state.xfb.buffers[i].buffer();
+        const Rc<DxvkBuffer>& buffer = m_state.xfb.buffers[i].buffer();
         buffer->setXfbVertexStride(gsOptions.xfbStrides[i]);
         
         m_cmd->trackResource<DxvkAccess::Write>(buffer);

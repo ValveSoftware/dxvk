@@ -211,9 +211,7 @@ namespace dxvk {
     for (size_t i = 0; i < m_xfbVars.size(); i++)
       streamMask |= 1u << m_xfbVars[i].streamId;
     
-    for (uint32_t mask = streamMask; mask != 0; mask &= mask - 1) {
-      const uint32_t streamId = bit::tzcnt(mask);
-
+    for (uint32_t streamId : bit::BitMask(streamMask)) {
       emitXfbOutputSetup(streamId, true);
       m_module.opEmitVertex(m_module.constu32(streamId));
     }
@@ -3249,6 +3247,7 @@ namespace dxvk {
       getVectorTypeId(result.type),
       resultIds.size(), resultIds.data());
     
+    result = emitRegisterSwizzle(result, ins.src[1].swizzle, ins.dst[0].mask);
     emitRegisterStore(ins.dst[0], result);
   }
   

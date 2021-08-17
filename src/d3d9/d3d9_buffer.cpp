@@ -9,7 +9,9 @@ namespace dxvk {
   D3D9VertexBuffer::D3D9VertexBuffer(
           D3D9DeviceEx*      pDevice,
     const D3D9_BUFFER_DESC*  pDesc)
-    : D3D9VertexBufferBase( pDevice, pDesc ) { }
+  : D3D9VertexBufferBase(pDevice, pDesc) {
+
+  }
 
 
   HRESULT STDMETHODCALLTYPE D3D9VertexBuffer::QueryInterface(
@@ -43,15 +45,14 @@ namespace dxvk {
     if (pDesc == nullptr)
       return D3DERR_INVALIDCALL;
 
-    D3D9_BUFFER_DESC desc;
-    m_buffer.GetDesc(&desc);
+    const D3D9_BUFFER_DESC* desc = m_buffer.Desc();
 
-    pDesc->Format = static_cast<D3DFORMAT>(desc.Format);
-    pDesc->Type   = desc.Type;
-    pDesc->Usage  = desc.Usage;
-    pDesc->Pool   = desc.Pool;
-    pDesc->Size   = desc.Size;
-    pDesc->FVF    = desc.FVF;
+    pDesc->Format = static_cast<D3DFORMAT>(desc->Format);
+    pDesc->Type   = desc->Type;
+    pDesc->Usage  = desc->Usage;
+    pDesc->Pool   = desc->Pool;
+    pDesc->Size   = desc->Size;
+    pDesc->FVF    = desc->FVF;
 
     return D3D_OK;
   }
@@ -65,7 +66,9 @@ namespace dxvk {
   D3D9IndexBuffer::D3D9IndexBuffer(
           D3D9DeviceEx*      pDevice,
     const D3D9_BUFFER_DESC*  pDesc)
-    : D3D9IndexBufferBase( pDevice, pDesc ) { }
+  : D3D9IndexBufferBase(pDevice, pDesc) {
+
+  }
 
 
   HRESULT STDMETHODCALLTYPE D3D9IndexBuffer::QueryInterface(
@@ -99,14 +102,13 @@ namespace dxvk {
     if (pDesc == nullptr)
       return D3DERR_INVALIDCALL;
 
-    D3D9_BUFFER_DESC desc;
-    m_buffer.GetDesc(&desc);
+    const D3D9_BUFFER_DESC* desc = m_buffer.Desc();
 
-    pDesc->Format = static_cast<D3DFORMAT>(desc.Format);
-    pDesc->Type   = desc.Type;
-    pDesc->Usage  = desc.Usage;
-    pDesc->Pool   = desc.Pool;
-    pDesc->Size   = desc.Size;
+    pDesc->Format = static_cast<D3DFORMAT>(desc->Format);
+    pDesc->Type   = desc->Type;
+    pDesc->Usage  = desc->Usage;
+    pDesc->Pool   = desc->Pool;
+    pDesc->Size   = desc->Size;
 
     return D3D_OK;
   }
