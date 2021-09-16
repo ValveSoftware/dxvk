@@ -701,12 +701,11 @@ namespace dxvk {
     DxvkBufferSliceHandle srcSlice = srcTextureInfo->GetMappedSlice(src->GetSubresource());
     VkDeviceSize dirtySize = copyBlockCount.width * copyBlockCount.height * formatInfo->elementSize;
     D3D9BufferSlice slice = AllocTempBuffer<false>(dirtySize);
-    VkDeviceSize copySrcOffset = (srcBlockOffset.z * texLevelBlockCount.height * texLevelBlockCount.width
-        + srcBlockOffset.y * texLevelBlockCount.width
-        + srcBlockOffset.x)
-        * formatInfo->elementSize;
-
     VkDeviceSize pitch = align(texLevelBlockCount.width * formatInfo->elementSize, 4);
+    VkDeviceSize copySrcOffset = srcBlockOffset.z * texLevelBlockCount.height * pitch
+        + srcBlockOffset.y * pitch
+        + srcBlockOffset.x * formatInfo->elementSize;
+
     void* srcData = reinterpret_cast<uint8_t*>(srcSlice.mapPtr) + copySrcOffset;
     util::packImageData(
       slice.mapPtr, srcData, copyBlockCount, formatInfo->elementSize,
@@ -791,12 +790,11 @@ namespace dxvk {
         VkDeviceSize dirtySize = scaledBoxExtentBlockCount.width * scaledBoxExtentBlockCount.height * scaledBoxExtentBlockCount.depth * formatInfo->elementSize;
         D3D9BufferSlice slice = AllocTempBuffer<false>(dirtySize);
         VkOffset3D boxOffsetBlockCount = util::computeBlockOffset(scaledBoxOffset, formatInfo->blockSize);
-        VkDeviceSize copySrcOffset = (boxOffsetBlockCount.z * texLevelExtentBlockCount.height * texLevelExtentBlockCount.width
-            + boxOffsetBlockCount.y * texLevelExtentBlockCount.width
-            + boxOffsetBlockCount.x)
-            * formatInfo->elementSize;
-
         VkDeviceSize pitch = align(texLevelExtentBlockCount.width * formatInfo->elementSize, 4);
+        VkDeviceSize copySrcOffset = boxOffsetBlockCount.z * texLevelExtentBlockCount.height * pitch
+            + boxOffsetBlockCount.y * pitch
+            + boxOffsetBlockCount.x * formatInfo->elementSize;
+
         void* srcData = reinterpret_cast<uint8_t*>(srcTexInfo->GetMappedSlice(srcTexInfo->CalcSubresource(a, m)).mapPtr) + copySrcOffset;
         util::packImageData(
           slice.mapPtr, srcData, scaledBoxExtentBlockCount, formatInfo->elementSize,
@@ -4006,7 +4004,7 @@ namespace dxvk {
     return m_adapter->GetFormatMapping(Format);
   }
 
-  DxvkFormatInfo D3D9DeviceEx::UnsupportedFormatInfo(
+  const DxvkFormatInfo* D3D9DeviceEx::UnsupportedFormatInfo(
     D3D9Format            Format) const {
     return m_adapter->GetUnsupportedFormatInfo(Format);
   }
@@ -4104,7 +4102,11 @@ namespace dxvk {
 
     const Rc<DxvkBuffer> mappedBuffer = pResource->GetBuffer(Subresource);
 
-    auto formatInfo = imageFormatInfo(pResource->GetFormatMapping().FormatColor);
+    auto& formatMapping = pResource->GetFormatMapping();
+
+    const DxvkFormatInfo* formatInfo = formatMapping.IsValid()
+      ? imageFormatInfo(formatMapping.FormatColor) : UnsupportedFormatInfo(pResource->Desc()->Format);
+
     auto subresource = pResource->GetSubresourceFromIndex(
         formatInfo->aspectMask, Subresource);
 
@@ -4429,11 +4431,10 @@ namespace dxvk {
       scaledAlignedBoxExtent.depth = std::min<uint32_t>(texLevelExtent.depth - scaledBoxOffset.z, scaledAlignedBoxExtent.depth);
 
       VkOffset3D boxOffsetBlockCount = util::computeBlockOffset(scaledBoxOffset, formatInfo->blockSize);
-      VkDeviceSize copySrcOffset = (boxOffsetBlockCount.z * texLevelExtentBlockCount.height * texLevelExtentBlockCount.width
-          + boxOffsetBlockCount.y * texLevelExtentBlockCount.width
-          + boxOffsetBlockCount.x)
-          * formatInfo->elementSize;
       VkDeviceSize pitch = align(texLevelExtentBlockCount.width * formatInfo->elementSize, 4);
+      VkDeviceSize copySrcOffset = boxOffsetBlockCount.z * texLevelExtentBlockCount.height * pitch
+          + boxOffsetBlockCount.y * pitch
+          + boxOffsetBlockCount.x * formatInfo->elementSize;
 
       VkDeviceSize rowAlignment = 0;
       DxvkBufferSlice copySrcSlice;
@@ -6015,10 +6016,12 @@ namespace dxvk {
       const uint32_t fetch4        = m_fetch4             & psTextureMask;
       const uint32_t projected     = m_projectionBitfield & psTextureMask;
 
-      if (GetCommonShader(m_state.pixelShader)->GetInfo().majorVersion() >= 2)
+      const auto& programInfo = GetCommonShader(m_state.pixelShader)->GetInfo();
+
+      if (programInfo.majorVersion() >= 2)
         UpdateSamplerTypes(m_d3d9Options.forceSamplerTypeSpecConstants ? m_textureTypes : 0u, 0u, fetch4);
       else
-        UpdateSamplerTypes(m_textureTypes, projected, fetch4); // For implicit samplers...
+        UpdateSamplerTypes(m_textureTypes, programInfo.minorVersion() >= 4 ? 0u : projected, fetch4); // For implicit samplers...
 
       UpdateBoolSpecConstantPixel(
         m_state.psConsts.bConsts[0] &
@@ -6538,7 +6541,7 @@ namespace dxvk {
       });
 
       auto UploadVertexBlendData = [&](auto data) {
-        for (uint32_t i = 0; i < countof(data->WorldView); i++)
+        for (uint32_t i = 0; i < std::size(data->WorldView); i++)
           data->WorldView[i] = m_state.transforms[GetTransformIndex(D3DTS_VIEW)] * m_state.transforms[GetTransformIndex(D3DTS_WORLDMATRIX(i))];
       };
 
