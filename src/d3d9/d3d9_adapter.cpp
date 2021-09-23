@@ -34,12 +34,12 @@ namespace dxvk {
           Rc<DxvkAdapter>  Adapter,
           UINT             Ordinal,
           UINT             DisplayIndex)
-    : m_parent          (pParent)
-    , m_adapter         (Adapter)
-    , m_ordinal         (Ordinal)
-    , m_displayIndex    (DisplayIndex)
-    , m_modeCacheFormat (D3D9Format::Unknown)
-    , m_d3d9Formats     (Adapter, m_parent->GetOptions()) {
+  : m_parent          (pParent),
+    m_adapter         (Adapter),
+    m_ordinal         (Ordinal),
+    m_displayIndex    (DisplayIndex),
+    m_modeCacheFormat (D3D9Format::Unknown),
+    m_d3d9Formats     (Adapter, m_parent->GetOptions()) {
     m_adapter->logAdapterInfo();
   }
 
@@ -69,9 +69,9 @@ namespace dxvk {
     const char*  desc  = options.customDeviceDesc.empty() ? props.deviceName : options.customDeviceDesc.c_str();
     const char* driver = GetDriverDLL(DxvkGpuVendor(vendorId));
 
-    std::strncpy(pIdentifier->Description, desc,              countof(pIdentifier->Description));
-    std::strncpy(pIdentifier->DeviceName,  device.DeviceName, countof(pIdentifier->DeviceName)); // The GDI device name. Not the actual device name.
-    std::strncpy(pIdentifier->Driver,      driver,            countof(pIdentifier->Driver));     // This is the driver's dll.
+    std::strncpy(pIdentifier->Description, desc,              std::size(pIdentifier->Description));
+    std::strncpy(pIdentifier->DeviceName,  device.DeviceName, std::size(pIdentifier->DeviceName)); // The GDI device name. Not the actual device name.
+    std::strncpy(pIdentifier->Driver,      driver,            std::size(pIdentifier->Driver));     // This is the driver's dll.
 
     pIdentifier->DeviceIdentifier       = guid;
     pIdentifier->DeviceId               = deviceId;
@@ -138,10 +138,10 @@ namespace dxvk {
     if (CheckFormat == D3D9Format::ATOC && surface)
       return D3D_OK;
 
-    if (m_adapter->features().core.features.depthBounds) {
-      if (CheckFormat == D3D9Format::NVDB && surface)
-        return D3D_OK;
-    }
+    if (CheckFormat == D3D9Format::NVDB && surface)
+      return m_adapter->features().core.features.depthBounds
+        ? D3D_OK
+        : D3DERR_NOTAVAILABLE;
 
     // I really don't want to support this...
     if (dmap)
@@ -158,7 +158,6 @@ namespace dxvk {
       return D3D_OK;
 
     // Let's actually ask Vulkan now that we got some quirks out the way!
-
     return CheckDeviceVkFormat(mapping.FormatColor, Usage, RType);
   }
 
@@ -200,7 +199,7 @@ namespace dxvk {
 
     if (pQualityLevels != nullptr) {
       if (MultiSampleType == D3DMULTISAMPLE_NONMASKABLE)
-        *pQualityLevels = (32 - bit::lzcnt(availableFlags));
+        *pQualityLevels = 32 - bit::lzcnt(availableFlags);
       else
         *pQualityLevels = 1;
     }
@@ -324,7 +323,7 @@ namespace dxvk {
                                     | D3DPMISCCAPS_CULLCCW
                                     | D3DPMISCCAPS_COLORWRITEENABLE
                                     | D3DPMISCCAPS_CLIPPLANESCALEDPOINTS
-                                 /* | D3DPMISCCAPS_CLIPTLVERTS */
+                                    | D3DPMISCCAPS_CLIPTLVERTS
                                     | D3DPMISCCAPS_TSSARGTEMP
                                     | D3DPMISCCAPS_BLENDOP
                                  /* | D3DPMISCCAPS_NULLREFERENCE */
@@ -621,7 +620,7 @@ namespace dxvk {
   }
 
 
-  UINT D3D9Adapter::GetAdapterModeCountEx(CONST D3DDISPLAYMODEFILTER* pFilter) {
+  UINT D3D9Adapter::GetAdapterModeCountEx(const D3DDISPLAYMODEFILTER* pFilter) {
     if (pFilter == nullptr)
       return 0;
 
@@ -797,7 +796,7 @@ namespace dxvk {
     // Sort display modes by width, height and refresh rate,
     // in that order. Some games rely on correct ordering.
     std::sort(m_modes.begin(), m_modes.end(),
-      [](const D3DDISPLAYMODEEX & a, const D3DDISPLAYMODEEX & b) {
+      [](const D3DDISPLAYMODEEX& a, const D3DDISPLAYMODEEX& b) {
         if (a.Width < b.Width)   return true;
         if (a.Width > b.Width)   return false;
         

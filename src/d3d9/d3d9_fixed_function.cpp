@@ -1810,7 +1810,8 @@ namespace dxvk {
             break;
 
           case D3DTOP_BLENDTEXTUREALPHAPM:
-            Logger::warn("D3DTOP_BLENDTEXTUREALPHAPM: not implemented");
+            dst = m_module.opFFma(m_vec4Type, arg[2], Complement(AlphaReplicate(GetTexture())), arg[1]);
+            dst = Saturate(dst);
             break;
 
           case D3DTOP_BLENDCURRENTALPHA:
@@ -2091,7 +2092,7 @@ namespace dxvk {
       m_module.setDebugName(sampler.varId, name.c_str());
 
       const uint32_t bindingId = computeResourceSlotId(DxsoProgramType::PixelShader,
-        DxsoBindingType::ColorImage, i);
+        DxsoBindingType::Image, i);
 
       sampler.bound = m_module.specConstBool(true);
       m_module.decorateSpecId(sampler.bound, bindingId);
@@ -2210,12 +2211,7 @@ namespace dxvk {
     uint32_t floatPtr = m_module.defPointerType(m_floatType, spv::StorageClassPushConstant);
 
     // Declare spec constants for render states
-    uint32_t alphaTestId = m_module.specConstBool(false);
-    uint32_t alphaFuncId = m_module.specConst32(m_module.defIntType(32, 0), uint32_t(VK_COMPARE_OP_ALWAYS));
-
-    m_module.setDebugName(alphaTestId, "alpha_test");
-    m_module.decorateSpecId(alphaTestId, getSpecId(D3D9SpecConstantId::AlphaTestEnable));
-
+    uint32_t alphaFuncId = m_module.specConst32(m_module.defIntType(32, 0), 0);
     m_module.setDebugName(alphaFuncId, "alpha_func");
     m_module.decorateSpecId(alphaFuncId, getSpecId(D3D9SpecConstantId::AlphaCompareOp));
 
@@ -2240,8 +2236,9 @@ namespace dxvk {
     uint32_t atestSkipLabel = m_module.allocateId();
 
     // if (alpha_test) { ... }
+    uint32_t isNotAlways = m_module.opINotEqual(boolType, alphaFuncId, m_module.constu32(VK_COMPARE_OP_ALWAYS));
     m_module.opSelectionMerge(atestSkipLabel, spv::SelectionControlMaskNone);
-    m_module.opBranchConditional(alphaTestId, atestBeginLabel, atestSkipLabel);
+    m_module.opBranchConditional(isNotAlways, atestBeginLabel, atestSkipLabel);
     m_module.opLabel(atestBeginLabel);
 
     // Load alpha component
@@ -2292,8 +2289,6 @@ namespace dxvk {
       atestVariables.size(),
       atestVariables.data());
     uint32_t atestDiscard = m_module.opLogicalNot(boolType, atestResult);
-
-    atestResult = m_module.opLogicalNot(boolType, atestResult);
 
     // if (do_discard) { ... }
     m_module.opSelectionMerge(atestKeepLabel, spv::SelectionControlMaskNone);
@@ -2409,7 +2404,7 @@ namespace dxvk {
 
     std::hash<uint32_t> uint32hash;
 
-    for (uint32_t i = 0; i < countof(key.Data.Primitive); i++)
+    for (uint32_t i = 0; i < std::size(key.Data.Primitive); i++)
       state.add(uint32hash(key.Data.Primitive[i]));
 
     return state;
@@ -2422,7 +2417,7 @@ namespace dxvk {
     std::hash<uint32_t> uint32hash;
 
     for (uint32_t i = 0; i < caps::TextureStageCount; i++) {
-      for (uint32_t j = 0; j < countof(key.Stages[i].Primitive); j++)
+      for (uint32_t j = 0; j < std::size(key.Stages[i].Primitive); j++)
         state.add(uint32hash(key.Stages[i].Primitive[j]));
     }
 

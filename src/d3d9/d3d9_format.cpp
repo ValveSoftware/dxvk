@@ -452,13 +452,13 @@ namespace dxvk {
       VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
 
     if (!m_d24s8Support)
-      Logger::warn("D3D9: VK_FORMAT_D24_UNORM_S8_UINT -> VK_FORMAT_D32_SFLOAT_S8_UINT");
+      Logger::info("D3D9: VK_FORMAT_D24_UNORM_S8_UINT -> VK_FORMAT_D32_SFLOAT_S8_UINT");
 
     if (!m_d16s8Support) {
       if (m_d24s8Support)
-        Logger::warn("D3D9: VK_FORMAT_D16_UNORM_S8_UINT -> VK_FORMAT_D24_UNORM_S8_UINT");
+        Logger::info("D3D9: VK_FORMAT_D16_UNORM_S8_UINT -> VK_FORMAT_D24_UNORM_S8_UINT");
       else
-        Logger::warn("D3D9: VK_FORMAT_D16_UNORM_S8_UINT -> VK_FORMAT_D32_SFLOAT_S8_UINT");
+        Logger::info("D3D9: VK_FORMAT_D16_UNORM_S8_UINT -> VK_FORMAT_D32_SFLOAT_S8_UINT");
     }
 
     if (!m_a4r4g4b4Support)
@@ -502,44 +502,55 @@ namespace dxvk {
   }
 
 
-  DxvkFormatInfo D3D9VkFormatTable::GetUnsupportedFormatInfo(
+  const DxvkFormatInfo* D3D9VkFormatTable::GetUnsupportedFormatInfo(
     D3D9Format            Format) const {
+    static const DxvkFormatInfo r8b8g8      = { 3, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo r3g3b2      = { 1, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo a8r3g3b2    = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo a8p8        = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo p8          = { 1, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo l6v5u5      = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo x8l8v8u8    = { 4, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo a2w10v10u10 = { 4, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo cxv8u8      = { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+    static const DxvkFormatInfo unknown     = {};
+
     switch (Format) {
       case D3D9Format::R8G8B8:
-        return { 3, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &r8b8g8;
 
       case D3D9Format::R3G3B2:
-        return { 1, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &r3g3b2;
 
       case D3D9Format::A8R3G3B2:
-        return { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &a8r3g3b2;
 
       case D3D9Format::A8P8:
-        return { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &a8p8;
 
       case D3D9Format::P8:
-        return { 1, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &p8;
 
       case D3D9Format::L6V5U5:
-        return { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &l6v5u5;
 
       case D3D9Format::X8L8V8U8:
-        return { 4, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &x8l8v8u8;
 
       case D3D9Format::A2W10V10U10:
-        return { 4, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &a2w10v10u10;
 
       // MULTI2_ARGB8 -> Don't have a clue what this is.
 
       case D3D9Format::CxV8U8:
-        return { 2, VK_IMAGE_ASPECT_COLOR_BIT };
+        return &cxv8u8;
 
       // A1 -> Doesn't map nicely here cause it's not byte aligned.
       // Gonna just pretend that doesn't exist until something
       // depends on that.
 
       default:
-        return {};
+        return &unknown;
     }
   }
   

@@ -211,9 +211,7 @@ namespace dxvk {
     for (size_t i = 0; i < m_xfbVars.size(); i++)
       streamMask |= 1u << m_xfbVars[i].streamId;
     
-    for (uint32_t mask = streamMask; mask != 0; mask &= mask - 1) {
-      const uint32_t streamId = bit::tzcnt(mask);
-
+    for (uint32_t streamId : bit::BitMask(streamMask)) {
       emitXfbOutputSetup(streamId, true);
       m_module.opEmitVertex(m_module.constu32(streamId));
     }
@@ -1005,12 +1003,6 @@ namespace dxvk {
     if (ins.controls.uavFlags().test(DxbcUavFlag::GloballyCoherent))
       m_module.decorate(varId, spv::DecorationCoherent);
     
-    // On GPUs which don't support storageImageReadWithoutFormat,
-    // we have to decorate untyped UAVs as write-only
-    if (isUav && imageFormat == spv::ImageFormatUnknown
-     && !m_moduleInfo.options.useStorageImageReadWithoutFormat)
-      m_module.decorate(varId, spv::DecorationNonReadable);
-    
     // Declare a specialization constant which will
     // store whether or not the resource is bound.
     const uint32_t specConstId = m_module.specConstBool(true);
@@ -1062,17 +1054,22 @@ namespace dxvk {
     DxvkResourceSlot resource;
     resource.slot = bindingId;
     resource.view = typeInfo.vtype;
-    resource.access = VK_ACCESS_SHADER_READ_BIT;
     
     if (isUav) {
       resource.type = resourceType == DxbcResourceDim::Buffer
         ? VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
         : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-      resource.access |= VK_ACCESS_SHADER_WRITE_BIT;
+      resource.access = m_analysis->uavInfos[registerId].accessFlags;
+
+      if (!(resource.access & VK_ACCESS_SHADER_WRITE_BIT))
+        m_module.decorate(varId, spv::DecorationNonWritable);
+      if (!(resource.access & VK_ACCESS_SHADER_READ_BIT))
+        m_module.decorate(varId, spv::DecorationNonReadable);
     } else {
       resource.type = resourceType == DxbcResourceDim::Buffer
         ? VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
         : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+      resource.access = VK_ACCESS_SHADER_READ_BIT;
     }
     
     m_resourceSlots.push_back(resource);
@@ -1139,9 +1136,6 @@ namespace dxvk {
       m_module.setDebugName(structType,
         str::format(isUav ? "u" : "t", registerId, "_t").c_str());
       m_module.setDebugMemberName(structType, 0, "m");
-
-      if (!isUav)
-        m_module.decorate(varId, spv::DecorationNonWritable);
     } else {
       // Structured and raw buffers are represented as
       // texel buffers consisting of 32-bit integers.
@@ -1212,10 +1206,16 @@ namespace dxvk {
         ? VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
         : VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER);
     resource.view = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
-    resource.access = VK_ACCESS_SHADER_READ_BIT;
+    resource.access = isUav
+      ? m_analysis->uavInfos[registerId].accessFlags
+      : VK_ACCESS_SHADER_READ_BIT;
 
-    if (isUav)
-      resource.access |= VK_ACCESS_SHADER_WRITE_BIT;
+    if (useRawSsbo || isUav) {
+      if (!(resource.access & VK_ACCESS_SHADER_WRITE_BIT))
+        m_module.decorate(varId, spv::DecorationNonWritable);
+      if (!(resource.access & VK_ACCESS_SHADER_READ_BIT))
+        m_module.decorate(varId, spv::DecorationNonReadable);
+    }
 
     m_resourceSlots.push_back(resource);
   }
@@ -3249,6 +3249,7 @@ namespace dxvk {
       getVectorTypeId(result.type),
       resultIds.size(), resultIds.data());
     
+    result = emitRegisterSwizzle(result, ins.src[1].swizzle, ins.dst[0].mask);
     emitRegisterStore(ins.dst[0], result);
   }
   

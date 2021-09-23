@@ -120,6 +120,7 @@ namespace dxvk {
     case DxsoOpcode::Pow:
     case DxsoOpcode::Crs:
     case DxsoOpcode::Abs:
+    case DxsoOpcode::Sgn:
     case DxsoOpcode::Nrm:
     case DxsoOpcode::SinCos:
     case DxsoOpcode::Lit:
@@ -187,6 +188,8 @@ namespace dxvk {
       return this->emitTextureSample(ctx);
     case DxsoOpcode::TexKill:
       return this->emitTextureKill(ctx);
+    case DxsoOpcode::TexDepth:
+      return this->emitTextureDepth(ctx);
 
     case DxsoOpcode::TexM3x3Pad:
     case DxsoOpcode::TexM3x2Pad:
@@ -361,6 +364,10 @@ namespace dxvk {
       ? D3D9SpecConstantId::VertexShaderBools
       : D3D9SpecConstantId::PixelShaderBools));
     m_module.setDebugName(m_boolSpecConstant, "boolConstants");
+
+    m_depthSpecConstant = m_module.specConst32(m_module.defIntType(32, 0), 0);
+    m_module.decorateSpecId(m_depthSpecConstant, getSpecId(D3D9SpecConstantId::SamplerDepthMode));
+    m_module.setDebugName(m_depthSpecConstant, "depthSamplers");
   }
 
 
@@ -682,8 +689,11 @@ namespace dxvk {
           DxsoTextureType type) {
     m_usedSamplers |= (1u << idx);
 
-    auto DclSampler = [this](
+    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+
+    auto DclSampler = [this, &viewType](
       uint32_t        idx,
+      uint32_t        bindingId,
       DxsoSamplerType type,
       bool            depth,
       bool            implicit) {
@@ -693,7 +703,6 @@ namespace dxvk {
         : m_samplers[idx].depth[type];
 
       spv::Dim dimensionality;
-      VkImageViewType viewType;
 
       const char* suffix = "_2d";
 
@@ -735,31 +744,25 @@ namespace dxvk {
       std::string name = str::format("s", idx, suffix, depth ? "_shadow" : "");
       m_module.setDebugName(sampler.varId, name.c_str());
 
-      const uint32_t bindingId = computeResourceSlotId(m_programInfo.type(),
-        !depth ? DxsoBindingType::ColorImage : DxsoBindingType::DepthImage,
-        idx);
-
       m_module.decorateDescriptorSet(sampler.varId, 0);
       m_module.decorateBinding      (sampler.varId, bindingId);
-
-      // Store descriptor info for the shader interface
-      DxvkResourceSlot resource;
-      resource.slot   = bindingId;
-      resource.type   = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      resource.view   = implicit ? VK_IMAGE_VIEW_TYPE_MAX_ENUM : viewType;
-      resource.access = VK_ACCESS_SHADER_READ_BIT;
-      m_resourceSlots.push_back(resource);
     };
 
-    if (m_programInfo.majorVersion() >= 2 && !m_moduleInfo.options.forceSamplerTypeSpecConstants) {
+    const uint32_t binding = computeResourceSlotId(m_programInfo.type(),
+      DxsoBindingType::Image,
+      idx);
+
+    const bool implicit = m_programInfo.majorVersion() < 2 || m_moduleInfo.options.forceSamplerTypeSpecConstants;
+
+    if (!implicit) {
       DxsoSamplerType samplerType = 
         SamplerTypeFromTextureType(type);
 
-      DclSampler(idx, samplerType, false, false);
+      DclSampler(idx, binding, samplerType, false, implicit);
 
       if (samplerType != SamplerTypeTexture3D) {
         // We could also be depth compared!
-        DclSampler(idx, samplerType, true, false);
+        DclSampler(idx, binding, samplerType, true, implicit);
       }
     }
     else {
@@ -768,33 +771,27 @@ namespace dxvk {
       for (uint32_t i = 0; i < SamplerTypeCount; i++) {
         auto samplerType = static_cast<DxsoSamplerType>(i);
 
-        DclSampler(idx, samplerType, false, true);
+        DclSampler(idx, binding, samplerType, false, implicit);
 
         if (samplerType != SamplerTypeTexture3D)
-          DclSampler(idx, samplerType, true, true);
+          DclSampler(idx, binding, samplerType, true, implicit);
       }
     }
-    
-
-    // Declare a specialization constant which will
-    // store whether or not the depth/color views are bound.
-    const uint32_t colorBinding = computeResourceSlotId(m_programInfo.type(),
-      DxsoBindingType::ColorImage, idx);
-
-    const uint32_t depthBinding = computeResourceSlotId(m_programInfo.type(),
-      DxsoBindingType::DepthImage, idx);
 
     DxsoSampler& sampler = m_samplers[idx];
-
-    sampler.colorSpecConst = m_module.specConstBool(true);
-    sampler.depthSpecConst = m_module.specConstBool(true);
+    sampler.boundConst = m_module.specConstBool(true);
     sampler.type = type;
-    m_module.decorateSpecId(sampler.colorSpecConst, colorBinding);
-    m_module.decorateSpecId(sampler.depthSpecConst, depthBinding);
-    m_module.setDebugName(sampler.colorSpecConst,
-      str::format("s", idx, "_useColor").c_str());
-    m_module.setDebugName(sampler.depthSpecConst,
-      str::format("s", idx, "_useShadow").c_str());
+    m_module.decorateSpecId(sampler.boundConst, binding);
+    m_module.setDebugName(sampler.boundConst,
+      str::format("s", idx, "_bound").c_str());
+
+    // Store descriptor info for the shader interface
+    DxvkResourceSlot resource;
+    resource.slot   = binding;
+    resource.type   = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    resource.view   = implicit ? VK_IMAGE_VIEW_TYPE_MAX_ENUM : viewType;
+    resource.access = VK_ACCESS_SHADER_READ_BIT;
+    m_resourceSlots.push_back(resource);
   }
 
 
@@ -1930,6 +1927,10 @@ namespace dxvk {
         result.id = m_module.opFAbs(typeId,
           emitRegisterLoad(src[0], mask).id);
         break;
+      case DxsoOpcode::Sgn:
+        result.id = m_module.opFSign(typeId,
+          emitRegisterLoad(src[0], mask).id);
+        break;
       case DxsoOpcode::Nrm: {
         // Nrm is 3D...
         DxsoRegMask srcMask(true, true, true, false);
@@ -2731,7 +2732,7 @@ void DxsoCompiler::emitControlFlowGenericLoop(
       }
 
       if (opcode == DxsoOpcode::TexLdd) {
-        DxsoRegMask gradMask(true, true, false, false);
+        DxsoRegMask gradMask(true, true, sampler.dimensions == 3, false);
         imageOperands.flags |= spv::ImageOperandsGradMask;
         imageOperands.sGradX = emitRegisterLoad(ctx.src[2], gradMask).id;
         imageOperands.sGradY = emitRegisterLoad(ctx.src[3], gradMask).id;
@@ -2877,21 +2878,28 @@ void DxsoCompiler::emitControlFlowGenericLoop(
         uint32_t depthLabel  = m_module.allocateId();
         uint32_t endLabel    = m_module.allocateId();
 
+        uint32_t typeId = m_module.defIntType(32, 0);
+        uint32_t offset  = m_module.consti32(m_programInfo.type() == DxsoProgramTypes::VertexShader ? samplerIdx + 17 : samplerIdx);
+        uint32_t bitCnt  = m_module.consti32(1);
+        uint32_t isDepth = m_module.opBitFieldUExtract(typeId, m_depthSpecConstant, offset, bitCnt);
+        isDepth = m_module.opIEqual(m_module.defBoolType(), isDepth, m_module.constu32(1));
+
         m_module.opSelectionMerge(endLabel, spv::SelectionControlMaskNone);
-        m_module.opBranchConditional(sampler.depthSpecConst, depthLabel, colorLabel);
+        m_module.opBranchConditional(isDepth, depthLabel, colorLabel);
 
         m_module.opLabel(colorLabel);
-        SampleImage(texcoordVar, sampler.color[samplerType], false, samplerType, sampler.colorSpecConst);
+        SampleImage(texcoordVar, sampler.color[samplerType], false, samplerType, sampler.boundConst);
         m_module.opBranch(endLabel);
 
         m_module.opLabel(depthLabel);
-        SampleImage(texcoordVar, sampler.depth[samplerType], true, samplerType, 0); // already specc'ed
+        // No spec constant as if we are unbound we always fall down the color path.
+        SampleImage(texcoordVar, sampler.depth[samplerType], true, samplerType, 0);
         m_module.opBranch(endLabel);
 
         m_module.opLabel(endLabel);
       }
       else
-        SampleImage(texcoordVar, sampler.color[samplerType], false, samplerType, sampler.colorSpecConst);
+        SampleImage(texcoordVar, sampler.color[samplerType], false, samplerType, sampler.boundConst);
     };
 
     if (m_programInfo.majorVersion() >= 2 && !m_moduleInfo.options.forceSamplerTypeSpecConstants) {
@@ -3047,6 +3055,30 @@ void DxsoCompiler::emitControlFlowGenericLoop(
         m_module.opLabel(labelEnd);
       }
     }
+  }
+
+  void DxsoCompiler::emitTextureDepth(const DxsoInstructionContext& ctx) {
+    const uint32_t fType = m_module.defFloatType(32);
+
+    DxsoRegMask srcMask(true, true, false, false);
+    uint32_t r5 = emitRegisterLoad(ctx.src[0], srcMask).id;
+    uint32_t x = 0;
+    uint32_t y = 1;
+
+    uint32_t xValue = m_module.opCompositeExtract(fType, r5, 1, &x);
+    uint32_t yValue = m_module.opCompositeExtract(fType, r5, 1, &y);
+
+    // The docs say if yValue is 0 the result is 1.0 but native drivers return
+    // 0 for xValue <= 0. So we don't have to do anything special since -INF and
+    // NAN get clamped to 0 at the end of the shader.
+    uint32_t result = m_module.opFDiv(fType, xValue, yValue);
+
+    DxsoBaseRegister depth;
+    depth.id = { DxsoRegisterType::DepthOut, 0 };
+
+    DxsoRegisterPointer depthPtr = emitGetOperandPtr(depth, nullptr);
+
+    m_module.opStore(depthPtr.id, result);
   }
 
 
@@ -3550,13 +3582,7 @@ void DxsoCompiler::emitControlFlowGenericLoop(
     uint32_t floatType = m_module.defFloatType(32);
     uint32_t floatPtr  = m_module.defPointerType(floatType, spv::StorageClassPushConstant);
     
-    // Declare spec constants for render states
-    uint32_t alphaTestId = m_module.specConstBool(false);
-    uint32_t alphaFuncId = m_module.specConst32(m_module.defIntType(32, 0), uint32_t(VK_COMPARE_OP_ALWAYS));
-    
-    m_module.setDebugName   (alphaTestId, "alpha_test");
-    m_module.decorateSpecId (alphaTestId, getSpecId(D3D9SpecConstantId::AlphaTestEnable));
-    
+    uint32_t alphaFuncId = m_module.specConst32(m_module.defIntType(32, 0), 0);
     m_module.setDebugName   (alphaFuncId, "alpha_func");
     m_module.decorateSpecId (alphaFuncId, getSpecId(D3D9SpecConstantId::AlphaCompareOp));
 
@@ -3587,9 +3613,10 @@ void DxsoCompiler::emitControlFlowGenericLoop(
       uint32_t atestKeepLabel    = m_module.allocateId();
       uint32_t atestSkipLabel    = m_module.allocateId();
       
-      // if (alpha_test) { ... }
+      // if (alpha_func != ALWAYS) { ... }
+      uint32_t isNotAlways = m_module.opINotEqual(boolType, alphaFuncId, m_module.constu32(VK_COMPARE_OP_ALWAYS));
       m_module.opSelectionMerge(atestSkipLabel, spv::SelectionControlMaskNone);
-      m_module.opBranchConditional(alphaTestId, atestBeginLabel, atestSkipLabel);
+      m_module.opBranchConditional(isNotAlways, atestBeginLabel, atestSkipLabel);
       m_module.opLabel(atestBeginLabel);
       
       // Load alpha component
@@ -3655,8 +3682,6 @@ void DxsoCompiler::emitControlFlowGenericLoop(
         atestVariables.size(),
         atestVariables.data());
       uint32_t atestDiscard = m_module.opLogicalNot(boolType, atestResult);
-      
-      atestResult = m_module.opLogicalNot(boolType, atestResult);
       
       // if (do_discard) { ... }
       m_module.opSelectionMerge(atestKeepLabel, spv::SelectionControlMaskNone);

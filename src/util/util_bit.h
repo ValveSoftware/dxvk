@@ -17,6 +17,7 @@
 #include "util_math.h"
 
 #include <cstring>
+#include <iterator>
 #include <type_traits>
 
 namespace dxvk::bit {
@@ -73,6 +74,25 @@ namespace dxvk::bit {
     r -= (n & 0x33333333) ?  2 : 0;
     r -= (n & 0x55555555) ?  1 : 0;
     return n != 0 ? r : 32;
+    #endif
+  }
+
+  inline uint32_t bsf(uint32_t n) {
+    #if defined(_MSC_VER) && !defined(__clang__)
+    unsigned long index;
+    _BitScanForward(&index, n);
+    return uint32_t(index);
+    #elif defined(__GNUC__) || defined(__clang__)
+    return __builtin_ctz(n);
+    #else
+    uint32_t r = 31;
+    n &= -n;
+    r -= (n & 0x0000FFFF) ? 16 : 0;
+    r -= (n & 0x00FF00FF) ?  8 : 0;
+    r -= (n & 0x0F0F0F0F) ?  4 : 0;
+    r -= (n & 0x33333333) ?  2 : 0;
+    r -= (n & 0x55555555) ?  1 : 0;
+    return r;
     #endif
   }
 
@@ -272,5 +292,58 @@ namespace dxvk::bit {
     uint32_t m_dwords[Dwords];
 
   };
-  
+
+  class BitMask {
+
+  public:
+
+    class iterator: public std::iterator<std::input_iterator_tag,
+      uint32_t, uint32_t, const uint32_t*, uint32_t> {
+    public:
+
+      explicit iterator(uint32_t flags)
+        : m_mask(flags) { }
+
+      iterator& operator ++ () {
+        m_mask &= m_mask - 1;
+        return *this;
+      }
+
+      iterator operator ++ (int) {
+        iterator retval = *this;
+        m_mask &= m_mask - 1;
+        return retval;
+      }
+
+      uint32_t operator * () const {
+        return bsf(m_mask);
+      }
+
+      bool operator == (iterator other) const { return m_mask == other.m_mask; }
+      bool operator != (iterator other) const { return m_mask != other.m_mask; }
+
+    private:
+
+      uint32_t m_mask;
+
+    };
+
+    BitMask() { }
+
+    BitMask(uint32_t n)
+      : m_mask(n) { }
+
+    iterator begin() {
+      return iterator(m_mask);
+    }
+
+    iterator end() {
+      return iterator(0);
+    }
+
+  private:
+
+    uint32_t m_mask;
+
+  };
 }

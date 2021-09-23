@@ -456,7 +456,7 @@ namespace dxvk {
       cSubresources = srcSubresourceLayers,
       cLevelExtent  = srcExtent
     ] (DxvkContext* ctx) {
-      ctx->copyImageToBuffer(cBuffer, 0, 0, 0,
+      ctx->copyImageToBuffer(cBuffer, 0, 4, 0,
         cImage, cSubresources, VkOffset3D { 0, 0, 0 },
         cLevelExtent);
     });
@@ -594,7 +594,7 @@ namespace dxvk {
   }
 
 
-  void    D3D9SwapChainEx::Reset(
+  HRESULT D3D9SwapChainEx::Reset(
           D3DPRESENT_PARAMETERS* pPresentParams,
           D3DDISPLAYMODEEX*      pFullscreenDisplayMode) {
     D3D9DeviceLock lock = m_parent->LockDevice();
@@ -627,13 +627,17 @@ namespace dxvk {
         newRect.right - newRect.left, newRect.bottom - newRect.top, TRUE);
     }
     else {
-      if (changeFullscreen)
-        this->EnterFullscreenMode(pPresentParams, pFullscreenDisplayMode);
+      if (changeFullscreen) {
+        if (FAILED(this->EnterFullscreenMode(pPresentParams, pFullscreenDisplayMode)))
+          return D3DERR_INVALIDCALL;
+      }
 
       D3D9WindowMessageFilter filter(m_window);
 
-      if (!changeFullscreen)
-        ChangeDisplayMode(pPresentParams, pFullscreenDisplayMode);
+      if (!changeFullscreen) {
+        if (FAILED(ChangeDisplayMode(pPresentParams, pFullscreenDisplayMode)))
+          return D3DERR_INVALIDCALL;
+      }
 
       // Move the window so that it covers the entire output    
       RECT rect;
@@ -650,6 +654,8 @@ namespace dxvk {
       SetGammaRamp(0, &m_ramp);
 
     CreateBackBuffers(m_presentParams.BackBufferCount);
+
+    return D3D_OK;
   }
 
 
@@ -662,6 +668,26 @@ namespace dxvk {
     return D3D_OK;
   }
 
+  static bool validateGammaRamp(const WORD (&ramp)[256]) {
+    if (ramp[0] >= ramp[std::size(ramp) - 1]) {
+      Logger::err("validateGammaRamp: ramp inverted or flat");
+      return false;
+    }
+
+    for (size_t i = 1; i < std::size(ramp); i++) {
+      if (ramp[i] < ramp[i - 1]) {
+        Logger::err("validateGammaRamp: ramp not monotonically increasing");
+        return false;
+      }
+      if (ramp[i] - ramp[i - 1] >= UINT16_MAX / 2) {
+        Logger::err("validateGammaRamp: huuuge jump");
+        return false;
+      }
+    }
+
+    return true;
+  }
+
 
   void    D3D9SwapChainEx::SetGammaRamp(
             DWORD         Flags,
@@ -669,6 +695,11 @@ namespace dxvk {
     D3D9DeviceLock lock = m_parent->LockDevice();
 
     if (unlikely(pRamp == nullptr))
+      return;
+
+    if (unlikely(!validateGammaRamp(pRamp->red)
+              && !validateGammaRamp(pRamp->blue)
+              && !validateGammaRamp(pRamp->green)))
       return;
 
     m_ramp = *pRamp;

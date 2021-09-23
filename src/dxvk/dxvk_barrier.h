@@ -84,6 +84,8 @@ namespace dxvk {
       const Rc<DxvkCommandList>&      commandList);
     
     void reset();
+
+    static DxvkAccessFlags getAccessTypes(VkAccessFlags flags);
     
   private:
 
@@ -111,8 +113,10 @@ namespace dxvk {
 
     std::vector<BufSlice> m_bufSlices;
     std::vector<ImgSlice> m_imgSlices;
-    
-    DxvkAccessFlags getAccessTypes(VkAccessFlags flags) const;
+
+    void insertBufferSlice(BufSlice slice);
+
+    void insertImageSlice(ImgSlice slice);
     
   };
   

@@ -16,13 +16,21 @@ namespace dxvk {
     m_csThread(Device->createContext()),
     m_videoContext(this, Device) {
     EmitCs([
-      cDevice          = m_device,
-      cRelaxedBarriers = pParent->GetOptions()->relaxedBarriers
+      cDevice                 = m_device,
+      cRelaxedBarriers        = pParent->GetOptions()->relaxedBarriers,
+      cIgnoreGraphicsBarriers = pParent->GetOptions()->ignoreGraphicsBarriers
     ] (DxvkContext* ctx) {
       ctx->beginRecording(cDevice->createCommandList());
 
+      DxvkBarrierControlFlags barrierControl;
+
       if (cRelaxedBarriers)
-        ctx->setBarrierControl(DxvkBarrierControl::IgnoreWriteAfterWrite);
+        barrierControl.set(DxvkBarrierControl::IgnoreWriteAfterWrite);
+
+      if (cIgnoreGraphicsBarriers)
+        barrierControl.set(DxvkBarrierControl::IgnoreGraphicsBarriers);
+
+      ctx->setBarrierControl(barrierControl);
     });
     
     ClearState();
@@ -596,9 +604,11 @@ namespace dxvk {
     uint64_t value = ++m_eventCount;
 
     if (m_eventSignal == nullptr)
-      m_eventSignal = new sync::Win32Fence();
+      m_eventSignal = new sync::CallbackFence();
 
-    m_eventSignal->setEvent(hEvent, value);
+    m_eventSignal->setCallback(value, [hEvent] {
+      SetEvent(hEvent);
+    });
 
     EmitCs([
       cSignal = m_eventSignal,
