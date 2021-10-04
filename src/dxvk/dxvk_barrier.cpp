@@ -13,6 +13,19 @@ namespace dxvk {
   }
 
   
+  void DxvkBarrierSet::accessMemory(
+          VkPipelineStageFlags      srcStages,
+          VkAccessFlags             srcAccess,
+          VkPipelineStageFlags      dstStages,
+          VkAccessFlags             dstAccess) {
+    m_srcStages |= srcStages;
+    m_dstStages |= dstStages;
+    
+    m_srcAccess |= srcAccess;
+    m_dstAccess |= dstAccess;
+  }
+
+
   void DxvkBarrierSet::accessBuffer(
     const DxvkBufferSliceHandle&    bufSlice,
           VkPipelineStageFlags      srcStages,
@@ -31,7 +44,8 @@ namespace dxvk {
     m_srcAccess |= srcAccess;
     m_dstAccess |= dstAccess;
 
-    this->insertBufferSlice({ bufSlice, access });
+    m_bufSlices.insert(bufSlice.handle,
+      DxvkBarrierBufferSlice(bufSlice.offset, bufSlice.length, access));
   }
   
   
@@ -73,7 +87,8 @@ namespace dxvk {
       m_imgBarriers.push_back(barrier);
     }
 
-    this->insertImageSlice({ image->handle(), subresources, access });
+    m_imgSlices.insert(image->handle(),
+      DxvkBarrierImageSlice(subresources, access));
   }
 
 
@@ -108,8 +123,10 @@ namespace dxvk {
     acquire.m_bufBarriers.push_back(barrier);
 
     DxvkAccessFlags access(DxvkAccess::Read, DxvkAccess::Write);
-    release.m_bufSlices.push_back({ bufSlice, access });
-    acquire.m_bufSlices.push_back({ bufSlice, access });
+    release.m_bufSlices.insert(bufSlice.handle,
+      DxvkBarrierBufferSlice(bufSlice.offset, bufSlice.length, access));
+    acquire.m_bufSlices.insert(bufSlice.handle,
+      DxvkBarrierBufferSlice(bufSlice.offset, bufSlice.length, access));
   }
 
 
@@ -152,25 +169,18 @@ namespace dxvk {
     acquire.m_imgBarriers.push_back(barrier);
 
     DxvkAccessFlags access(DxvkAccess::Read, DxvkAccess::Write);
-    release.m_imgSlices.push_back({ image->handle(), subresources, access });
-    acquire.m_imgSlices.push_back({ image->handle(), subresources, access });
+    release.m_imgSlices.insert(image->handle(),
+      DxvkBarrierImageSlice(subresources, access));
+    acquire.m_imgSlices.insert(image->handle(),
+      DxvkBarrierImageSlice(subresources, access));
   }
 
 
   bool DxvkBarrierSet::isBufferDirty(
     const DxvkBufferSliceHandle&    bufSlice,
           DxvkAccessFlags           bufAccess) {
-    bool result = false;
-
-    for (uint32_t i = 0; i < m_bufSlices.size() && !result; i++) {
-      const DxvkBufferSliceHandle& dstSlice = m_bufSlices[i].slice;
-
-      result = (bufSlice.handle == dstSlice.handle) && (bufAccess | m_bufSlices[i].access).test(DxvkAccess::Write)
-            && (bufSlice.offset + bufSlice.length > dstSlice.offset)
-            && (bufSlice.offset < dstSlice.offset + dstSlice.length);
-    }
-
-    return result;
+    return m_bufSlices.isDirty(bufSlice.handle,
+      DxvkBarrierBufferSlice(bufSlice.offset, bufSlice.length, bufAccess));
   }
 
 
@@ -178,56 +188,23 @@ namespace dxvk {
     const Rc<DxvkImage>&            image,
     const VkImageSubresourceRange&  imgSubres,
           DxvkAccessFlags           imgAccess) {
-    bool result = false;
-
-    for (uint32_t i = 0; i < m_imgSlices.size() && !result; i++) {
-      const VkImageSubresourceRange& dstSubres = m_imgSlices[i].subres;
-
-      result = (image->handle() == m_imgSlices[i].image) && (imgAccess | m_imgSlices[i].access).test(DxvkAccess::Write)
-            && (imgSubres.baseArrayLayer < dstSubres.baseArrayLayer + dstSubres.layerCount)
-            && (imgSubres.baseArrayLayer + imgSubres.layerCount     > dstSubres.baseArrayLayer)
-            && (imgSubres.baseMipLevel   < dstSubres.baseMipLevel   + dstSubres.levelCount)
-            && (imgSubres.baseMipLevel   + imgSubres.levelCount     > dstSubres.baseMipLevel);
-    }
-
-    return result;
+    return m_imgSlices.isDirty(image->handle(),
+      DxvkBarrierImageSlice(imgSubres, imgAccess));
   }
 
 
   DxvkAccessFlags DxvkBarrierSet::getBufferAccess(
     const DxvkBufferSliceHandle&    bufSlice) {
-    DxvkAccessFlags access;
-
-    for (uint32_t i = 0; i < m_bufSlices.size(); i++) {
-      const DxvkBufferSliceHandle& dstSlice = m_bufSlices[i].slice;
-
-      if ((bufSlice.handle == dstSlice.handle)
-       && (bufSlice.offset + bufSlice.length > dstSlice.offset)
-       && (bufSlice.offset < dstSlice.offset + dstSlice.length))
-        access = access | m_bufSlices[i].access;
-    }
-
-    return access;
+    return m_bufSlices.getAccess(bufSlice.handle,
+      DxvkBarrierBufferSlice(bufSlice.offset, bufSlice.length, 0));
   }
 
   
   DxvkAccessFlags DxvkBarrierSet::getImageAccess(
     const Rc<DxvkImage>&            image,
     const VkImageSubresourceRange&  imgSubres) {
-    DxvkAccessFlags access;
-
-    for (uint32_t i = 0; i < m_imgSlices.size(); i++) {
-      const VkImageSubresourceRange& dstSubres = m_imgSlices[i].subres;
-
-      if ((image->handle() == m_imgSlices[i].image)
-       && (imgSubres.baseArrayLayer < dstSubres.baseArrayLayer + dstSubres.layerCount)
-       && (imgSubres.baseArrayLayer + imgSubres.layerCount     > dstSubres.baseArrayLayer)
-       && (imgSubres.baseMipLevel   < dstSubres.baseMipLevel   + dstSubres.levelCount)
-       && (imgSubres.baseMipLevel   + imgSubres.levelCount     > dstSubres.baseMipLevel))
-        access = access | m_imgSlices[i].access;
-    }
-
-    return access;
+    return m_imgSlices.getAccess(image->handle(),
+      DxvkBarrierImageSlice(imgSubres, 0));
   }
 
 
@@ -272,39 +249,11 @@ namespace dxvk {
     m_bufBarriers.resize(0);
     m_imgBarriers.resize(0);
 
-    m_bufSlices.resize(0);
-    m_imgSlices.resize(0);
+    m_bufSlices.clear();
+    m_imgSlices.clear();
   }
   
   
-  void DxvkBarrierSet::insertBufferSlice(BufSlice slice) {
-    for (auto i = m_bufSlices.begin(); i != m_bufSlices.end(); i++) {
-      // We could try to merge adjacent ranges, but for now,
-      // just make sure we don't have duplicate slices.
-      if (slice.slice.handle == i->slice.handle
-       && slice.slice.offset == i->slice.offset
-       && slice.slice.length == i->slice.length) {
-        i->access.set(slice.access);
-        return;
-      }
-    }
-
-    m_bufSlices.push_back(slice);
-  }
-
-
-  void DxvkBarrierSet::insertImageSlice(ImgSlice slice) {
-    for (auto i = m_imgSlices.begin(); i != m_imgSlices.end(); i++) {
-      if (slice.image == i->image && slice.subres == i->subres) {
-        i->access.set(slice.access);
-        return;
-      }
-    }
-
-    m_imgSlices.push_back(slice);
-  }
-
-
   DxvkAccessFlags DxvkBarrierSet::getAccessTypes(VkAccessFlags flags) {
     const VkAccessFlags rflags
       = VK_ACCESS_INDIRECT_COMMAND_READ_BIT

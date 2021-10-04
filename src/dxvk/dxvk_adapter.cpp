@@ -263,7 +263,7 @@ namespace dxvk {
           DxvkDeviceFeatures  enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
-    std::array<DxvkExt*, 25> devExtensionList = {{
+    std::array<DxvkExt*, 28> devExtensionList = {{
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.amdShaderFragmentMask,
       &devExtensions.ext4444Formats,
@@ -281,6 +281,7 @@ namespace dxvk {
       &devExtensions.extShaderViewportIndexLayer,
       &devExtensions.extTransformFeedback,
       &devExtensions.extVertexAttributeDivisor,
+      &devExtensions.khrBufferDeviceAddress,
       &devExtensions.khrCreateRenderPass2,
       &devExtensions.khrDepthStencilResolve,
       &devExtensions.khrDrawIndirectCount,
@@ -289,7 +290,25 @@ namespace dxvk {
       &devExtensions.khrSamplerMirrorClampToEdge,
       &devExtensions.khrShaderFloatControls,
       &devExtensions.khrSwapchain,
+      &devExtensions.nvxBinaryImport,
+      &devExtensions.nvxImageViewHandle,
     }};
+
+    // Only enable Cuda interop extensions in 64-bit builds in
+    // order to avoid potential driver or address space issues.
+    // VK_KHR_buffer_device_address is expensive on some drivers.
+    bool enableCudaInterop = !env::is32BitHostPlatform() &&
+      m_deviceExtensions.supports(devExtensions.nvxBinaryImport.name()) &&
+      m_deviceExtensions.supports(devExtensions.nvxImageViewHandle.name()) &&
+      m_deviceFeatures.khrBufferDeviceAddress.bufferDeviceAddress;
+
+    if (enableCudaInterop) {
+      devExtensions.nvxBinaryImport.setMode(DxvkExtMode::Optional);
+      devExtensions.nvxImageViewHandle.setMode(DxvkExtMode::Optional);
+      devExtensions.khrBufferDeviceAddress.setMode(DxvkExtMode::Optional);
+
+      enabledFeatures.khrBufferDeviceAddress.bufferDeviceAddress = VK_TRUE;
+    }
 
     DxvkNameSet extensionsEnabled;
 
@@ -377,6 +396,11 @@ namespace dxvk {
       enabledFeatures.extVertexAttributeDivisor.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extVertexAttributeDivisor);
     }
 
+    if (devExtensions.khrBufferDeviceAddress) {
+      enabledFeatures.khrBufferDeviceAddress.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
+      enabledFeatures.khrBufferDeviceAddress.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.khrBufferDeviceAddress);
+    }
+
     // Report the desired overallocation behaviour to the driver
     VkDeviceMemoryOverallocationCreateInfoAMD overallocInfo;
     overallocInfo.sType = VK_STRUCTURE_TYPE_DEVICE_MEMORY_OVERALLOCATION_CREATE_INFO_AMD;
@@ -421,8 +445,31 @@ namespace dxvk {
       overallocInfo.pNext = std::exchange(info.pNext, &overallocInfo);
     
     VkDevice device = VK_NULL_HANDLE;
-    
-    if (m_vki->vkCreateDevice(m_handle, &info, nullptr, &device) != VK_SUCCESS)
+    VkResult vr = m_vki->vkCreateDevice(m_handle, &info, nullptr, &device);
+
+    if (vr != VK_SUCCESS && enableCudaInterop) {
+      // Enabling certain Vulkan extensions can cause device creation to fail on
+      // Nvidia drivers if a certain kernel module isn't loaded, but we cannot know
+      // that in advance since the extensions are reported as supported anyway.
+      Logger::err("DxvkAdapter: Failed to create device, retrying without CUDA interop extensions");
+
+      extensionsEnabled.disableExtension(devExtensions.khrBufferDeviceAddress);
+      extensionsEnabled.disableExtension(devExtensions.nvxBinaryImport);
+      extensionsEnabled.disableExtension(devExtensions.nvxImageViewHandle);
+
+      enabledFeatures.khrBufferDeviceAddress.bufferDeviceAddress = VK_FALSE;
+
+      vk::removeStructFromPNextChain(&enabledFeatures.core.pNext,
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR);
+
+      extensionNameList = extensionsEnabled.toNameList();
+      info.enabledExtensionCount      = extensionNameList.count();
+      info.ppEnabledExtensionNames    = extensionNameList.names();
+
+      vr = m_vki->vkCreateDevice(m_handle, &info, nullptr, &device);
+    }
+
+    if (vr != VK_SUCCESS)
       throw DxvkError("DxvkAdapter: Failed to create device");
     
     Rc<DxvkDevice> result = new DxvkDevice(instance, this,
@@ -644,6 +691,11 @@ namespace dxvk {
       m_deviceFeatures.extVertexAttributeDivisor.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extVertexAttributeDivisor);
     }
 
+    if (m_deviceExtensions.supports(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) {
+      m_deviceFeatures.khrBufferDeviceAddress.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
+      m_deviceFeatures.khrBufferDeviceAddress.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.khrBufferDeviceAddress);
+    }
+
     m_vki->vkGetPhysicalDeviceFeatures2(m_handle, &m_deviceFeatures.core);
   }
 
@@ -735,7 +787,9 @@ namespace dxvk {
       "\n  geometryStreams                        : ", features.extTransformFeedback.geometryStreams ? "1" : "0",
       "\n", VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,
       "\n  vertexAttributeInstanceRateDivisor     : ", features.extVertexAttributeDivisor.vertexAttributeInstanceRateDivisor ? "1" : "0",
-      "\n  vertexAttributeInstanceRateZeroDivisor : ", features.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor ? "1" : "0"));
+      "\n  vertexAttributeInstanceRateZeroDivisor : ", features.extVertexAttributeDivisor.vertexAttributeInstanceRateZeroDivisor ? "1" : "0",
+      "\n", VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+      "\n  bufferDeviceAddress                    : ", features.khrBufferDeviceAddress.bufferDeviceAddress));
   }
 
 
