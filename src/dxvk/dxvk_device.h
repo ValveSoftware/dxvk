@@ -198,6 +198,12 @@ namespace dxvk {
     bool isUnifiedMemoryArchitecture() const;
 
     /**
+     * \brief Queries default framebuffer size
+     * \returns Default framebuffer size
+     */
+    DxvkFramebufferSize getDefaultFramebufferSize() const;
+
+    /**
      * \brief Queries supported shader stages
      * \returns Supported shader pipeline stages
      */
@@ -264,13 +270,11 @@ namespace dxvk {
     /**
      * \brief Creates framebuffer for a set of render targets
      * 
-     * Automatically deduces framebuffer dimensions
-     * from the supplied render target views.
-     * \param [in] renderTargets Render targets
+     * \param [in] info Framebuffer info
      * \returns The framebuffer object
      */
     Rc<DxvkFramebuffer> createFramebuffer(
-      const DxvkRenderTargets& renderTargets);
+      const DxvkFramebufferInfo&  info);
     
     /**
      * \brief Creates a buffer object
