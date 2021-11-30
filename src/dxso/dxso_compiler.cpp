@@ -1029,7 +1029,7 @@ namespace dxvk {
 
       result.id = m_module.opLoad(typeId, ptrId);
 
-      if (relative) {
+      if (relative && !m_moduleInfo.options.robustness2Supported) {
         uint32_t constCount = m_module.constu32(m_layout->floatCount);
 
         // Expand condition to bvec4 since the result has four components
@@ -1760,6 +1760,7 @@ namespace dxvk {
     for (uint32_t i = 0; i < 4; i++)
       constant.float32[i] = data[i];
     m_constants.push_back(constant);
+    m_maxDefinedConstant = std::max(constant.uboIdx, m_maxDefinedConstant);
   }
 
   void DxsoCompiler::emitDefI(const DxsoInstructionContext& ctx) {

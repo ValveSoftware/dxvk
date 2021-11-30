@@ -1,5 +1,6 @@
 #include "d3d9_shader.h"
 
+#include "d3d9_caps.h"
 #include "d3d9_device.h"
 #include "d3d9_util.h"
 
@@ -63,13 +64,14 @@ namespace dxvk {
     // do an or per-draw in the device.
     // We shift by 17 because 16 ps samplers + 1 dmap (tess)
     if (ShaderStage == VK_SHADER_STAGE_VERTEX_BIT)
-      m_usedSamplers <<= 17;
+      m_usedSamplers <<= caps::MaxTexturesPS + 1;
 
     m_usedRTs      = pModule->usedRTs();
 
     m_info      = pModule->info();
     m_meta      = pModule->meta();
     m_constants = pModule->constants();
+    m_maxDefinedConst = pModule->maxDefinedConstant();
 
     m_shaders[0]->setShaderKey(Key);
 
