@@ -459,6 +459,34 @@ namespace dxvk {
     { R"(\\FantasyGrounds\.exe$)", {{
       { "d3d9.noExplicitFrontBuffer",       "True" },
     }} },
+    /* Red Orchestra 2                           */
+    { R"(\\ROGame\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
+    /* Dark Souls II                            */
+    { R"(\\DarkSoulsII\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
+    /* Dogfight 1942                            */
+    { R"(\\Dogfight1942\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
+    /* Bayonetta                                */
+    { R"(\\Bayonetta\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
+    /* Rayman Origins                           */
+    { R"(\\Rayman Origins\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
+    /* Guilty Gear Xrd -Relevator-              */
+    { R"(\\GuiltyGearXrd\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
+    /* Richard Burns Rally                      */
+    { R"(\\RichardBurnsRally_SSE\.exe$)", {{
+      { "d3d9.floatEmulation",              "Strict" },
+    }} },
   }};
 
 
@@ -635,8 +663,7 @@ namespace dxvk {
           I             begin,
           I             end,
           V&            value) {
-    std::transform(str.begin(), str.end(), str.begin(),
-      [] (unsigned char c) { return (c >= 'A' && c <= 'Z') ? (c + 'a' - 'A') : c; });
+    str = Config::toLower(str);
 
     for (auto i = begin; i != end; i++) {
       if (str == i->first) {
@@ -706,6 +733,12 @@ namespace dxvk {
       for (auto& pair : m_options)
         Logger::info(str::format("  ", pair.first, " = ", pair.second));
     }
+  }
+
+  std::string Config::toLower(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(),
+      [] (unsigned char c) { return (c >= 'A' && c <= 'Z') ? (c + 'a' - 'A') : c; });
+    return str;
   }
 
 }

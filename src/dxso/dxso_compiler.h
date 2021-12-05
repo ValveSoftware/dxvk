@@ -545,7 +545,24 @@ namespace dxvk {
     DxsoRegisterValue emitSaturate(
             DxsoRegisterValue       srcValue);
 
+    DxsoRegisterValue emitMulOperand(
+            DxsoRegisterValue       operand,
+            DxsoRegisterValue       other);
+
+    DxsoRegisterValue emitMul(
+            DxsoRegisterValue       a,
+            DxsoRegisterValue       b);
+
+    DxsoRegisterValue emitFma(
+            DxsoRegisterValue       a,
+            DxsoRegisterValue       b,
+            DxsoRegisterValue       c);
+
     DxsoRegisterValue emitDot(
+            DxsoRegisterValue       a,
+            DxsoRegisterValue       b);
+
+    DxsoRegisterValue emitCross(
             DxsoRegisterValue       a,
             DxsoRegisterValue       b);
 
