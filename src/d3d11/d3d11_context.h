@@ -1068,8 +1068,18 @@ namespace dxvk {
       }
     }
     
+    void TrackResourceSequenceNumber(
+            ID3D11Resource*             pResource);
+
     virtual void EmitCsChunk(DxvkCsChunkRef&& chunk) = 0;
     
+    virtual void TrackTextureSequenceNumber(
+            D3D11CommonTexture*         pResource,
+            UINT                        Subresource) = 0;
+
+    virtual void TrackBufferSequenceNumber(
+            D3D11Buffer*                pResource) = 0;
+
   };
   
 }
