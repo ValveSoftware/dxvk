@@ -17,7 +17,7 @@ namespace dxvk {
     m_execBarriers(DxvkCmdBuffer::ExecBuffer),
     m_gfxBarriers (DxvkCmdBuffer::ExecBuffer),
     m_queryManager(m_common->queryPool()),
-    m_staging     (device) {
+    m_staging     (device, StagingBufferSize) {
     if (m_device->features().extRobustness2.nullDescriptor)
       m_features.set(DxvkContextFeature::NullDescriptors);
     if (m_device->features().extExtendedDynamicState.extendedDynamicState)
@@ -651,33 +651,46 @@ namespace dxvk {
     const Rc<DxvkBuffer>&       srcBuffer,
           VkDeviceSize          srcOffset,
           VkDeviceSize          numBytes) {
-    if (numBytes == 0)
-      return;
-    
-    this->spillRenderPass(true);
-    
-    auto dstSlice = dstBuffer->getSliceHandle(dstOffset, numBytes);
-    auto srcSlice = srcBuffer->getSliceHandle(srcOffset, numBytes);
+    // When overwriting small buffers, we can allocate a new slice in order to
+    // avoid suspending the current render pass or inserting barriers. The source
+    // buffer must be read-only since otherwise we cannot schedule the copy early.
+    bool srcIsReadOnly = DxvkBarrierSet::getAccessTypes(srcBuffer->info().access) == DxvkAccess::Read;
+    bool replaceBuffer = srcIsReadOnly && this->tryInvalidateDeviceLocalBuffer(dstBuffer, numBytes);
 
-    if (m_execBarriers.isBufferDirty(srcSlice, DxvkAccess::Read)
-     || m_execBarriers.isBufferDirty(dstSlice, DxvkAccess::Write))
-      m_execBarriers.recordCommands(m_cmd);
+    auto srcSlice = srcBuffer->getSliceHandle(srcOffset, numBytes);
+    auto dstSlice = dstBuffer->getSliceHandle(dstOffset, numBytes);
+
+    if (!replaceBuffer) {
+      this->spillRenderPass(true);
+
+      if (m_execBarriers.isBufferDirty(srcSlice, DxvkAccess::Read)
+       || m_execBarriers.isBufferDirty(dstSlice, DxvkAccess::Write))
+        m_execBarriers.recordCommands(m_cmd);
+    }
+
+    DxvkCmdBuffer cmdBuffer = replaceBuffer
+      ? DxvkCmdBuffer::InitBuffer
+      : DxvkCmdBuffer::ExecBuffer;
 
     VkBufferCopy bufferRegion;
     bufferRegion.srcOffset = srcSlice.offset;
     bufferRegion.dstOffset = dstSlice.offset;
     bufferRegion.size      = dstSlice.length;
 
-    m_cmd->cmdCopyBuffer(DxvkCmdBuffer::ExecBuffer,
+    m_cmd->cmdCopyBuffer(cmdBuffer,
       srcSlice.handle, dstSlice.handle, 1, &bufferRegion);
 
-    m_execBarriers.accessBuffer(srcSlice,
+    auto& barriers = replaceBuffer
+      ? m_initBarriers
+      : m_execBarriers;
+
+    barriers.accessBuffer(srcSlice,
       VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_ACCESS_TRANSFER_READ_BIT,
       srcBuffer->info().stages,
       srcBuffer->info().access);
 
-    m_execBarriers.accessBuffer(dstSlice,
+    barriers.accessBuffer(dstSlice,
       VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_ACCESS_TRANSFER_WRITE_BIT,
       dstBuffer->info().stages,
@@ -2133,136 +2146,37 @@ namespace dxvk {
           VkDeviceSize              offset,
           VkDeviceSize              size,
     const void*                     data) {
-    bool isHostVisible = buffer->memFlags() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    bool replaceBuffer = this->tryInvalidateDeviceLocalBuffer(buffer, size);
+    auto bufferSlice = buffer->getSliceHandle(offset, size);
 
-    bool replaceBuffer = (size == buffer->info().size)
-                      && (size <= (1 << 18))
-                      && !isHostVisible;
-    
-    DxvkBufferSliceHandle bufferSlice;
-    DxvkCmdBuffer         cmdBuffer;
-
-    if (replaceBuffer) {
-      // Suspend render pass so that we don't mess with the
-      // currently bound transform feedback counter buffers
-      if (m_flags.test(DxvkContextFlag::GpXfbActive))
-        this->spillRenderPass(true);
-
-      // As an optimization, allocate a free slice and perform
-      // the copy in the initialization command buffer instead
-      // interrupting the render pass and stalling the pipeline.
-      bufferSlice = buffer->allocSlice();
-      cmdBuffer   = DxvkCmdBuffer::InitBuffer;
-
-      this->invalidateBuffer(buffer, bufferSlice);
-    } else {
+    if (!replaceBuffer) {
       this->spillRenderPass(true);
     
-      bufferSlice = buffer->getSliceHandle(offset, size);
-      cmdBuffer   = DxvkCmdBuffer::ExecBuffer;
-
       if (m_execBarriers.isBufferDirty(bufferSlice, DxvkAccess::Write))
         m_execBarriers.recordCommands(m_cmd);
     }
 
-    // Vulkan specifies that small amounts of data (up to 64kB) can
-    // be copied to a buffer directly if the size is a multiple of
-    // four. Anything else must be copied through a staging buffer.
-    // We'll limit the size to 4kB in order to keep command buffers
-    // reasonably small, we do not know how much data apps may upload.
-    if ((size <= 4096) && ((size & 0x3) == 0) && ((offset & 0x3) == 0)) {
-      m_cmd->cmdUpdateBuffer(
-        cmdBuffer,
-        bufferSlice.handle,
-        bufferSlice.offset,
-        bufferSlice.length,
-        data);
-    } else {
-      auto stagingSlice  = m_staging.alloc(CACHE_LINE_SIZE, size);
-      auto stagingHandle = stagingSlice.getSliceHandle();
+    DxvkCmdBuffer cmdBuffer = replaceBuffer
+      ? DxvkCmdBuffer::InitBuffer
+      : DxvkCmdBuffer::ExecBuffer;
 
-      std::memcpy(stagingHandle.mapPtr, data, size);
-
-      VkBufferCopy region;
-      region.srcOffset = stagingHandle.offset;
-      region.dstOffset = bufferSlice.offset;
-      region.size      = size;
-
-      m_cmd->cmdCopyBuffer(cmdBuffer,
-        stagingHandle.handle, bufferSlice.handle, 1, &region);
-      
-      m_cmd->trackResource<DxvkAccess::Read>(stagingSlice.buffer());
-    }
+    m_cmd->cmdUpdateBuffer(cmdBuffer,
+      bufferSlice.handle,
+      bufferSlice.offset,
+      bufferSlice.length,
+      data);
 
     auto& barriers = replaceBuffer
       ? m_initBarriers
       : m_execBarriers;
 
-    barriers.accessBuffer(
-      bufferSlice,
+    barriers.accessBuffer(bufferSlice,
       VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_ACCESS_TRANSFER_WRITE_BIT,
       buffer->info().stages,
       buffer->info().access);
 
     m_cmd->trackResource<DxvkAccess::Write>(buffer);
-  }
-  
-  
-  void DxvkContext::updateImage(
-    const Rc<DxvkImage>&            image,
-    const VkImageSubresourceLayers& subresources,
-          VkOffset3D                imageOffset,
-          VkExtent3D                imageExtent,
-    const void*                     data,
-          VkDeviceSize              pitchPerRow,
-          VkDeviceSize              pitchPerLayer) {
-    this->spillRenderPass(true);
-
-    // Prepare the image layout. If the given extent covers
-    // the entire image, we may discard its previous contents.
-    auto subresourceRange = vk::makeSubresourceRange(subresources);
-    subresourceRange.aspectMask = image->formatInfo()->aspectMask;
-
-    this->prepareImage(m_execBarriers, image, subresourceRange);
-
-    if (m_execBarriers.isImageDirty(image, subresourceRange, DxvkAccess::Write))
-      m_execBarriers.recordCommands(m_cmd);
-
-    // Initialize the image if the entire subresource is covered
-    VkImageLayout imageLayoutInitial  = image->info().layout;
-    VkImageLayout imageLayoutTransfer = image->pickLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-    if (image->isFullSubresource(subresources, imageExtent))
-      imageLayoutInitial = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    if (imageLayoutTransfer != imageLayoutInitial) {
-      m_execAcquires.accessImage(
-        image, subresourceRange,
-        imageLayoutInitial,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-        imageLayoutTransfer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT);
-    }
-
-    m_execAcquires.recordCommands(m_cmd);
-    
-    this->copyImageHostData(DxvkCmdBuffer::ExecBuffer,
-      image, subresources, imageOffset, imageExtent,
-      data, pitchPerRow, pitchPerLayer);
-    
-    // Transition image back into its optimal layout
-    m_execBarriers.accessImage(
-      image, subresourceRange,
-      imageLayoutTransfer,
-      VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_ACCESS_TRANSFER_WRITE_BIT,
-      image->info().layout,
-      image->info().stages,
-      image->info().access);
-    
-    m_cmd->trackResource<DxvkAccess::Write>(image);
   }
   
   
@@ -2683,10 +2597,6 @@ namespace dxvk {
     m_cmd->queueSignal(signal, value);
   }
 
-
-  void DxvkContext::trimStagingBuffers() {
-    m_staging.trim();
-  }
 
   void DxvkContext::beginDebugLabel(VkDebugUtilsLabelEXT *label) {
     if (!m_device->instance()->extensions().extDebugUtils)
@@ -5325,6 +5235,29 @@ namespace dxvk {
       if (m_state.id.cntBuffer.defined())
         m_cmd->trackResource<DxvkAccess::Read>(m_state.id.cntBuffer.buffer());
     }
+  }
+
+
+  bool DxvkContext::tryInvalidateDeviceLocalBuffer(
+      const Rc<DxvkBuffer>&           buffer,
+            VkDeviceSize              copySize) {
+    // We can only discard if the full buffer gets written, and we will only discard
+    // small buffers in order to not waste significant amounts of memory.
+    if (copySize != buffer->info().size || copySize > 0x40000)
+      return false;
+
+    // Don't discard host-visible buffers since that may interfere with the frontend
+    if (buffer->memFlags() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+      return false;
+
+    // Suspend the current render pass if transform feedback is active prior to
+    // invalidating the buffer, since otherwise we may invalidate a bound buffer.
+    if ((buffer->info().usage & VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT)
+     && (m_flags.test(DxvkContextFlag::GpXfbActive)))
+      this->spillRenderPass(true);
+
+    this->invalidateBuffer(buffer, buffer->allocSlice());
+    return true;
   }
   
 
